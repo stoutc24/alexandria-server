@@ -230,7 +230,7 @@ If you are a U.S. government user, the Software is provided with "RESTRICTED RIG
 ## 14. Governing Law and Disputes
 
 ### 14.1 Governing Law
-This Agreement is governed by the laws of the United States and the State of [Your State], without regard to conflict of law principles.
+This Agreement is governed by the laws of the United States and the State of Indiana, without regard to conflict of law principles.
 
 ### 14.2 Arbitration
 Any disputes arising from this Agreement shall be resolved through binding arbitration, except for intellectual property claims which may be brought in court.
@@ -239,7 +239,7 @@ Any disputes arising from this Agreement shall be resolved through binding arbit
 You waive any right to participate in class action lawsuits or class-wide arbitration.
 
 ### 14.4 Venue
-Any permitted court proceedings shall be conducted in [Your County], [Your State].
+Any permitted court proceedings shall be conducted in Porter County, Indiana.
 
 ---
 
@@ -296,7 +296,9 @@ For questions about this Agreement:
 
 **Mailing Address:**
 Stout Solutions
-[Your Address]
+2539 Willowcreek Rd #1041
+Portage, IN 46368
+United States
 
 ---
 

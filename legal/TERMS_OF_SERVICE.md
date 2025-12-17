@@ -204,7 +204,7 @@ Your continued use of the Service after changes constitutes acceptance of the ne
 
 ### 14.1 Governing Law
 
-These Terms are governed by the laws of the United States and the State of [Your State], without regard to conflict of law principles.
+These Terms are governed by the laws of the United States and the State of Indiana, without regard to conflict of law principles.
 
 ### 14.2 Dispute Resolution
 
@@ -247,7 +247,9 @@ If you have questions about these Terms, please contact us:
 
 **Mailing Address:**
 Stout Solutions
-[Your Address]
+2539 Willowcreek Rd #1041
+Portage, IN 46368
+United States
 
 ---
 
