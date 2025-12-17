@@ -1,0 +1,43 @@
+# Binaries
+alexandria-server
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Database
+*.db
+*.db-journal
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Build output
+/bin/
+/dist/
+
+# Vendor (if using)
+/vendor/
+
+# Logs
+*.log
+
+# Planning documents
+*.docx

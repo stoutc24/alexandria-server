@@ -1,0 +1,82 @@
+version: '3.8'
+
+# =============================================================================
+# Alexandria Server - Docker Compose Configuration
+# =============================================================================
+#
+# Quick Start:
+#   1. Copy .env.example to .env and configure
+#   2. Run: docker-compose up -d
+#   3. Access: http://localhost:3000/health
+#
+# =============================================================================
+
+services:
+  alexandria-server:
+    image: ghcr.io/stoutc24/alexandria-server:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: alexandria-server
+    restart: unless-stopped
+
+    ports:
+      - "${PORT:-3000}:3000"
+
+    volumes:
+      # Persistent data storage
+      - alexandria-data:/data
+      # Optional: bind mount for easier backup access
+      # - ./data:/data
+
+    environment:
+      # Server configuration
+      - PORT=3000
+      - DB_PATH=/data/alexandria.db
+
+      # IMPORTANT: Change this in production!
+      - JWT_SECRET=${JWT_SECRET:-please-change-this-secret-key}
+
+      # Password hashing strength (10-14 recommended)
+      - BCRYPT_COST=${BCRYPT_COST:-12}
+
+      # Timezone
+      - TZ=${TZ:-UTC}
+
+    # Resource limits (adjust based on your server)
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+
+    # Health monitoring
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  alexandria-data:
+    driver: local
+
+# =============================================================================
+# Network configuration (optional - useful with reverse proxy)
+# =============================================================================
+# networks:
+#   default:
+#     name: alexandria-network
+#   proxy:
+#     external: true
