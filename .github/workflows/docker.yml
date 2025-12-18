@@ -75,13 +75,13 @@ jobs:
         run: |
           docker run -d --name test-alexandria \
             -e JWT_SECRET=test-secret \
-            -p 3000:3000 \
+            -p 4000:4000 \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
           sleep 5
 
           # Health check
-          curl -f http://localhost:3000/health || exit 1
+          curl -f http://localhost:4000/health || exit 1
 
           docker stop test-alexandria
           docker rm test-alexandria
