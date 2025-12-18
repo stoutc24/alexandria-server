@@ -41,3 +41,6 @@ coverage.html
 
 # Planning documents
 *.docx
+
+# Testing images/screenshots
+testing images/
