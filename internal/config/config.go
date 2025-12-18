@@ -15,7 +15,7 @@ type Config struct {
 
 func Load() *Config {
 	return &Config{
-		Port:             getEnv("PORT", "3000"),
+		Port:             getEnv("PORT", "4000"),
 		DBPath:           getEnv("DB_PATH", "./alexandria.db"),
 		JWTSecret:        getEnv("JWT_SECRET", "change-me-in-production"),
 		BCryptCost:       getEnvInt("BCRYPT_COST", 12),
