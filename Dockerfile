@@ -10,15 +10,14 @@ WORKDIR /build
 # Install git for go mod download (some deps may need it)
 RUN apk add --no-cache git
 
-# Copy go mod files first for better layer caching
-COPY go.mod go.sum* ./
-RUN go mod download
-
-# Copy source code
+# Copy all source first (needed for go mod tidy to resolve dependencies)
 COPY . .
 
-# Build the binary with optimizations
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+# Generate go.sum and download dependencies
+RUN go mod tidy && go mod download
+
+# Build the binary with optimizations (architecture detected by Docker buildx)
+RUN CGO_ENABLED=0 go build \
     -ldflags="-s -w -X main.Version=docker" \
     -o alexandria-server \
     ./cmd/server
