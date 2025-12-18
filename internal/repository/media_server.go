@@ -6,23 +6,20 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/stoutsolutions/alexandria-server/internal/crypto"
 	"github.com/stoutsolutions/alexandria-server/internal/database"
 	"github.com/stoutsolutions/alexandria-server/internal/models"
 )
 
 var (
-	ErrServerNotFound    = errors.New("media server not found")
-	ErrAccessNotFound    = errors.New("server access not found")
-	ErrAlreadyHasAccess  = errors.New("user already has access to this server")
+	ErrServerNotFound   = errors.New("media server not found")
+	ErrAccessNotFound   = errors.New("server access not found")
+	ErrAlreadyHasAccess = errors.New("user already has access to this server")
 )
 
-type MediaServerRepository struct {
-	encryptor *crypto.Encryptor
-}
+type MediaServerRepository struct{}
 
-func NewMediaServerRepository(encryptor *crypto.Encryptor) *MediaServerRepository {
-	return &MediaServerRepository{encryptor: encryptor}
+func NewMediaServerRepository() *MediaServerRepository {
+	return &MediaServerRepository{}
 }
 
 // Create adds a new media server to a family
@@ -30,36 +27,29 @@ func (r *MediaServerRepository) Create(
 	familyID, name string,
 	serverType models.MediaServerType,
 	url string,
-	creds *models.MediaServerCredentials,
 	createdBy string,
 ) (*models.MediaServer, error) {
 	id := uuid.New().String()
 	now := time.Now()
 
-	encryptedCreds, err := r.encryptor.EncryptCredentials(creds)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = database.DB.Exec(`
-		INSERT INTO media_servers (id, family_id, name, type, url, encrypted_credentials, created_by, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, id, familyID, name, serverType, url, encryptedCreds, createdBy, now, now)
+	_, err := database.DB.Exec(`
+		INSERT INTO media_servers (id, family_id, name, type, url, created_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, familyID, name, serverType, url, createdBy, now, now)
 
 	if err != nil {
 		return nil, err
 	}
 
 	return &models.MediaServer{
-		ID:                   id,
-		FamilyID:             familyID,
-		Name:                 name,
-		Type:                 serverType,
-		URL:                  url,
-		EncryptedCredentials: encryptedCreds,
-		CreatedBy:            createdBy,
-		CreatedAt:            now,
-		UpdatedAt:            now,
+		ID:        id,
+		FamilyID:  familyID,
+		Name:      name,
+		Type:      serverType,
+		URL:       url,
+		CreatedBy: createdBy,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}, nil
 }
 
@@ -68,12 +58,11 @@ func (r *MediaServerRepository) GetByID(id string) (*models.MediaServer, error) 
 	server := &models.MediaServer{}
 
 	err := database.DB.QueryRow(`
-		SELECT id, family_id, name, type, url, encrypted_credentials, created_by, created_at, updated_at
+		SELECT id, family_id, name, type, url, created_by, created_at, updated_at
 		FROM media_servers WHERE id = ?
 	`, id).Scan(
 		&server.ID, &server.FamilyID, &server.Name, &server.Type,
-		&server.URL, &server.EncryptedCredentials, &server.CreatedBy,
-		&server.CreatedAt, &server.UpdatedAt,
+		&server.URL, &server.CreatedBy, &server.CreatedAt, &server.UpdatedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -89,7 +78,7 @@ func (r *MediaServerRepository) GetByID(id string) (*models.MediaServer, error) 
 // GetByFamily retrieves all media servers for a family
 func (r *MediaServerRepository) GetByFamily(familyID string) ([]*models.MediaServer, error) {
 	rows, err := database.DB.Query(`
-		SELECT id, family_id, name, type, url, encrypted_credentials, created_by, created_at, updated_at
+		SELECT id, family_id, name, type, url, created_by, created_at, updated_at
 		FROM media_servers WHERE family_id = ?
 		ORDER BY name
 	`, familyID)
@@ -103,8 +92,7 @@ func (r *MediaServerRepository) GetByFamily(familyID string) ([]*models.MediaSer
 		server := &models.MediaServer{}
 		if err := rows.Scan(
 			&server.ID, &server.FamilyID, &server.Name, &server.Type,
-			&server.URL, &server.EncryptedCredentials, &server.CreatedBy,
-			&server.CreatedAt, &server.UpdatedAt,
+			&server.URL, &server.CreatedBy, &server.CreatedAt, &server.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -119,18 +107,12 @@ func (r *MediaServerRepository) Update(
 	id, name string,
 	serverType models.MediaServerType,
 	url string,
-	creds *models.MediaServerCredentials,
 ) error {
-	encryptedCreds, err := r.encryptor.EncryptCredentials(creds)
-	if err != nil {
-		return err
-	}
-
 	result, err := database.DB.Exec(`
 		UPDATE media_servers
-		SET name = ?, type = ?, url = ?, encrypted_credentials = ?, updated_at = ?
+		SET name = ?, type = ?, url = ?, updated_at = ?
 		WHERE id = ?
-	`, name, serverType, url, encryptedCreds, time.Now(), id)
+	`, name, serverType, url, time.Now(), id)
 
 	if err != nil {
 		return err
@@ -157,11 +139,6 @@ func (r *MediaServerRepository) Delete(id string) error {
 	}
 
 	return nil
-}
-
-// DecryptCredentials decrypts the credentials for a media server
-func (r *MediaServerRepository) DecryptCredentials(server *models.MediaServer) (*models.MediaServerCredentials, error) {
-	return r.encryptor.DecryptCredentials(server.EncryptedCredentials)
 }
 
 // GrantAccess gives a user access to a media server
@@ -243,10 +220,10 @@ func (r *MediaServerRepository) GetServerAccess(serverID string) ([]*models.Serv
 	return access, rows.Err()
 }
 
-// GetUserServers returns all servers a user has access to (with decrypted credentials)
+// GetUserServers returns all servers a user has access to
 func (r *MediaServerRepository) GetUserServers(userID string) ([]*models.UserServerAccess, error) {
 	rows, err := database.DB.Query(`
-		SELECT ms.id, ms.name, ms.type, ms.url, ms.encrypted_credentials, sa.granted_at
+		SELECT ms.id, ms.name, ms.type, ms.url, sa.granted_at
 		FROM media_servers ms
 		INNER JOIN server_access sa ON ms.id = sa.server_id
 		WHERE sa.user_id = ?
@@ -259,22 +236,10 @@ func (r *MediaServerRepository) GetUserServers(userID string) ([]*models.UserSer
 
 	var servers []*models.UserServerAccess
 	for rows.Next() {
-		var encryptedCreds string
 		s := &models.UserServerAccess{}
-
-		if err := rows.Scan(
-			&s.ID, &s.Name, &s.Type, &s.URL, &encryptedCreds, &s.GrantedAt,
-		); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.Type, &s.URL, &s.GrantedAt); err != nil {
 			return nil, err
 		}
-
-		// Decrypt credentials
-		creds, err := r.encryptor.DecryptCredentials(encryptedCreds)
-		if err != nil {
-			return nil, err
-		}
-		s.Credentials = *creds
-
 		servers = append(servers, s)
 	}
 

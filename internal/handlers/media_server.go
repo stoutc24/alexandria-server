@@ -24,17 +24,15 @@ func NewMediaServerHandler(
 
 // Request types
 type CreateServerRequest struct {
-	Name        string                        `json:"name"`
-	Type        models.MediaServerType        `json:"type"`
-	URL         string                        `json:"url"`
-	Credentials models.MediaServerCredentials `json:"credentials"`
+	Name string                 `json:"name"`
+	Type models.MediaServerType `json:"type"`
+	URL  string                 `json:"url"`
 }
 
 type UpdateServerRequest struct {
-	Name        string                        `json:"name"`
-	Type        models.MediaServerType        `json:"type"`
-	URL         string                        `json:"url"`
-	Credentials models.MediaServerCredentials `json:"credentials"`
+	Name string                 `json:"name"`
+	Type models.MediaServerType `json:"type"`
+	URL  string                 `json:"url"`
 }
 
 type GrantAccessRequest struct {
@@ -79,24 +77,14 @@ func (h *MediaServerHandler) CreateServer(c *fiber.Ctx) error {
 		})
 	}
 
-	server, err := h.serverRepo.Create(
-		familyID, req.Name, req.Type, req.URL, &req.Credentials, userID,
-	)
+	server, err := h.serverRepo.Create(familyID, req.Name, req.Type, req.URL, userID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to create media server",
 		})
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"id":        server.ID,
-		"familyId":  server.FamilyID,
-		"name":      server.Name,
-		"type":      server.Type,
-		"url":       server.URL,
-		"createdBy": server.CreatedBy,
-		"createdAt": server.CreatedAt,
-	})
+	return c.Status(fiber.StatusCreated).JSON(server)
 }
 
 // GetServers lists all media servers for a family
@@ -124,11 +112,13 @@ func (h *MediaServerHandler) GetServers(c *fiber.Ctx) error {
 		})
 	}
 
-	// Build response (without credentials)
+	// Build response with access info
 	isAdmin := membership.Role == string(models.RoleAdmin)
 	var response []fiber.Map
 
 	for _, s := range servers {
+		hasAccess, _ := h.serverRepo.HasAccess(s.ID, userID)
+
 		serverMap := fiber.Map{
 			"id":        s.ID,
 			"familyId":  s.FamilyID,
@@ -137,11 +127,8 @@ func (h *MediaServerHandler) GetServers(c *fiber.Ctx) error {
 			"url":       s.URL,
 			"createdBy": s.CreatedBy,
 			"createdAt": s.CreatedAt,
+			"hasAccess": hasAccess || isAdmin,
 		}
-
-		// Check if user has access
-		hasAccess, _ := h.serverRepo.HasAccess(s.ID, userID)
-		serverMap["hasAccess"] = hasAccess || isAdmin
 
 		response = append(response, serverMap)
 	}
@@ -198,14 +185,6 @@ func (h *MediaServerHandler) GetServer(c *fiber.Ctx) error {
 		"createdBy": server.CreatedBy,
 		"createdAt": server.CreatedAt,
 		"hasAccess": hasAccess || isAdmin,
-	}
-
-	// Include credentials only for users with access
-	if hasAccess || isAdmin {
-		creds, err := h.serverRepo.DecryptCredentials(server)
-		if err == nil {
-			response["credentials"] = creds
-		}
 	}
 
 	// Include access list for admins
@@ -266,7 +245,7 @@ func (h *MediaServerHandler) UpdateServer(c *fiber.Ctx) error {
 		})
 	}
 
-	err = h.serverRepo.Update(serverID, req.Name, req.Type, req.URL, &req.Credentials)
+	err = h.serverRepo.Update(serverID, req.Name, req.Type, req.URL)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to update server",
@@ -406,7 +385,8 @@ func (h *MediaServerHandler) RevokeAccess(c *fiber.Ctx) error {
 	})
 }
 
-// GetMyServers returns all servers the current user has access to (with credentials)
+// GetMyServers returns all servers the current user has access to
+// This is the main endpoint the app calls to get available services
 func (h *MediaServerHandler) GetMyServers(c *fiber.Ctx) error {
 	userID := middleware.GetUserID(c)
 

@@ -12,7 +12,6 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
 	"github.com/stoutsolutions/alexandria-server/internal/config"
-	"github.com/stoutsolutions/alexandria-server/internal/crypto"
 	"github.com/stoutsolutions/alexandria-server/internal/database"
 	"github.com/stoutsolutions/alexandria-server/internal/handlers"
 	"github.com/stoutsolutions/alexandria-server/internal/middleware"
@@ -46,13 +45,10 @@ func main() {
 		AllowMethods: "GET, POST, PUT, DELETE, PATCH, OPTIONS",
 	}))
 
-	// Initialize encryption for stored credentials
-	encryptor := crypto.NewEncryptor(cfg.EncryptionKey)
-
 	// Initialize repositories
 	userRepo := repository.NewUserRepository()
 	familyRepo := repository.NewFamilyRepository()
-	mediaServerRepo := repository.NewMediaServerRepository(encryptor)
+	mediaServerRepo := repository.NewMediaServerRepository()
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(cfg, userRepo)

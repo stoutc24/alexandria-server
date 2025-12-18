@@ -106,7 +106,6 @@ func RunMigrations() error {
 					name TEXT NOT NULL,
 					type TEXT NOT NULL,
 					url TEXT NOT NULL,
-					encrypted_credentials TEXT NOT NULL,
 					created_by TEXT NOT NULL,
 					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 					updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,

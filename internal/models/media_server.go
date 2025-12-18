@@ -18,53 +18,27 @@ const (
 
 // MediaServer represents a configured media server connection
 type MediaServer struct {
-	ID                  string          `json:"id"`
-	FamilyID            string          `json:"familyId"`
-	Name                string          `json:"name"`
-	Type                MediaServerType `json:"type"`
-	URL                 string          `json:"url"`
-	EncryptedCredentials string         `json:"-"` // Never expose encrypted blob
-	CreatedBy           string          `json:"createdBy"`
-	CreatedAt           time.Time       `json:"createdAt"`
-	UpdatedAt           time.Time       `json:"updatedAt"`
+	ID        string          `json:"id"`
+	FamilyID  string          `json:"familyId"`
+	Name      string          `json:"name"`
+	Type      MediaServerType `json:"type"`
+	URL       string          `json:"url"`
+	CreatedBy string          `json:"createdBy"`
+	CreatedAt time.Time       `json:"createdAt"`
+	UpdatedAt time.Time       `json:"updatedAt"`
 }
 
-// MediaServerCredentials holds the decrypted auth info for a server
-// Different server types use different auth methods
-type MediaServerCredentials struct {
-	// Username/Password auth (ABS, Kavita, Calibre-Web, etc.)
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
-
-	// API Key auth (some servers)
-	APIKey string `json:"apiKey,omitempty"`
-
-	// Token auth (Plex, Jellyfin)
-	Token string `json:"token,omitempty"`
-
-	// Additional fields for specific servers
-	ServerID string `json:"serverId,omitempty"` // Plex server ID
-	LibraryID string `json:"libraryId,omitempty"` // Specific library selection
-}
-
-// MediaServerResponse is what we send to clients (with decrypted creds for authorized users)
-type MediaServerResponse struct {
-	ID          string              `json:"id"`
-	FamilyID    string              `json:"familyId"`
-	Name        string              `json:"name"`
-	Type        MediaServerType     `json:"type"`
-	URL         string              `json:"url"`
-	Credentials *MediaServerCredentials `json:"credentials,omitempty"` // Only included for authorized users
-	CreatedBy   string              `json:"createdBy"`
-	CreatedAt   time.Time           `json:"createdAt"`
-}
-
-// MediaServerWithAccess includes access information
+// MediaServerWithAccess includes access information for listing
 type MediaServerWithAccess struct {
-	MediaServerResponse
-	HasAccess   bool      `json:"hasAccess"`
-	GrantedAt   *time.Time `json:"grantedAt,omitempty"`
-	GrantedBy   string    `json:"grantedBy,omitempty"`
+	ID        string          `json:"id"`
+	FamilyID  string          `json:"familyId"`
+	Name      string          `json:"name"`
+	Type      MediaServerType `json:"type"`
+	URL       string          `json:"url"`
+	CreatedBy string          `json:"createdBy"`
+	CreatedAt time.Time       `json:"createdAt"`
+	HasAccess bool            `json:"hasAccess"`
+	GrantedAt *time.Time      `json:"grantedAt,omitempty"`
 }
 
 // ServerAccess represents a user's access to a media server
@@ -87,12 +61,11 @@ type ServerAccessDetail struct {
 	GrantedAt   time.Time `json:"grantedAt"`
 }
 
-// UserServerAccess is what the app receives - server info with credentials
+// UserServerAccess is what the app receives - list of servers user can access
 type UserServerAccess struct {
-	ID          string                  `json:"id"`
-	Name        string                  `json:"name"`
-	Type        MediaServerType         `json:"type"`
-	URL         string                  `json:"url"`
-	Credentials MediaServerCredentials  `json:"credentials"`
-	GrantedAt   time.Time               `json:"grantedAt"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Type      MediaServerType `json:"type"`
+	URL       string          `json:"url"`
+	GrantedAt time.Time       `json:"grantedAt"`
 }
