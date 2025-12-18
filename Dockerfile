@@ -19,6 +19,7 @@ RUN go mod tidy && go mod download
 # Build the binary with optimizations (architecture detected by Docker buildx)
 RUN CGO_ENABLED=0 go build \
     -ldflags="-s -w -X main.Version=docker" \
+    -trimpath \
     -o alexandria-server \
     ./cmd/server
 
