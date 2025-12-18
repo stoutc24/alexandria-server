@@ -18,6 +18,7 @@ var (
 	ErrInvalidInviteCode  = errors.New("invalid invite code")
 	ErrNotFamilyAdmin     = errors.New("user is not a family admin")
 	ErrCannotRemoveSelf   = errors.New("cannot remove yourself from family")
+	ErrFamilyFull         = errors.New("family has reached maximum member limit")
 )
 
 type FamilyRepository struct{}
@@ -173,6 +174,14 @@ func (r *FamilyRepository) GetMembers(familyID string) ([]*models.MemberDetail, 
 	}
 
 	return members, rows.Err()
+}
+
+func (r *FamilyRepository) CountMembers(familyID string) (int, error) {
+	var count int
+	err := database.DB.QueryRow(`
+		SELECT COUNT(*) FROM family_members WHERE family_id = ?
+	`, familyID).Scan(&count)
+	return count, err
 }
 
 func (r *FamilyRepository) AddMember(familyID, userID string, role models.FamilyRole) error {

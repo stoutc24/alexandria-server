@@ -6,18 +6,20 @@ import (
 )
 
 type Config struct {
-	Port       string
-	DBPath     string
-	JWTSecret  string
-	BCryptCost int
+	Port             string
+	DBPath           string
+	JWTSecret        string
+	BCryptCost       int
+	MaxFamilyMembers int
 }
 
 func Load() *Config {
 	return &Config{
-		Port:       getEnv("PORT", "3000"),
-		DBPath:     getEnv("DB_PATH", "./alexandria.db"),
-		JWTSecret:  getEnv("JWT_SECRET", "change-me-in-production"),
-		BCryptCost: getEnvInt("BCRYPT_COST", 12),
+		Port:             getEnv("PORT", "3000"),
+		DBPath:           getEnv("DB_PATH", "./alexandria.db"),
+		JWTSecret:        getEnv("JWT_SECRET", "change-me-in-production"),
+		BCryptCost:       getEnvInt("BCRYPT_COST", 12),
+		MaxFamilyMembers: getEnvInt("MAX_FAMILY_MEMBERS", 6),
 	}
 }
 

@@ -52,7 +52,7 @@ func main() {
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(cfg, userRepo)
-	familyHandler := handlers.NewFamilyHandler(familyRepo)
+	familyHandler := handlers.NewFamilyHandler(cfg, familyRepo)
 	mediaServerHandler := handlers.NewMediaServerHandler(mediaServerRepo, familyRepo)
 
 	app.Get("/health", handlers.Health)

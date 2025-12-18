@@ -30,7 +30,6 @@ FROM alpine:3.19
 # Labels for container metadata
 LABEL org.opencontainers.image.title="Alexandria Server"
 LABEL org.opencontainers.image.description="Self-hosted family media server backend"
-LABEL org.opencontainers.image.source="https://github.com/stoutc24/alexandria-server"
 LABEL org.opencontainers.image.vendor="Stout Solutions"
 
 # Install runtime dependencies
@@ -59,6 +58,7 @@ ENV PORT=3000
 ENV DB_PATH=/data/alexandria.db
 ENV JWT_SECRET=change-me-in-production
 ENV BCRYPT_COST=12
+ENV MAX_FAMILY_MEMBERS=6
 ENV TZ=UTC
 
 # Expose port

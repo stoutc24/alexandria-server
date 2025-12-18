@@ -2,18 +2,21 @@ package handlers
 
 import (
 	"github.com/gofiber/fiber/v2"
+	"github.com/stoutsolutions/alexandria-server/internal/config"
 	"github.com/stoutsolutions/alexandria-server/internal/middleware"
 	"github.com/stoutsolutions/alexandria-server/internal/models"
 	"github.com/stoutsolutions/alexandria-server/internal/repository"
 )
 
 type FamilyHandler struct {
-	familyRepo *repository.FamilyRepository
+	familyRepo       *repository.FamilyRepository
+	maxFamilyMembers int
 }
 
-func NewFamilyHandler(familyRepo *repository.FamilyRepository) *FamilyHandler {
+func NewFamilyHandler(cfg *config.Config, familyRepo *repository.FamilyRepository) *FamilyHandler {
 	return &FamilyHandler{
-		familyRepo: familyRepo,
+		familyRepo:       familyRepo,
+		maxFamilyMembers: cfg.MaxFamilyMembers,
 	}
 }
 
@@ -139,6 +142,18 @@ func (h *FamilyHandler) Join(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to find family",
+		})
+	}
+
+	memberCount, err := h.familyRepo.CountMembers(family.ID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to check family capacity",
+		})
+	}
+	if memberCount >= h.maxFamilyMembers {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "family has reached maximum member limit",
 		})
 	}
 
