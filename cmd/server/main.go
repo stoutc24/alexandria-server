@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
+	"github.com/stoutsolutions/alexandria-server/internal/admin"
 	"github.com/stoutsolutions/alexandria-server/internal/config"
 	"github.com/stoutsolutions/alexandria-server/internal/database"
 	"github.com/stoutsolutions/alexandria-server/internal/handlers"
@@ -56,6 +57,12 @@ func main() {
 	mediaServerHandler := handlers.NewMediaServerHandler(mediaServerRepo, familyRepo)
 
 	app.Get("/health", handlers.Health)
+
+	// Admin dashboard
+	app.Use("/admin", admin.Handler())
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.Redirect("/admin")
+	})
 
 	api := app.Group("/api")
 	v1 := api.Group("/v1")
@@ -104,6 +111,7 @@ func main() {
 	}()
 
 	log.Printf("Alexandria Server starting on port %s", cfg.Port)
+	log.Printf("Admin dashboard: http://localhost:%s/admin", cfg.Port)
 	log.Printf("API available at http://localhost:%s/api/v1", cfg.Port)
 
 	if err := app.Listen(":" + cfg.Port); err != nil {
