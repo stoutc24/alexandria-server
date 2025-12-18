@@ -6,18 +6,22 @@ import (
 )
 
 type Config struct {
-	Port       string
-	DBPath     string
-	JWTSecret  string
-	BCryptCost int
+	Port          string
+	DBPath        string
+	JWTSecret     string
+	BCryptCost    int
+	EncryptionKey string // For encrypting stored credentials
 }
 
 func Load() *Config {
+	jwtSecret := getEnv("JWT_SECRET", "change-me-in-production")
+
 	return &Config{
-		Port:       getEnv("PORT", "3000"),
-		DBPath:     getEnv("DB_PATH", "./alexandria.db"),
-		JWTSecret:  getEnv("JWT_SECRET", "change-me-in-production"),
-		BCryptCost: getEnvInt("BCRYPT_COST", 12),
+		Port:          getEnv("PORT", "3000"),
+		DBPath:        getEnv("DB_PATH", "./alexandria.db"),
+		JWTSecret:     jwtSecret,
+		BCryptCost:    getEnvInt("BCRYPT_COST", 12),
+		EncryptionKey: getEnv("ENCRYPTION_KEY", jwtSecret), // Fallback to JWT secret
 	}
 }
 

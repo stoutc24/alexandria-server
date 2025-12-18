@@ -97,6 +97,44 @@ func RunMigrations() error {
 				CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash);
 			`,
 		},
+		{
+			name: "create_media_servers_table",
+			sql: `
+				CREATE TABLE IF NOT EXISTS media_servers (
+					id TEXT PRIMARY KEY,
+					family_id TEXT NOT NULL,
+					name TEXT NOT NULL,
+					type TEXT NOT NULL,
+					url TEXT NOT NULL,
+					encrypted_credentials TEXT NOT NULL,
+					created_by TEXT NOT NULL,
+					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+					updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+					FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
+					FOREIGN KEY (created_by) REFERENCES users(id)
+				);
+				CREATE INDEX IF NOT EXISTS idx_media_servers_family ON media_servers(family_id);
+				CREATE INDEX IF NOT EXISTS idx_media_servers_type ON media_servers(type);
+			`,
+		},
+		{
+			name: "create_server_access_table",
+			sql: `
+				CREATE TABLE IF NOT EXISTS server_access (
+					id TEXT PRIMARY KEY,
+					server_id TEXT NOT NULL,
+					user_id TEXT NOT NULL,
+					granted_by TEXT NOT NULL,
+					granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+					FOREIGN KEY (server_id) REFERENCES media_servers(id) ON DELETE CASCADE,
+					FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+					FOREIGN KEY (granted_by) REFERENCES users(id),
+					UNIQUE(server_id, user_id)
+				);
+				CREATE INDEX IF NOT EXISTS idx_server_access_server ON server_access(server_id);
+				CREATE INDEX IF NOT EXISTS idx_server_access_user ON server_access(user_id);
+			`,
+		},
 	}
 
 	for _, m := range migrations {

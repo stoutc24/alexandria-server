@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
 	"github.com/stoutsolutions/alexandria-server/internal/config"
+	"github.com/stoutsolutions/alexandria-server/internal/crypto"
 	"github.com/stoutsolutions/alexandria-server/internal/database"
 	"github.com/stoutsolutions/alexandria-server/internal/handlers"
 	"github.com/stoutsolutions/alexandria-server/internal/middleware"
@@ -45,11 +46,18 @@ func main() {
 		AllowMethods: "GET, POST, PUT, DELETE, PATCH, OPTIONS",
 	}))
 
+	// Initialize encryption for stored credentials
+	encryptor := crypto.NewEncryptor(cfg.EncryptionKey)
+
+	// Initialize repositories
 	userRepo := repository.NewUserRepository()
 	familyRepo := repository.NewFamilyRepository()
+	mediaServerRepo := repository.NewMediaServerRepository(encryptor)
 
+	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(cfg, userRepo)
 	familyHandler := handlers.NewFamilyHandler(familyRepo)
+	mediaServerHandler := handlers.NewMediaServerHandler(mediaServerRepo, familyRepo)
 
 	app.Get("/health", handlers.Health)
 
@@ -65,6 +73,9 @@ func main() {
 
 	protected.Get("/me", authHandler.Me)
 
+	// User's servers (what the app calls to get assigned servers)
+	protected.Get("/me/servers", mediaServerHandler.GetMyServers)
+
 	families := protected.Group("/families")
 	families.Post("/", familyHandler.Create)
 	families.Get("/", familyHandler.GetMyFamilies)
@@ -73,6 +84,17 @@ func main() {
 	families.Delete("/:id/leave", familyHandler.Leave)
 	families.Delete("/:id/members/:userId", familyHandler.RemoveMember)
 	families.Post("/:id/invite-code", familyHandler.RegenerateInviteCode)
+
+	// Media server management (within a family)
+	families.Post("/:id/servers", mediaServerHandler.CreateServer)
+	families.Get("/:id/servers", mediaServerHandler.GetServers)
+	families.Get("/:id/servers/:serverId", mediaServerHandler.GetServer)
+	families.Put("/:id/servers/:serverId", mediaServerHandler.UpdateServer)
+	families.Delete("/:id/servers/:serverId", mediaServerHandler.DeleteServer)
+
+	// Server access management
+	families.Post("/:id/servers/:serverId/access", mediaServerHandler.GrantAccess)
+	families.Delete("/:id/servers/:serverId/access/:userId", mediaServerHandler.RevokeAccess)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
