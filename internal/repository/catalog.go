@@ -125,11 +125,15 @@ type ItemQuery struct {
 
 // GetItems returns raw rows, ordered so paging is stable.
 func (r *CatalogRepository) GetItems(q ItemQuery) ([]catalog.Item, error) {
+	// content_key rides along so a paging client can group rows itself
+	// with a map lookup: the per-page Collapse in the handler cannot see
+	// across page boundaries, but the stored key — the server's actual
+	// thinking — can.
 	sqlStr := `
 		SELECT item_id, source, media_type, title,
 		       COALESCE(author, ''), COALESCE(series, ''),
 		       COALESCE(genre, ''), COALESCE(year, 0),
-		       COALESCE(duration_sec, 0)
+		       COALESCE(duration_sec, 0), COALESCE(content_key, '')
 		FROM catalog_items
 		WHERE 1 = 1`
 	args := []any{}
@@ -165,6 +169,7 @@ func (r *CatalogRepository) GetItems(q ItemQuery) ([]catalog.Item, error) {
 		if err := rows.Scan(
 			&it.ItemID, &it.Source, &it.MediaType, &it.Title,
 			&it.Author, &it.Series, &it.Genre, &it.Year, &it.DurationS,
+			&it.ContentKey,
 		); err != nil {
 			return nil, err
 		}

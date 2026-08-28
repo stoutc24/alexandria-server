@@ -106,3 +106,75 @@ func TestSummarizeCountsThingsNotCopies(t *testing.T) {
 		t.Errorf("Ungrouped = %d, want 1", s.Ungrouped)
 	}
 }
+
+func video(title string, year int, source string) Item {
+	return Item{
+		ItemID:    source + ":" + title,
+		Source:    source,
+		MediaType: "movie",
+		Title:     title,
+		Year:      year,
+	}
+}
+
+// The finding from the first real library: a Plex with overlapping
+// sections ("All Movies" superset + genre shelves) indexes each film
+// once per section. Author-based keying left every one ungroupable, so
+// a 1,666-film library reported 3,335 movies.
+func TestTheSameFilmAcrossPlexSectionsIsOneWork(t *testing.T) {
+	a := ContentKey(video("Footloose", 1984, "plex"))
+	b := ContentKey(video("Footloose", 1984, "plex"))
+	if a == "" {
+		t.Fatal("a movie with a year must be keyable")
+	}
+	if a != b {
+		t.Fatalf("same film keyed differently: %q %q", a, b)
+	}
+}
+
+// The year is what makes title-only safe: the remakes must not merge.
+func TestRemakesStayDistinct(t *testing.T) {
+	if ContentKey(video("Footloose", 1984, "plex")) ==
+		ContentKey(video("Footloose", 2011, "plex")) {
+		t.Fatal("Footloose 1984 and 2011 merged — the exact failure the " +
+			"year exists to prevent")
+	}
+}
+
+// No year, no key — refusing to guess beats merging two different
+// films that happen to share a title.
+func TestAFilmWithoutAYearIsNotGrouped(t *testing.T) {
+	if k := ContentKey(video("Footloose", 0, "plex")); k != "" {
+		t.Fatalf("a yearless film produced key %q", k)
+	}
+}
+
+// A client-supplied key wins outright: the app can send Plex's guid,
+// which survives retitling and is stronger than anything derivable.
+func TestAClientSuppliedKeyIsHonored(t *testing.T) {
+	a := video("Footloose", 1984, "plex")
+	a.ContentKey = "plex://movie/5d9f34ecd5fd3f001ee1409b"
+	b := video("Footloose (Remastered)", 1984, "plex")
+	b.ContentKey = "plex://movie/5d9f34ecd5fd3f001ee1409b"
+
+	ka, kb := ContentKey(a), ContentKey(b)
+	if ka == "" || ka != kb {
+		t.Fatalf("shared guid did not group retitled copies: %q %q", ka, kb)
+	}
+
+	// And a DIFFERENT guid must keep same-titled items apart.
+	c := video("Footloose", 1984, "plex")
+	c.ContentKey = "plex://movie/other"
+	if ContentKey(c) == ka {
+		t.Fatal("different guids merged")
+	}
+}
+
+// Books are untouched by the video rule — the creator guard still holds.
+func TestBooksStillRequireACreator(t *testing.T) {
+	book := Item{Source: "abs", MediaType: "audiobook",
+		Title: "Greatest Hits", Author: "Unknown", Year: 2020}
+	if k := ContentKey(book); k != "" {
+		t.Fatalf("a placeholder-credited book grouped via year: %q", k)
+	}
+}

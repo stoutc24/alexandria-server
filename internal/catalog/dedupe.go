@@ -13,6 +13,7 @@
 package catalog
 
 import (
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -25,9 +26,13 @@ type Item struct {
 	Title     string `json:"title"`
 	Author    string `json:"author"`
 	Series    string `json:"series,omitempty"`
-	Genre     string `json:"genre,omitempty"`
-	Year      int    `json:"year,omitempty"`
-	DurationS int    `json:"durationSec,omitempty"`
+	// ContentKey lets the app supply a STRONGER identity than the server
+	// can derive — Plex's guid, for instance, which survives retitling
+	// and sections. Optional; when empty the server derives one.
+	ContentKey string `json:"contentKey,omitempty"`
+	Genre      string `json:"genre,omitempty"`
+	Year       int    `json:"year,omitempty"`
+	DurationS  int    `json:"durationSec,omitempty"`
 }
 
 // Group is one logical work and every copy of it found.
@@ -75,20 +80,55 @@ func normalize(s string) string {
 // ContentKey is the cross-service identity for an item, or "" when the
 // item cannot be grouped safely.
 //
-// Empty when the creator does not normalise to something real:
-// placeholders ("Unknown", "Various Artists", "N/A") would otherwise
-// stitch unrelated works together, which is the one failure mode worse
-// than a duplicate.
+// Books and music key on title|creator. Empty when the creator does not
+// normalise to something real: placeholders ("Unknown", "Various
+// Artists", "N/A") would otherwise stitch unrelated works together,
+// which is the one failure mode worse than a duplicate.
+//
+// VIDEO keys on title|year instead — movies and episodes carry no
+// author, so the creator rule left 65% of a real catalog ungroupable
+// and every film in an overlapping-section Plex setup counted once per
+// section (measured on a live library: 3,335 "movies", 1,666 actual).
+// The year is what keeps title-only safe: it holds Footloose (1984)
+// and Footloose (2011) apart — on that same library, title+year split
+// exactly the 24 remakes that title alone would have merged. A film
+// with no year stays ungroupable, on the same refuse-to-guess rule.
+//
+// An item that arrives with a key already set keeps it: the app can
+// send a stronger identity than we can derive — Plex's guid survives
+// retitling — and same-household data has no reason to lie about what
+// it is.
 func ContentKey(it Item) string {
-	creator := normalize(it.Author)
-	if creator == "" || isPlaceholderCreator(creator) {
-		return ""
+	if it.ContentKey != "" {
+		return normalize(it.ContentKey)
 	}
+
 	title := normalize(it.Title)
 	if title == "" {
 		return ""
 	}
+
+	if isVideo(it.MediaType) {
+		if it.Year <= 0 {
+			return ""
+		}
+		return title + "|" + strconv.Itoa(it.Year)
+	}
+
+	creator := normalize(it.Author)
+	if creator == "" || isPlaceholderCreator(creator) {
+		return ""
+	}
 	return title + "|" + creator
+}
+
+// isVideo covers the media types that carry no author by nature.
+func isVideo(mediaType string) bool {
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "movie", "tvepisode", "tvshow", "video":
+		return true
+	}
+	return false
 }
 
 var placeholderCreators = map[string]bool{
