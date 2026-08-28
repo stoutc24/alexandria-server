@@ -38,20 +38,47 @@ func (r *CatalogRepository) ReplaceSource(
 	source string,
 	items []catalog.Item,
 ) (int, error) {
+	return r.writeSource(source, items, true)
+}
+
+// AppendToSource adds items without clearing what is already stored.
+//
+// A large library does not fit in one request — 20,000 rows is about
+// 4 MB of JSON, which is already at the edge of what a server should
+// accept in one go. So the app clears the source with the first chunk
+// and appends the rest, and the whole library lands without ever
+// holding it all in memory on either side.
+func (r *CatalogRepository) AppendToSource(
+	source string,
+	items []catalog.Item,
+) (int, error) {
+	return r.writeSource(source, items, false)
+}
+
+func (r *CatalogRepository) writeSource(
+	source string,
+	items []catalog.Item,
+	replace bool,
+) (int, error) {
 	tx, err := database.DB.Begin()
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback() // no-op once Commit succeeds
 
-	if _, err := tx.Exec(
-		`DELETE FROM catalog_items WHERE source = ?`, source,
-	); err != nil {
-		return 0, err
+	if replace {
+		if _, err := tx.Exec(
+			`DELETE FROM catalog_items WHERE source = ?`, source,
+		); err != nil {
+			return 0, err
+		}
 	}
 
+	// OR REPLACE so a re-sent chunk updates rather than failing on the
+	// (source, item_id) unique constraint — a retried chunk must be
+	// harmless.
 	stmt, err := tx.Prepare(`
-		INSERT INTO catalog_items
+		INSERT OR REPLACE INTO catalog_items
 			(id, source, item_id, content_key, media_type,
 			 title, author, series, genre, year, duration_sec)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

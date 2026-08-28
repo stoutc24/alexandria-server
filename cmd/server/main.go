@@ -36,6 +36,18 @@ func main() {
 	app := fiber.New(fiber.Config{
 		AppName:      "Alexandria Server v0.2.0",
 		ErrorHandler: customErrorHandler,
+
+		// Catalogue chunks are the largest thing this accepts. 8 MB is
+		// double what a full chunk needs, so a slightly chatty client
+		// still fits, while a runaway request is still refused rather
+		// than buffered.
+		BodyLimit: 8 * 1024 * 1024,
+
+		// Trim the idle footprint: fewer, smaller buffers held per
+		// connection between requests on a box that is mostly quiet.
+		ReadBufferSize:    4096,
+		Concurrency:       256,
+		ReduceMemoryUsage: true,
 	})
 
 	app.Use(recover.New())
@@ -143,6 +155,22 @@ func main() {
 	stats.Post("/events", statsHandler.AppendEvents)
 	stats.Get("/summary", statsHandler.GetSummary)
 	stats.Delete("/", statsHandler.DeleteOwnStats)
+
+	// Housekeeping. Expired link codes are the only table that grows
+	// without anybody deleting from it, and a stale row is dead weight
+	// in every pending-links query. Hourly is far more often than
+	// necessary and costs a single indexed DELETE.
+	housekeeping := time.NewTicker(time.Hour)
+	defer housekeeping.Stop()
+	go func() {
+		for range housekeeping.C {
+			if n, err := linkRepo.PurgeExpired(); err != nil {
+				log.Printf("housekeeping: purge failed: %v", err)
+			} else if n > 0 {
+				log.Printf("housekeeping: removed %d expired link requests", n)
+			}
+		}
+	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

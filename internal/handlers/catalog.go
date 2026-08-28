@@ -23,13 +23,22 @@ func NewCatalogHandler(catalogRepo *repository.CatalogRepository) *CatalogHandle
 	return &CatalogHandler{catalogRepo: catalogRepo}
 }
 
-// maxSyncItems caps one sync payload. Large libraries page instead of
-// arriving as a single multi-hundred-megabyte body.
-const maxSyncItems = 20000
+// maxSyncItems caps one sync REQUEST, not a library.
+//
+// 20,000 rows is roughly 4 MB of JSON, which is exactly Fiber's default
+// body limit — a library that size was being refused with a 413 before
+// this handler ever ran. Large libraries now arrive in chunks: the first
+// replaces the source, the rest append.
+const maxSyncItems = 5000
 
 type SyncCatalogRequest struct {
 	Source string         `json:"source"`
 	Items  []catalog.Item `json:"items"`
+	// Mode is "replace" (the default) or "append". A library too large
+	// for one request sends its first chunk as replace and the rest as
+	// append, so the source is swapped atomically-enough without ever
+	// holding the whole thing in memory.
+	Mode string `json:"mode,omitempty"`
 }
 
 type SyncCatalogResponse struct {
@@ -56,12 +65,19 @@ func (h *CatalogHandler) SyncSource(c *fiber.Ctx) error {
 	}
 	if len(req.Items) > maxSyncItems {
 		return c.Status(fiber.StatusRequestEntityTooLarge).JSON(fiber.Map{
-			"error": "too many items in one sync; send at most " +
-				strconv.Itoa(maxSyncItems),
+			"error": "too many items in one request; send at most " +
+				strconv.Itoa(maxSyncItems) + " and continue with " +
+				`mode:"append"`,
 		})
 	}
 
-	written, err := h.catalogRepo.ReplaceSource(req.Source, req.Items)
+	var written int
+	var err error
+	if req.Mode == "append" {
+		written, err = h.catalogRepo.AppendToSource(req.Source, req.Items)
+	} else {
+		written, err = h.catalogRepo.ReplaceSource(req.Source, req.Items)
+	}
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to store catalog",

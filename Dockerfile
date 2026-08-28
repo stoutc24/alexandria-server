@@ -65,6 +65,15 @@ ENV DB_PATH=/data/alexandria.db
 # Deliberately the placeholder: config.Load() rejects it, so a container
 # started without a real token fails fast instead of coming up open.
 ENV ALEXANDRIA_API_TOKEN=change-me
+
+# Keep the Go heap bounded on a small box. Without it the collector
+# sizes itself against the HOST's memory, which on a NAS running other
+# things means this holds far more than it needs. 96 MiB is generous for
+# a workload whose resident set is around 20 MB.
+ENV GOMEMLIMIT=96MiB
+# One background collector is right for a mostly-idle service; the
+# default scales with CPU count and just adds scheduler churn here.
+ENV GOGC=100
 ENV TZ=UTC
 
 # Expose port
