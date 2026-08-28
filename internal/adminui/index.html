@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alexandria Companion</title>
+<style>
+  :root {
+    --bg: #f7f7f9;
+    --surface: #ffffff;
+    --border: #e2e2e8;
+    --text: #1a1a20;
+    --muted: #6b6b78;
+    --accent: #2563EB;
+    --accent-soft: rgba(37, 99, 235, 0.1);
+    --gold: #C9822A;
+    --danger: #b3261e;
+    --ok: #2e7d4f;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131317;
+      --surface: #1c1c22;
+      --border: #2e2e38;
+      --text: #ececf1;
+      --muted: #9a9aa8;
+      --accent: #6b9cff;
+      --accent-soft: rgba(107, 156, 255, 0.14);
+      --gold: #e0a45c;
+      --danger: #ef9a93;
+      --ok: #7ed3a2;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 22px 20px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  header h1 { margin: 0; font-size: 19px; letter-spacing: -0.2px; }
+  header p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 60px; }
+  section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px;
+    margin-bottom: 18px;
+  }
+  h2 { margin: 0 0 4px; font-size: 15px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  input[type=text], input[type=password] {
+    width: 100%; padding: 10px 12px; font-size: 14px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-family: inherit;
+  }
+  input:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  button {
+    font: inherit; font-size: 14px; padding: 9px 14px;
+    border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+  }
+  button.primary:hover { filter: brightness(1.08); }
+  button.danger { color: var(--danger); }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; min-width: 180px; }
+  .card {
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 13px 14px; margin-bottom: 10px;
+  }
+  .card h3 { margin: 0 0 2px; font-size: 15px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 21px; letter-spacing: 4px; font-weight: 700;
+    color: var(--accent); background: var(--accent-soft);
+    padding: 6px 12px; border-radius: 8px; display: inline-block;
+  }
+  .device {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 10px; padding: 7px 0; border-top: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .empty { color: var(--muted); font-size: 14px; padding: 6px 0; }
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: var(--text); color: var(--bg); padding: 11px 18px;
+    border-radius: 8px; font-size: 14px; opacity: 0;
+    transition: opacity .2s; pointer-events: none; max-width: 90vw;
+  }
+  .toast.show { opacity: 1; }
+  .toast.err { background: var(--danger); color: #fff; }
+  .stat { display: flex; gap: 22px; flex-wrap: wrap; }
+  .stat div span { display: block; font-size: 21px; font-weight: 700; }
+  .stat div small { color: var(--muted); font-size: 12px; }
+  .note {
+    font-size: 12.5px; color: var(--muted); border-left: 3px solid var(--gold);
+    padding: 8px 0 8px 11px; margin-top: 14px;
+  }
+  #app[hidden], #login[hidden] { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Alexandria Companion</h1>
+  <p>Household management — who is connected, and how much space they use.</p>
+</header>
+
+<main>
+  <section id="login">
+    <h2>Admin token</h2>
+    <p class="hint">The <code>ALEXANDRIA_API_TOKEN</code> from your server's
+      environment. It stays in this browser and is never sent anywhere but
+      this server.</p>
+    <div class="row">
+      <input class="grow" type="password" id="token" placeholder="Paste admin token"
+             autocomplete="off" spellcheck="false">
+      <button class="primary" id="signin">Continue</button>
+    </div>
+  </section>
+
+  <div id="app" hidden>
+    <section>
+      <h2>Waiting to connect</h2>
+      <p class="hint">Someone opened Alexandria and read you a code. Approve it
+        and name them — an existing name adds the device to that person.</p>
+      <div id="pending"></div>
+    </section>
+
+    <section>
+      <h2>People</h2>
+      <p class="hint">Counts and devices only. What anyone actually listened to
+        is not available here.</p>
+      <div id="profiles"></div>
+    </section>
+
+    <section>
+      <h2>Library index</h2>
+      <div id="catalog" class="stat"></div>
+      <div class="note">The index is shared: it describes your servers, not any
+        person. Everyone connected reads the same one.</div>
+    </section>
+
+    <section>
+      <h2>Maintenance</h2>
+      <div class="row">
+        <button id="backup">Download backup</button>
+        <button id="refresh">Refresh</button>
+        <button id="signout">Sign out of this browser</button>
+      </div>
+    </section>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+  var KEY = "alexandria_admin_token";
+  var token = "";
+  try { token = sessionStorage.getItem(KEY) || ""; } catch (e) { token = ""; }
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function toast(msg, isErr) {
+    var t = $("toast");
+    t.textContent = msg;
+    t.className = "toast show" + (isErr ? " err" : "");
+    setTimeout(function () { t.className = "toast"; }, 2600);
+  }
+
+  function api(path, opts) {
+    opts = opts || {};
+    opts.headers = opts.headers || {};
+    opts.headers["Authorization"] = "Bearer " + token;
+    if (opts.body) opts.headers["Content-Type"] = "application/json";
+    return fetch("/api/v1" + path, opts).then(function (res) {
+      if (res.status === 401) {
+        signOut();
+        throw new Error("That admin token was not accepted.");
+      }
+      if (!res.ok) {
+        return res.json().catch(function () { return {}; }).then(function (b) {
+          throw new Error(b.error || ("Request failed (" + res.status + ")"));
+        });
+      }
+      return res.status === 204 ? null : res.json();
+    });
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;",
+               '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function ago(iso) {
+    if (!iso) return "never";
+    var secs = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (isNaN(secs)) return "never";
+    if (secs < 90) return "just now";
+    if (secs < 3600) return Math.round(secs / 60) + " min ago";
+    if (secs < 172800) return Math.round(secs / 3600) + " hr ago";
+    return Math.round(secs / 86400) + " days ago";
+  }
+
+  function hours(secs) {
+    if (!secs) return "0";
+    return (secs / 3600).toFixed(secs < 36000 ? 1 : 0);
+  }
+
+  // ---- pending links -------------------------------------------------
+  function renderPending(list) {
+    var el = $("pending");
+    if (!list.length) {
+      el.innerHTML = '<p class="empty">Nothing waiting. Codes last 10 minutes.</p>';
+      return;
+    }
+    el.innerHTML = list.map(function (p) {
+      return '<div class="card">' +
+        '<div class="row" style="justify-content:space-between">' +
+          '<span class="code">' + esc(p.code) + '</span>' +
+          '<span class="meta">' + esc(p.deviceLabel || "a device") +
+            ' · asked ' + ago(p.createdAt) + '</span>' +
+        '</div>' +
+        '<div class="row" style="margin-top:11px">' +
+          '<input class="grow" type="text" placeholder="Who is this?" ' +
+            'data-name-for="' + esc(p.code) + '" spellcheck="false">' +
+          '<button class="primary" data-approve="' + esc(p.code) + '">Approve</button>' +
+        '</div>' +
+      '</div>';
+    }).join("");
+  }
+
+  function approve(code) {
+    var input = document.querySelector('[data-name-for="' + code + '"]');
+    var name = input ? input.value.trim() : "";
+    if (!name) { toast("Give them a name first.", true); return; }
+    api("/admin/links/approve", {
+      method: "POST",
+      body: JSON.stringify({ code: code, name: name })
+    }).then(function () {
+      toast("Approved — their app will connect in a moment.");
+      load();
+    }).catch(function (e) { toast(e.message, true); });
+  }
+
+  // ---- profiles ------------------------------------------------------
+  function renderProfiles(list) {
+    var el = $("profiles");
+    if (!list.length) {
+      el.innerHTML = '<p class="empty">Nobody is connected yet.</p>';
+      return;
+    }
+    el.innerHTML = list.map(function (p) {
+      var devices = (p.devices || []).map(function (d) {
+        return '<div class="device">' +
+          '<span>' + esc(d.label || "unnamed device") +
+            ' <span class="meta">· seen ' + ago(d.lastSeenAt) + '</span></span>' +
+          '<button class="danger" data-revoke="' + esc(d.id) + '" ' +
+            'data-devlabel="' + esc(d.label || "this device") + '">Revoke</button>' +
+        '</div>';
+      }).join("");
+      if (!devices) {
+        devices = '<div class="device"><span class="meta">No devices linked.</span></div>';
+      }
+      return '<div class="card">' +
+        '<div class="row" style="justify-content:space-between">' +
+          '<div><h3>' + esc(p.name) + '</h3>' +
+            '<span class="meta">' + hours(p.totalSeconds) + ' hours · ' +
+              p.eventCount + ' sessions</span></div>' +
+          '<button class="danger" data-delete="' + esc(p.id) + '" ' +
+            'data-pname="' + esc(p.name) + '">Remove</button>' +
+        '</div>' + devices +
+      '</div>';
+    }).join("");
+  }
+
+  function revoke(id, label) {
+    if (!confirm('Revoke "' + label + '"?\n\nThat device signs out. Their ' +
+                 'other devices and all their history are untouched.')) return;
+    api("/admin/devices/" + encodeURIComponent(id), { method: "DELETE" })
+      .then(function () { toast("Device revoked."); load(); })
+      .catch(function (e) { toast(e.message, true); });
+  }
+
+  function removeProfile(id, name) {
+    if (!confirm('Remove "' + name + '" completely?\n\nThis deletes their ' +
+                 'stats and unlinks every device they have. It cannot be ' +
+                 'undone.\n\nNo media on any of your servers is affected.')) return;
+    api("/admin/profiles/" + encodeURIComponent(id), { method: "DELETE" })
+      .then(function () { toast("Removed."); load(); })
+      .catch(function (e) { toast(e.message, true); });
+  }
+
+  // ---- catalog -------------------------------------------------------
+  function renderCatalog(c) {
+    var sources = Object.keys(c.bySource || {}).length;
+    $("catalog").innerHTML =
+      '<div><span>' + (c.distinctWorks || 0) + '</span><small>distinct titles</small></div>' +
+      '<div><span>' + (c.rawItems || 0) + '</span><small>entries indexed</small></div>' +
+      '<div><span>' + (c.duplicateCopies || 0) + '</span><small>duplicate copies</small></div>' +
+      '<div><span>' + sources + '</span><small>servers</small></div>';
+  }
+
+  // ---- load / auth ---------------------------------------------------
+  function load() {
+    return Promise.all([
+      api("/admin/links"),
+      api("/admin/profiles"),
+      api("/catalog/summary")
+    ]).then(function (r) {
+      renderPending(r[0].pending || []);
+      renderProfiles(r[1].profiles || []);
+      renderCatalog(r[2] || {});
+    }).catch(function (e) { toast(e.message, true); });
+  }
+
+  function signIn() {
+    var val = $("token").value.trim();
+    if (!val) { toast("Paste your admin token.", true); return; }
+    token = val;
+    api("/admin/profiles").then(function () {
+      try { sessionStorage.setItem(KEY, token); } catch (e) { /* private mode */ }
+      $("login").hidden = true;
+      $("app").hidden = false;
+      $("token").value = "";
+      load();
+      if (!window._alexPoll) {
+        window._alexPoll = setInterval(function () {
+          if (!$("app").hidden) load();
+        }, 5000);
+      }
+    }).catch(function (e) { toast(e.message, true); });
+  }
+
+  function signOut() {
+    token = "";
+    try { sessionStorage.removeItem(KEY); } catch (e) { /* ignore */ }
+    $("app").hidden = true;
+    $("login").hidden = false;
+  }
+
+  function backup() {
+    fetch("/api/v1/admin/backup", {
+      headers: { "Authorization": "Bearer " + token }
+    }).then(function (res) {
+      if (!res.ok) throw new Error("Backup failed (" + res.status + ")");
+      return res.blob();
+    }).then(function (blob) {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "alexandria-backup.db";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () {
+        URL.revokeObjectURL(a.href);
+        a.remove();
+      }, 1000);
+      toast("Backup downloaded.");
+    }).catch(function (e) { toast(e.message, true); });
+  }
+
+  // Delegated so re-rendered rows keep working.
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    if (!t || t.tagName !== "BUTTON") return;
+    if (t.dataset.approve) approve(t.dataset.approve);
+    else if (t.dataset.revoke) revoke(t.dataset.revoke, t.dataset.devlabel);
+    else if (t.dataset.delete) removeProfile(t.dataset.delete, t.dataset.pname);
+  });
+
+  $("signin").addEventListener("click", signIn);
+  $("token").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") signIn();
+  });
+  $("refresh").addEventListener("click", function () {
+    load().then(function () { toast("Refreshed."); });
+  });
+  $("signout").addEventListener("click", signOut);
+  $("backup").addEventListener("click", backup);
+
+  if (token) {
+    $("token").value = token;
+    signIn();
+  }
+})();
+</script>
+</body>
+</html>

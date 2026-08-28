@@ -2,26 +2,11 @@
 # Alexandria Server - Multi-stage Docker Build
 # =============================================================================
 
-# Frontend build stage
-FROM node:20-alpine AS frontend
-
-WORKDIR /frontend
-
-# Copy package files
-COPY admin/package.json admin/package-lock.json* ./
-
-# Install dependencies
-RUN npm install
-
-# Copy source files
-COPY admin/ .
-
-# Build the frontend
-RUN npm run build
-
-# =============================================================================
-# Backend build stage
-# =============================================================================
+# Build stage
+#
+# There is no frontend stage: the admin page is a single HTML file
+# embedded with go:embed (internal/adminui), so the image needs no Node
+# toolchain and no npm dependencies.
 FROM golang:1.22-alpine AS builder
 
 WORKDIR /build
@@ -32,11 +17,9 @@ RUN apk add --no-cache git
 # Copy all source first (needed for go mod tidy to resolve dependencies)
 COPY . .
 
-# Copy built frontend assets into the embed directory
-COPY --from=frontend /frontend/build ./internal/admin/dist
-
-# Generate go.sum and download dependencies
-RUN go mod tidy && go mod download
+# go.sum is committed, so download exactly what it pins rather than
+# letting tidy resolve fresh versions at image-build time.
+RUN go mod download
 
 # Build the binary with optimizations (architecture detected by Docker buildx)
 RUN CGO_ENABLED=0 go build \

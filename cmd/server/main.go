@@ -13,6 +13,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
+	"github.com/stoutsolutions/alexandria-server/internal/adminui"
 	"github.com/stoutsolutions/alexandria-server/internal/config"
 	"github.com/stoutsolutions/alexandria-server/internal/database"
 	"github.com/stoutsolutions/alexandria-server/internal/handlers"
@@ -61,6 +62,11 @@ func main() {
 	// companion exists and what it can do before it has been given a
 	// token. It reveals capabilities, never library contents.
 	app.Get("/health", handlers.Health)
+
+	// The management page. Inert markup until someone types the admin
+	// token into it, so it needs no auth of its own — every call it
+	// makes goes to /api/v1/admin/*, which does.
+	app.Get("/admin", adminui.Handler)
 
 	api := app.Group("/api")
 	v1 := api.Group("/v1")
