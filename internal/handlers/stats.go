@@ -47,13 +47,26 @@ func (h *StatsHandler) AppendEvents(c *fiber.Ctx) error {
 		})
 	}
 
-	written, err := h.stats.AppendEvents(profileID, req.Events)
+	result, err := h.stats.AppendEvents(profileID, req.Events)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": err.Error(),
 		})
 	}
-	return c.JSON(fiber.Map{"written": written})
+
+	// The breakdown matters to the caller: "written: 0" could mean a
+	// successful replay, a batch of overlaps already covered by another
+	// device, or a device whose clock is wrong and whose data is being
+	// thrown away. Those need telling apart.
+	return c.JSON(fiber.Map{
+		"written":    result.Accepted, // kept for older clients
+		"accepted":   result.Accepted,
+		"duplicates": result.Duplicates,
+		"overlapped": result.Overlapped,
+		"extended":   result.Extended,
+		"rejected":   result.Rejected,
+		"backfilled": result.Backfilled,
+	})
 }
 
 // GetSummary returns the caller's own rollup.

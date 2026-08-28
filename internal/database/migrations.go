@@ -117,11 +117,14 @@ func RunMigrations() error {
 					event_type TEXT NOT NULL,
 					seconds INTEGER NOT NULL DEFAULT 0,
 					occurred_at DATETIME NOT NULL,
+					occurred_at_unix INTEGER,
 					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 					FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
 				);
 				CREATE INDEX IF NOT EXISTS idx_stats_profile_time ON stats_events(profile_id, occurred_at);
 				CREATE INDEX IF NOT EXISTS idx_stats_profile_key ON stats_events(profile_id, content_key);
+				CREATE INDEX IF NOT EXISTS idx_stats_profile_item ON stats_events(profile_id, source, item_id);
+				CREATE INDEX IF NOT EXISTS idx_stats_profile_when ON stats_events(profile_id, occurred_at_unix);
 			`,
 		},
 		{
@@ -189,6 +192,12 @@ func RunMigrations() error {
 	// against both a fresh database and one already in service.
 	for _, alter := range []string{
 		`ALTER TABLE stats_events ADD COLUMN client_event_id TEXT`,
+		// Epoch seconds alongside the DATETIME. Overlap detection needs
+		// arithmetic on instants, and SQLite's text dates make that
+		// depend on the exact string the driver happened to write —
+		// which fails silently rather than loudly. An integer cannot be
+		// ambiguous.
+		`ALTER TABLE stats_events ADD COLUMN occurred_at_unix INTEGER`,
 	} {
 		if _, err := DB.Exec(alter); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {

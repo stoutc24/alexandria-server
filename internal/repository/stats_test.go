@@ -180,22 +180,25 @@ func TestRepeatedEventsAreIgnoredNotDuplicated(t *testing.T) {
 		OccurredAt:    time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC),
 	}
 
-	n, err := stats.AppendEvents(p.ID, []Event{event})
+	res, err := stats.AppendEvents(p.ID, []Event{event})
 	if err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	if n != 1 {
-		t.Fatalf("first append wrote %d, want 1", n)
+	if res.Accepted != 1 {
+		t.Fatalf("first append accepted %d, want 1", res.Accepted)
 	}
 
 	// The same event again — a retry, or the watch reporting what the
 	// phone already sent.
-	n, err = stats.AppendEvents(p.ID, []Event{event, event})
+	res, err = stats.AppendEvents(p.ID, []Event{event, event})
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
-	if n != 0 {
-		t.Errorf("replay wrote %d new rows, want 0", n)
+	if res.Accepted != 0 {
+		t.Errorf("replay accepted %d new rows, want 0", res.Accepted)
+	}
+	if res.Duplicates != 2 {
+		t.Errorf("replay reported %d duplicates, want 2", res.Duplicates)
 	}
 
 	s, err := stats.Summarize(p.ID)
@@ -222,11 +225,11 @@ func TestTheSameClientIDForDifferentPeopleIsNotADuplicate(t *testing.T) {
 	e := Event{ClientEventID: "row-1", Title: "T", EventType: "progress",
 		Seconds: 60, OccurredAt: time.Now().UTC()}
 
-	if n, err := stats.AppendEvents(sarah.ID, []Event{e}); err != nil || n != 1 {
-		t.Fatalf("sarah: n=%d err=%v", n, err)
+	if r, err := stats.AppendEvents(sarah.ID, []Event{e}); err != nil || r.Accepted != 1 {
+		t.Fatalf("sarah: %+v err=%v", r, err)
 	}
-	if n, err := stats.AppendEvents(chris.ID, []Event{e}); err != nil || n != 1 {
-		t.Fatalf("chris's identical id was swallowed: n=%d err=%v", n, err)
+	if r, err := stats.AppendEvents(chris.ID, []Event{e}); err != nil || r.Accepted != 1 {
+		t.Fatalf("chris's identical id was swallowed: %+v err=%v", r, err)
 	}
 }
 
@@ -239,7 +242,7 @@ func TestEventsWithoutAClientIDAreStillAccepted(t *testing.T) {
 	e := Event{Title: "T", EventType: "progress", Seconds: 60,
 		OccurredAt: time.Now().UTC()}
 
-	if n, err := stats.AppendEvents(p.ID, []Event{e, e, e}); err != nil || n != 3 {
-		t.Fatalf("unidentified events: n=%d err=%v, want 3", n, err)
+	if r, err := stats.AppendEvents(p.ID, []Event{e, e, e}); err != nil || r.Accepted != 3 {
+		t.Fatalf("unidentified events: %+v err=%v, want 3 accepted", r, err)
 	}
 }

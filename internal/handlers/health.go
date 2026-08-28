@@ -40,6 +40,8 @@ var capabilities = []string{
 	"profiles.devices",
 	"stats.events",
 	"stats.summary",
+	"stats.rereads",
+	"stats.smart-ingest",
 	"link",
 	"devices.provision",
 }

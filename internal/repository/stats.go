@@ -34,14 +34,31 @@ type Event struct {
 }
 
 // StatsSummary is a person's own rollup, computed in SQL.
+//
+// Finished counts every completion. DistinctWorksFinished counts the
+// WORKS behind them, and Rereads is the difference — so someone who read
+// one book five times has read one book and reread it four times, rather
+// than appearing to have read five. That distinction is the honest one,
+// and it is what makes a year-in-review able to say something true.
 type StatsSummary struct {
-	TotalEvents   int              `json:"totalEvents"`
-	TotalSeconds  int64            `json:"totalSeconds"`
-	Finished      int              `json:"finished"`
-	FirstEventAt  *time.Time       `json:"firstEventAt,omitempty"`
-	LastEventAt   *time.Time       `json:"lastEventAt,omitempty"`
-	SecondsByType map[string]int64 `json:"secondsByType"`
-	TopAuthors    []AuthorTotal    `json:"topAuthors"`
+	TotalEvents           int              `json:"totalEvents"`
+	TotalSeconds          int64            `json:"totalSeconds"`
+	Finished              int              `json:"finished"`
+	DistinctWorksFinished int              `json:"distinctWorksFinished"`
+	Rereads               int              `json:"rereads"`
+	FirstEventAt          *time.Time       `json:"firstEventAt,omitempty"`
+	LastEventAt           *time.Time       `json:"lastEventAt,omitempty"`
+	SecondsByType         map[string]int64 `json:"secondsByType"`
+	TopAuthors            []AuthorTotal    `json:"topAuthors"`
+	MostReread            []RereadTotal    `json:"mostReread"`
+}
+
+// RereadTotal is one work and how many times it was finished. Times is
+// the total reads, so Times-1 is how often it was returned to.
+type RereadTotal struct {
+	Title  string `json:"title"`
+	Author string `json:"author"`
+	Times  int    `json:"times"`
 }
 
 type AuthorTotal struct {
@@ -65,66 +82,118 @@ const maxEventsPerBatch = 1000
 // body — otherwise anyone could write into someone else's history by
 // naming them.
 //
-// Idempotent: an event whose ClientEventID has been seen before for this
-// profile is ignored rather than duplicated, so clients may retry freely
-// and two devices may report the same session. Returns how many rows
-// were actually new.
+// Ingest is classifying, not blindly appending: see ingest.go for why a
+// stable client id alone is not enough once more than one device
+// reports. Returns a breakdown so the caller can tell a real sync from
+// a replay, and can surface a device whose clock is wrong instead of
+// silently dropping its data.
 func (r *StatsRepository) AppendEvents(
 	profileID string,
 	events []Event,
-) (int, error) {
+) (IngestResult, error) {
+	var result IngestResult
+
 	if len(events) > maxEventsPerBatch {
-		return 0, errors.New("too many events in one batch")
+		return result, errors.New("too many events in one batch")
 	}
 
 	tx, err := database.DB.Begin()
 	if err != nil {
-		return 0, err
+		return result, err
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`
+	insert, err := tx.Prepare(`
 		INSERT OR IGNORE INTO stats_events
 			(id, profile_id, client_event_id, source, item_id, content_key,
-			 media_type, title, author, event_type, seconds, occurred_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 media_type, title, author, event_type, seconds, occurred_at,
+			 occurred_at_unix)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
-		return 0, err
+		return result, err
 	}
-	defer stmt.Close()
+	defer insert.Close()
 
-	written := 0
+	now := time.Now().UTC()
+
 	for _, e := range events {
 		if e.EventType == "" {
 			e.EventType = "progress"
 		}
 		if e.OccurredAt.IsZero() {
-			e.OccurredAt = time.Now().UTC()
+			e.OccurredAt = now
 		}
 		if e.Seconds < 0 {
 			e.Seconds = 0
 		}
 
-		res, err := stmt.Exec(
+		rejected, backfilled := classify(e, now)
+		if rejected {
+			result.Rejected++
+			continue
+		}
+
+		// A second "finished" for a work just finished is the same
+		// finish seen twice, not a reread. Counting it would inflate
+		// both books-read and rereads at once.
+		if dup, err := completionAlreadyRecorded(tx, profileID, e); err != nil {
+			return result, err
+		} else if dup {
+			result.Overlapped++
+			continue
+		}
+
+		// Same activity already recorded, by this device or another one?
+		existingID, existingSecs, found, err := overlapping(tx, profileID, e)
+		if err != nil {
+			return result, err
+		}
+		if found {
+			// Two reports of one session. Keep the fuller account: a
+			// watch that saw twenty-five minutes and a phone that saw
+			// twenty are describing the same listening, and the longer
+			// reading is the more complete one — not something to add.
+			if e.Seconds > existingSecs {
+				if _, err := tx.Exec(
+					`UPDATE stats_events SET seconds = ? WHERE id = ?`,
+					e.Seconds, existingID,
+				); err != nil {
+					return result, err
+				}
+				result.Extended++
+			} else {
+				result.Overlapped++
+			}
+			continue
+		}
+
+		res, err := insert.Exec(
 			uuid.New().String(), profileID, nullIfEmpty(e.ClientEventID),
 			e.Source, e.ItemID, nullIfEmpty(e.ContentKey), e.MediaType,
 			e.Title, e.Author, e.EventType, e.Seconds, e.OccurredAt.UTC(),
+			e.OccurredAt.UTC().Unix(),
 		)
 		if err != nil {
-			return 0, err
+			return result, err
 		}
-		// A duplicate is ignored, not an error: count only what was new,
-		// so a caller can tell a fresh sync from a replay.
-		if n, _ := res.RowsAffected(); n > 0 {
-			written++
+		// INSERT OR IGNORE swallowed it: the client id has been seen
+		// before, so this is a retry rather than new activity.
+		if n, _ := res.RowsAffected(); n == 0 {
+			result.Duplicates++
+			continue
+		}
+
+		result.Accepted++
+		if backfilled {
+			result.Backfilled++
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return 0, err
+		return result, err
 	}
-	return written, nil
+	return result, nil
 }
 
 func nullIfEmpty(s string) any {
@@ -136,7 +205,11 @@ func nullIfEmpty(s string) any {
 
 // Summarize builds one profile's own rollup.
 func (r *StatsRepository) Summarize(profileID string) (*StatsSummary, error) {
-	s := &StatsSummary{SecondsByType: map[string]int64{}, TopAuthors: []AuthorTotal{}}
+	s := &StatsSummary{
+		SecondsByType: map[string]int64{},
+		TopAuthors:    []AuthorTotal{},
+		MostReread:    []RereadTotal{},
+	}
 
 	var first, last *time.Time
 	var firstRaw, lastRaw any
@@ -176,6 +249,51 @@ func (r *StatsRepository) Summarize(profileID string) (*StatsSummary, error) {
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Works finished, and how many of those finishes were returns to
+	// something already read. Identity is content_key where the item
+	// could be keyed across services, so finishing a book on Plex and
+	// again on Audiobookshelf is one work, reread — not two books.
+	err = database.DB.QueryRow(`
+		SELECT COUNT(*) FROM (
+			SELECT COALESCE(content_key, source || ':' || item_id) AS work
+			FROM stats_events
+			WHERE profile_id = ? AND event_type = 'finished'
+			GROUP BY work
+		)
+	`, profileID).Scan(&s.DistinctWorksFinished)
+	if err != nil {
+		return nil, err
+	}
+	s.Rereads = s.Finished - s.DistinctWorksFinished
+	if s.Rereads < 0 {
+		s.Rereads = 0
+	}
+
+	rereadRows, err := database.DB.Query(`
+		SELECT MAX(title), MAX(author), COUNT(*) AS times
+		FROM stats_events
+		WHERE profile_id = ? AND event_type = 'finished'
+		GROUP BY COALESCE(content_key, source || ':' || item_id)
+		HAVING times > 1
+		ORDER BY times DESC, MAX(title)
+		LIMIT 10
+	`, profileID)
+	if err != nil {
+		return nil, err
+	}
+	for rereadRows.Next() {
+		var rt RereadTotal
+		if err := rereadRows.Scan(&rt.Title, &rt.Author, &rt.Times); err != nil {
+			rereadRows.Close()
+			return nil, err
+		}
+		s.MostReread = append(s.MostReread, rt)
+	}
+	rereadRows.Close()
+	if err := rereadRows.Err(); err != nil {
 		return nil, err
 	}
 
