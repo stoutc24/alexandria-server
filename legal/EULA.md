@@ -23,8 +23,8 @@ Subject to the terms of this Agreement, we grant you a limited, non-exclusive, n
 ### 1.2 Server License
 Subject to the terms of this Agreement, we grant you a limited, non-exclusive, non-transferable, revocable license to:
 - Download and install the Server on hardware you own or control
-- Run the Server for personal or family use
-- Allow family members to connect to your Server instance
+- Run the Server for personal or household use
+- Allow people in your household to link their devices to it
 
 ### 1.3 Subscription Tiers
 Access to certain features requires an active subscription:
@@ -39,7 +39,7 @@ You may NOT:
 
 ### 2.1 Copying and Distribution
 - Copy, redistribute, or publish the Software
-- Share your license or subscription with non-family members
+- Share your app subscription outside your household
 - Make the Software available on any file-sharing or distribution platform
 
 ### 2.2 Modification

@@ -1,250 +1,110 @@
-# Alexandria Privacy Policy
+# Privacy Policy — Alexandria Companion Server
 
-**Last Updated: December 17, 2024**
+**Last updated:** August 2026
 
-Stout Solutions ("we," "us," or "our") is committed to protecting your privacy. This Privacy Policy explains how we handle information when you use the Alexandria mobile application ("App") and Alexandria Server software ("Server").
+## The short version
 
-**The short version:** We don't collect your data. Everything stays on your device and your own servers.
+This is software you run on your own machine. It has no connection to
+Stout Solutions, sends nothing to us, and we never see any of it.
 
----
-
-## 1. Our Privacy Philosophy
-
-Alexandria is designed with privacy as a core principle:
-
-- **No data collection** - We don't collect, store, or transmit your personal information
-- **No tracking** - We don't track your reading habits, listening history, or app usage
-- **No analytics** - We don't use Google Analytics, Firebase, Crashlytics, or similar services
-- **No advertising** - We don't show ads or share data with advertisers
-- **Local storage only** - Your data stays on your device and your own servers
+There is no "we collect" section below because there is nothing for us
+to collect.
 
 ---
 
-## 2. Information We Do NOT Collect
+## What the software stores
 
-We want to be explicit about what we don't do:
+Everything lives in one SQLite file on your machine (`/data/alexandria.db`
+in the Docker image).
 
-| Data Type | Collected? |
-|-----------|------------|
-| Personal information (name, email, phone) | No |
-| Location data | No |
-| Device identifiers for tracking | No |
-| Reading/listening history | No |
-| Usage analytics | No |
-| Crash reports | No |
-| Advertising identifiers | No |
-| Contact lists | No |
-| Photos, videos, or files | No |
-| Health or fitness data | No |
-| Financial information | No* |
+**A library index.** Titles, authors, series, genres, years and durations
+for the items on the media servers you point it at, plus which server
+each came from. This mirrors what your own servers already hold. It
+contains no file paths and no credentials.
 
-*Subscription payments are processed entirely by Apple/Google through their app stores. We never see or store payment details.
+**Profiles.** A display name for each person in your household, and a
+SHA-256 hash of each device's access token. The tokens themselves are
+never stored, so the database holds nothing that could be replayed if it
+leaked.
 
----
+**Activity events.** For each person: what they listened to or read,
+for how long, and when. This is the data that makes per-person stats
+possible.
 
-## 3. Information Stored Locally on Your Device
+**Pending link requests.** A short code and an expiry, deleted after use
+or expiry.
 
-The Alexandria App stores the following data **locally on your device only**:
+## What it never stores
 
-### 3.1 Server Credentials
-- Server URLs you configure
-- Usernames and passwords for your servers
-- API keys and authentication tokens
+- **Credentials for your media servers.** Plex, Audiobookshelf, Jellyfin
+  and the rest are authenticated by the app on your device, using its
+  keychain. Those credentials never reach this server.
+- **Media files.** It keeps an index, not content.
+- **Email addresses, passwords, or payment information.** There are no
+  accounts here.
+- **Analytics or telemetry of any kind.**
 
-**Security:** Credentials are encrypted using:
-- **iOS:** Keychain Services (hardware-backed encryption)
-- **Android:** EncryptedSharedPreferences (AES-256 encryption)
+## What leaves your machine
 
-### 3.2 App Preferences
-- Theme and appearance settings
-- Playback preferences (speed, skip intervals)
-- Display options
+**Nothing, by default.** The server makes no outbound connections. It
+does not check for updates, report usage, or contact any third party —
+including us.
 
-### 3.3 Cached Data
-- Book covers and images (for faster loading)
-- Temporary playback data
-- Downloaded content for offline access
-
-### 3.4 Reading/Listening Progress
-- Current position in books and audiobooks
-- Bookmarks you create
-
-**Note:** This data is stored locally and may also sync to YOUR media servers (not to us).
+The only traffic is between the server and the Alexandria apps on your
+own network that you have linked to it.
 
 ---
 
-## 4. Alexandria Server (Self-Hosted)
+## Who can see what
 
-If you choose to run Alexandria Server:
+**Whoever runs the server** can see, through the admin page: who is
+connected, their device names, when each was last used, how many
+sessions each person has, and how many hours those add up to.
 
-### 4.1 Data Stored on Your Server
-The server you host stores:
-- User accounts (email, username, password hash)
-- Family group information
-- Content requests
-- Activity data within your family
+**They cannot see, through the app or the API, what anyone listened to.**
+No endpoint returns another person's events, titles, or authors.
 
-### 4.2 Your Responsibility
-When you run Alexandria Server, YOU are the data controller. You are responsible for:
-- Securing your server
-- Protecting user data
-- Complying with privacy laws (GDPR, CCPA, etc.)
-- Informing your family members about data handling
+**But be clear about the limit:** the person who runs the machine owns
+the database file and can open it with any SQLite client. Software
+cannot keep secrets from the person operating it. What is enforced is
+that the product never *offers* that view — there is no screen and no
+API for it. Treat this as a trust boundary between people who already
+live together, not as a cryptographic guarantee.
 
-### 4.3 Our Role
-We provide the software. We have:
-- No access to your server
-- No access to data stored on your server
-- No ability to retrieve, modify, or delete your data
+If that is not acceptable in your household, do not link the app to a
+companion server. Everything in Alexandria works without one.
 
----
+## Deleting data
 
-## 5. Third-Party Services
+- **Any person** can erase their own history from the app, without
+  asking the administrator.
+- **The administrator** can remove a person entirely, which deletes
+  their stats and unlinks every device they have.
+- **Revoking one device** signs that device out and leaves everything
+  else intact.
+- **Deleting the container and its volume** removes everything.
 
-### 5.1 RevenueCat (Subscription Management)
-We use RevenueCat to manage subscriptions. RevenueCat may receive:
-- Anonymous transaction identifiers
-- Subscription status
-- App store transaction data
+We cannot delete your data on request, because we never have it.
 
-RevenueCat does NOT receive your name, email, or personal information from us. See [RevenueCat's Privacy Policy](https://www.revenuecat.com/privacy/).
+## Children
 
-### 5.2 Apple App Store / Google Play Store
-When you purchase or subscribe, your transaction is processed by Apple or Google. We receive:
-- Confirmation that you have a valid subscription
-- Anonymous subscriber ID
+The software collects no personal information from anyone and is not
+directed at children. What appears in it comes entirely from the media
+servers its operator configures.
 
-We do NOT receive your name, email, payment method, or billing address.
+## Security
 
-### 5.3 Your Media Servers
-Alexandria connects to servers you configure (Audiobookshelf, Kavita, Plex, etc.). Your interactions with these servers are governed by their respective privacy policies. We have no visibility into this communication.
+- The admin token is required to start the server; it refuses to run
+  without one, so it cannot come up unauthenticated by accident.
+- Device tokens are stored only as hashes.
+- Run it behind HTTPS if it is reachable from outside your network. Over
+  plain HTTP on a hostile network, the bearer token is readable.
 
----
+## Changes
 
-## 6. Data Transmission
+Material changes will update the date above and appear in the repository
+history.
 
-### 6.1 What Data Leaves Your Device
-- **To your servers:** Credentials and API requests (to access your content)
-- **To RevenueCat:** Anonymous subscription verification
-- **To us:** Nothing
+## Contact
 
-### 6.2 Security in Transit
-- All connections use HTTPS encryption by default
-- HTTP is only permitted for localhost connections
-- We enforce certificate validation
-
----
-
-## 7. Data Retention and Deletion
-
-### 7.1 App Data
-All app data is stored locally. To delete it:
-1. Log out from all servers in Settings
-2. Clear app cache in Settings
-3. Uninstall the app
-
-### 7.2 Server Data (Self-Hosted)
-If you run Alexandria Server, you control all data. Delete it by:
-1. Removing user accounts
-2. Deleting the database
-3. Stopping and removing the server
-
----
-
-## 8. Children's Privacy
-
-Alexandria is intended for users aged 13 and older. We do not knowingly collect information from children under 13.
-
-The content accessible through Alexandria depends entirely on what users store on their own servers. Parents/guardians are responsible for the content available to minors in their household.
-
----
-
-## 9. Your Rights
-
-Depending on your location, you may have rights including:
-
-### 9.1 GDPR Rights (European Users)
-- Right to access your data
-- Right to rectification
-- Right to erasure ("right to be forgotten")
-- Right to data portability
-- Right to object to processing
-
-### 9.2 CCPA Rights (California Users)
-- Right to know what data is collected
-- Right to delete your data
-- Right to opt-out of data sales
-- Right to non-discrimination
-
-### 9.3 Exercising Your Rights
-Since we don't collect your data, most of these rights are automatically satisfied. For server data you host yourself, you have full control to access, modify, or delete it.
-
-For subscription-related inquiries, contact your app store (Apple/Google).
-
----
-
-## 10. International Users
-
-Alexandria is operated from the United States. If you use Alexandria from outside the US:
-- Your data remains on your device and your servers
-- No data is transferred to us regardless of your location
-- You are responsible for compliance with local laws when self-hosting
-
----
-
-## 11. Security Measures
-
-We implement security best practices:
-
-| Measure | Implementation |
-|---------|----------------|
-| Credential encryption | AES-256 / Keychain |
-| Transport security | HTTPS enforced |
-| No cloud backup of credentials | Excluded from device backups |
-| Minimal permissions | Only what's needed |
-| No tracking SDKs | None included |
-| Code obfuscation | ProGuard (Android) |
-
----
-
-## 12. Changes to This Policy
-
-We may update this Privacy Policy periodically. Changes will be indicated by updating the "Last Updated" date.
-
-Material changes will be communicated through:
-- In-app notification
-- Updated policy in the app
-
-Continued use after changes constitutes acceptance of the updated policy.
-
----
-
-## 13. Contact Us
-
-For privacy-related questions or concerns:
-
-**Email:** stoutservers@gmail.com
-
-**Mailing Address:**
-Stout Solutions
-2539 Willowcreek Rd #1041
-Portage, IN 46368
-United States
-
----
-
-## 14. Summary
-
-| Question | Answer |
-|----------|--------|
-| Do you collect my data? | No |
-| Do you track me? | No |
-| Do you sell my data? | No (we don't have any) |
-| Where is my data stored? | On your device and your servers only |
-| Can you access my servers? | No |
-| Is my data encrypted? | Yes, credentials are encrypted locally |
-| How do I delete my data? | Uninstall the app / delete your server |
-
----
-
-**Your privacy is not just a feature—it's fundamental to how Alexandria is built.**
+stoutservers@gmail.com

@@ -19,7 +19,15 @@ Alexandria is a unified client application that connects to self-hosted media se
 - Storyteller
 - BookLore
 
-Alexandria Server is optional companion software that enables family sharing, content requests, and social features.
+Alexandria Companion Server is optional software you run on your own
+hardware. It keeps one merged, deduplicated index of the libraries you
+already own, and stores per-person listening statistics for the people
+in your household.
+
+It does not manage accounts, hold credentials for your media servers, or
+determine what features you have access to in the Alexandria app. It is
+a performance helper, not a gatekeeper — the app works fully without
+it.
 
 **Important:** Alexandria does not host, store, or provide any media content. The Service only provides tools to access content on servers you own or have authorized access to.
 
