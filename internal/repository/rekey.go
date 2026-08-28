@@ -18,7 +18,8 @@ import (
 // derived data; it must not wait for a phone to wander by and re-sync.
 //
 // v2: video keys on title|year (was: unkeyable, author-based only).
-const contentKeyVersion = "2"
+// v3: show-level video rows key on series when they carry no year.
+const contentKeyVersion = "3"
 
 // RekeyCatalogIfNeeded recomputes every stored content key when the
 // algorithm has changed since the keys were written.
@@ -38,7 +39,8 @@ func RekeyCatalogIfNeeded() error {
 
 	rows, err := database.DB.Query(`
 		SELECT id, source, item_id, media_type, title,
-		       COALESCE(author, ''), COALESCE(year, 0)
+		       COALESCE(author, ''), COALESCE(series, ''),
+		       COALESCE(year, 0)
 		FROM catalog_items`)
 	if err != nil {
 		return err
@@ -53,7 +55,7 @@ func RekeyCatalogIfNeeded() error {
 		var id string
 		var it catalog.Item
 		if err := rows.Scan(&id, &it.Source, &it.ItemID, &it.MediaType,
-			&it.Title, &it.Author, &it.Year); err != nil {
+			&it.Title, &it.Author, &it.Series, &it.Year); err != nil {
 			rows.Close()
 			return err
 		}

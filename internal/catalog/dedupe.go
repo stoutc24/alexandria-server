@@ -109,10 +109,10 @@ func ContentKey(it Item) string {
 	}
 
 	if isVideo(it.MediaType) {
-		if it.Year <= 0 {
-			return ""
+		if it.Year > 0 {
+			return title + "|" + strconv.Itoa(it.Year)
 		}
-		return title + "|" + strconv.Itoa(it.Year)
+		return showKey(it)
 	}
 
 	creator := normalize(it.Author)
@@ -120,6 +120,38 @@ func ContentKey(it Item) string {
 		return ""
 	}
 	return title + "|" + creator
+}
+
+// showKey groups the SHOW-level rows that arrive typed as episodes.
+//
+// Plex's TV sections hand over one record per show, not per episode:
+// on a live library all 301 "tvEpisode" rows had title == series, no
+// year and no duration. They are shows, mislabelled by the connector.
+// Carrying no year, they failed the video rule and stayed ungroupable
+// once per overlapping section — 301 rows for 156 actual shows.
+//
+// title == series is what identifies such a row, and it is also the
+// guard. A real episode has an episode title that differs from its
+// series, and nothing in the schema (no season, no episode number)
+// can key one safely — so a real episode returns "" and stays
+// ungroupable, rather than collapsing an entire show into one work.
+// That is the failure this function most needs to avoid: merging a
+// season of television into a single entry hides far more than a
+// duplicate row ever would.
+//
+// A show that does carry a year never reaches here; it keys on
+// title|year above, so reboots stay apart on the same rule as remakes.
+func showKey(it Item) string {
+	switch strings.ToLower(strings.TrimSpace(it.MediaType)) {
+	case "tvepisode", "tvshow":
+	default:
+		return ""
+	}
+	series := normalize(it.Series)
+	if series == "" || series != normalize(it.Title) {
+		return ""
+	}
+	return series
 }
 
 // isVideo covers the media types that carry no author by nature.

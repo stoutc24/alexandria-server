@@ -178,3 +178,67 @@ func TestBooksStillRequireACreator(t *testing.T) {
 		t.Fatalf("a placeholder-credited book grouped via year: %q", k)
 	}
 }
+
+// Plex's TV sections send show-level rows typed as episodes: title
+// equals series, and there is no year. Measured on a live library,
+// 301 such rows stood for 156 shows, duplicated across the overlapping
+// "All Shows" section exactly as the films were.
+func show(title, source string) Item {
+	return Item{
+		ItemID:    source + ":" + title,
+		Source:    source,
+		MediaType: "tvEpisode",
+		Title:     title,
+		Series:    title,
+	}
+}
+
+func TestTheSameShowAcrossPlexSectionsIsOneWork(t *testing.T) {
+	a := ContentKey(show("Band of Brothers", "plex"))
+	b := ContentKey(show("Band of Brothers", "plex"))
+	if a == "" {
+		t.Fatal("a show-level row must be keyable without a year")
+	}
+	if a != b {
+		t.Fatalf("same show keyed differently: %q %q", a, b)
+	}
+}
+
+func TestDifferentShowsStayDistinct(t *testing.T) {
+	if ContentKey(show("Arcane", "plex")) ==
+		ContentKey(show("Barry", "plex")) {
+		t.Fatal("two unrelated shows merged")
+	}
+}
+
+// The guard that matters most: a real episode carries an episode title
+// that differs from its series, and nothing in the schema can key one
+// safely. It must stay ungroupable rather than collapse the season.
+func TestRealEpisodesAreNeverCollapsedIntoTheShow(t *testing.T) {
+	ep := show("Band of Brothers", "plex")
+	ep.Title = "Currahee"
+	if k := ContentKey(ep); k != "" {
+		t.Fatalf("an episode produced key %q — a whole season would "+
+			"collapse into one work", k)
+	}
+}
+
+// A show with a year keys on title|year like any other video, so
+// reboots stay apart on the same rule as remakes.
+func TestShowRebootsStayDistinct(t *testing.T) {
+	old, new := show("Battlestar Galactica", "plex"), show("Battlestar Galactica", "plex")
+	old.Year, new.Year = 1978, 2004
+	if ContentKey(old) == ContentKey(new) {
+		t.Fatal("1978 and 2004 Battlestar merged")
+	}
+}
+
+// A film is not a show: series must not smuggle a yearless movie past
+// the refuse-to-guess rule.
+func TestAYearlessFilmIsStillNotGrouped(t *testing.T) {
+	m := video("Footloose", 0, "plex")
+	m.Series = "Footloose"
+	if k := ContentKey(m); k != "" {
+		t.Fatalf("a yearless film produced key %q via series", k)
+	}
+}
