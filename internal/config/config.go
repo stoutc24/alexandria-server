@@ -21,7 +21,7 @@ const defaultToken = "change-me"
 
 func Load() *Config {
 	cfg := &Config{
-		Port:     getEnv("PORT", "3000"),
+		Port:     getEnv("PORT", "4000"),
 		DBPath:   getEnv("DB_PATH", "./alexandria.db"),
 		APIToken: os.Getenv("ALEXANDRIA_API_TOKEN"),
 	}

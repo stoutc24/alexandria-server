@@ -33,6 +33,12 @@ coverage.html
 /bin/
 /dist/
 
+# Admin dashboard build
+admin/node_modules/
+admin/build/
+admin/.svelte-kit/
+internal/admin/dist/
+
 # Vendor (if using)
 /vendor/
 
