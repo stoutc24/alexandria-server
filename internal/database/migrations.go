@@ -5,133 +5,151 @@ import (
 	"log"
 )
 
+// RunMigrations brings the schema up to date.
+//
+// This server used to carry users, families, media-server registries and
+// per-user access grants. That was an identity system — passwords,
+// registration, credential custody — and it was removed. What remains is
+// deliberately thinner: a shared library index, plus PROFILES, which are
+// name tags rather than accounts. Nobody logs in; a profile token simply
+// says which bucket the stats belong in.
+//
+// Existing databases keep their old tables; nothing here drops them.
+// Dropping data is the owner's call, not a migration's.
 func RunMigrations() error {
 	migrations := []struct {
 		name string
 		sql  string
 	}{
 		{
-			name: "create_users_table",
+			// The household's merged library index.
+			//
+			// This mirrors what the media servers already hold; it is a
+			// CACHE, never the system of record. Dropping a row here
+			// removes an index entry, never media on anybody's server.
+			//
+			// content_key is computed on write (catalog.ContentKey) and
+			// is NULL when the item cannot be grouped safely — see
+			// internal/catalog/dedupe.go for why that asymmetry matters.
+			name: "create_catalog_items_table",
 			sql: `
-				CREATE TABLE IF NOT EXISTS users (
+				CREATE TABLE IF NOT EXISTS catalog_items (
 					id TEXT PRIMARY KEY,
-					email TEXT UNIQUE NOT NULL,
-					username TEXT UNIQUE NOT NULL,
-					password_hash TEXT NOT NULL,
-					display_name TEXT,
-					avatar_url TEXT,
-					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-					updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-				);
-				CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-				CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-			`,
-		},
-		{
-			name: "create_families_table",
-			sql: `
-				CREATE TABLE IF NOT EXISTS families (
-					id TEXT PRIMARY KEY,
-					name TEXT NOT NULL,
-					invite_code TEXT UNIQUE,
-					created_by TEXT NOT NULL,
-					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-					updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-					FOREIGN KEY (created_by) REFERENCES users(id)
-				);
-				CREATE INDEX IF NOT EXISTS idx_families_invite_code ON families(invite_code);
-			`,
-		},
-		{
-			name: "create_family_members_table",
-			sql: `
-				CREATE TABLE IF NOT EXISTS family_members (
-					id TEXT PRIMARY KEY,
-					family_id TEXT NOT NULL,
-					user_id TEXT NOT NULL,
-					role TEXT NOT NULL DEFAULT 'member',
-					joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-					FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
-					FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-					UNIQUE(family_id, user_id)
-				);
-				CREATE INDEX IF NOT EXISTS idx_family_members_family ON family_members(family_id);
-				CREATE INDEX IF NOT EXISTS idx_family_members_user ON family_members(user_id);
-			`,
-		},
-		{
-			name: "create_content_requests_table",
-			sql: `
-				CREATE TABLE IF NOT EXISTS content_requests (
-					id TEXT PRIMARY KEY,
-					family_id TEXT NOT NULL,
-					requested_by TEXT NOT NULL,
+					source TEXT NOT NULL,
+					item_id TEXT NOT NULL,
+					content_key TEXT,
+					media_type TEXT NOT NULL,
 					title TEXT NOT NULL,
-					content_type TEXT NOT NULL,
-					description TEXT,
-					status TEXT NOT NULL DEFAULT 'pending',
-					resolved_by TEXT,
-					resolved_at DATETIME,
-					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-					updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-					FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
-					FOREIGN KEY (requested_by) REFERENCES users(id),
-					FOREIGN KEY (resolved_by) REFERENCES users(id)
+					author TEXT,
+					series TEXT,
+					genre TEXT,
+					year INTEGER,
+					duration_sec INTEGER,
+					synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+					UNIQUE(source, item_id)
 				);
-				CREATE INDEX IF NOT EXISTS idx_content_requests_family ON content_requests(family_id);
-				CREATE INDEX IF NOT EXISTS idx_content_requests_status ON content_requests(status);
+				CREATE INDEX IF NOT EXISTS idx_catalog_key ON catalog_items(content_key);
+				CREATE INDEX IF NOT EXISTS idx_catalog_source ON catalog_items(source);
+				CREATE INDEX IF NOT EXISTS idx_catalog_type ON catalog_items(media_type);
 			`,
 		},
 		{
-			name: "create_refresh_tokens_table",
+			// A profile is a name. That is the whole model.
+			//
+			// No password, no email, no registration: it exists only to
+			// keep one person's stats out of another person's totals.
+			name: "create_profiles_table",
 			sql: `
-				CREATE TABLE IF NOT EXISTS refresh_tokens (
+				CREATE TABLE IF NOT EXISTS profiles (
 					id TEXT PRIMARY KEY,
-					user_id TEXT NOT NULL,
-					token_hash TEXT NOT NULL,
+					name TEXT NOT NULL UNIQUE,
+					created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+				);
+			`,
+		},
+		{
+			// One row per DEVICE, not per person.
+			//
+			// Sarah's phone, watch and TV each hold their own token, so
+			// linking a new device never logs the others out, and a lost
+			// phone is revoked on its own rather than by resetting
+			// everything she owns.
+			//
+			// Only the SHA-256 of each token is stored, so the database
+			// holds nothing replayable. Plain SHA-256 is right here:
+			// tokens are 32 bytes from crypto/rand, and the slow hashes
+			// exist for low-entropy human passwords.
+			name: "create_profile_tokens_table",
+			sql: `
+				CREATE TABLE IF NOT EXISTS profile_tokens (
+					id TEXT PRIMARY KEY,
+					profile_id TEXT NOT NULL,
+					token_hash TEXT NOT NULL UNIQUE,
+					label TEXT,
+					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+					last_seen_at DATETIME,
+					FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+				);
+				CREATE INDEX IF NOT EXISTS idx_profile_tokens_hash ON profile_tokens(token_hash);
+				CREATE INDEX IF NOT EXISTS idx_profile_tokens_profile ON profile_tokens(profile_id);
+			`,
+		},
+		{
+			// One row per listening/reading event, owned by a profile.
+			//
+			// title and author are denormalised on purpose: a catalog
+			// resync REPLACES catalog_items wholesale, and someone's
+			// history must not turn into a list of blanks because an
+			// album was reorganised on the server.
+			name: "create_stats_events_table",
+			sql: `
+				CREATE TABLE IF NOT EXISTS stats_events (
+					id TEXT PRIMARY KEY,
+					profile_id TEXT NOT NULL,
+					source TEXT,
+					item_id TEXT,
+					content_key TEXT,
+					media_type TEXT,
+					title TEXT,
+					author TEXT,
+					event_type TEXT NOT NULL,
+					seconds INTEGER NOT NULL DEFAULT 0,
+					occurred_at DATETIME NOT NULL,
+					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+					FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+				);
+				CREATE INDEX IF NOT EXISTS idx_stats_profile_time ON stats_events(profile_id, occurred_at);
+				CREATE INDEX IF NOT EXISTS idx_stats_profile_key ON stats_events(profile_id, content_key);
+			`,
+		},
+		{
+			// Device linking, in the Plex style.
+			//
+			// The app asks for a code and shows it to the person. They
+			// read it to the admin, who approves it. The direction
+			// matters: the short code travels TOWARD the admin and is
+			// worthless on its own — approving it requires the admin
+			// token, and collecting the result requires claim_hash,
+			// which only the requesting app ever had.
+			//
+			// So the thing spoken out loud is not a credential. Nothing
+			// sensitive is transmitted between people at all.
+			name: "create_link_requests_table",
+			sql: `
+				CREATE TABLE IF NOT EXISTS link_requests (
+					id TEXT PRIMARY KEY,
+					code TEXT NOT NULL UNIQUE,
+					claim_hash TEXT NOT NULL UNIQUE,
+					device_label TEXT,
+					profile_id TEXT,
+					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 					expires_at DATETIME NOT NULL,
-					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-					FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+					approved_at DATETIME,
+					claimed_at DATETIME,
+					FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
 				);
-				CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
-				CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash);
-			`,
-		},
-		{
-			name: "create_media_servers_table",
-			sql: `
-				CREATE TABLE IF NOT EXISTS media_servers (
-					id TEXT PRIMARY KEY,
-					family_id TEXT NOT NULL,
-					name TEXT NOT NULL,
-					type TEXT NOT NULL,
-					url TEXT NOT NULL,
-					created_by TEXT NOT NULL,
-					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-					updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-					FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
-					FOREIGN KEY (created_by) REFERENCES users(id)
-				);
-				CREATE INDEX IF NOT EXISTS idx_media_servers_family ON media_servers(family_id);
-				CREATE INDEX IF NOT EXISTS idx_media_servers_type ON media_servers(type);
-			`,
-		},
-		{
-			name: "create_server_access_table",
-			sql: `
-				CREATE TABLE IF NOT EXISTS server_access (
-					id TEXT PRIMARY KEY,
-					server_id TEXT NOT NULL,
-					user_id TEXT NOT NULL,
-					granted_by TEXT NOT NULL,
-					granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-					FOREIGN KEY (server_id) REFERENCES media_servers(id) ON DELETE CASCADE,
-					FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-					FOREIGN KEY (granted_by) REFERENCES users(id),
-					UNIQUE(server_id, user_id)
-				);
-				CREATE INDEX IF NOT EXISTS idx_server_access_server ON server_access(server_id);
-				CREATE INDEX IF NOT EXISTS idx_server_access_user ON server_access(user_id);
+				CREATE INDEX IF NOT EXISTS idx_link_code ON link_requests(code);
+				CREATE INDEX IF NOT EXISTS idx_link_claim ON link_requests(claim_hash);
 			`,
 		},
 	}

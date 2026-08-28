@@ -74,7 +74,7 @@ jobs:
       - name: Test container starts
         run: |
           docker run -d --name test-alexandria \
-            -e JWT_SECRET=test-secret \
+            -e ALEXANDRIA_API_TOKEN=ci-smoke-test-token-not-a-secret \
             -p 3000:3000 \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 

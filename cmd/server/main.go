@@ -5,9 +5,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
@@ -31,7 +33,7 @@ func main() {
 	}
 
 	app := fiber.New(fiber.Config{
-		AppName:      "Alexandria Server v0.1.0",
+		AppName:      "Alexandria Server v0.2.0",
 		ErrorHandler: customErrorHandler,
 	})
 
@@ -45,52 +47,85 @@ func main() {
 		AllowMethods: "GET, POST, PUT, DELETE, PATCH, OPTIONS",
 	}))
 
-	// Initialize repositories
-	userRepo := repository.NewUserRepository()
-	familyRepo := repository.NewFamilyRepository()
-	mediaServerRepo := repository.NewMediaServerRepository()
+	catalogRepo := repository.NewCatalogRepository()
+	profileRepo := repository.NewProfileRepository()
+	statsRepo := repository.NewStatsRepository()
+	linkRepo := repository.NewLinkRepository()
 
-	// Initialize handlers
-	authHandler := handlers.NewAuthHandler(cfg, userRepo)
-	familyHandler := handlers.NewFamilyHandler(familyRepo)
-	mediaServerHandler := handlers.NewMediaServerHandler(mediaServerRepo, familyRepo)
+	catalogHandler := handlers.NewCatalogHandler(catalogRepo)
+	adminHandler := handlers.NewAdminHandler(profileRepo, cfg.DBPath)
+	statsHandler := handlers.NewStatsHandler(statsRepo)
+	linkHandler := handlers.NewLinkHandler(linkRepo, profileRepo)
 
+	// Unauthenticated on purpose: the app needs to know whether a
+	// companion exists and what it can do before it has been given a
+	// token. It reveals capabilities, never library contents.
 	app.Get("/health", handlers.Health)
 
 	api := app.Group("/api")
 	v1 := api.Group("/v1")
 
-	auth := v1.Group("/auth")
-	auth.Post("/register", authHandler.Register)
-	auth.Post("/login", authHandler.Login)
-	auth.Post("/refresh", authHandler.Refresh)
+	// Three ways in, and the difference between them is the whole
+	// access model. There are no accounts here: an admin token belongs
+	// to whoever runs the box, and a profile token exists only to keep
+	// one person's stats out of another person's totals. Neither is
+	// ever an entitlement.
+	requireAdmin := middleware.RequireAdmin(cfg)
+	requireProfile := middleware.RequireProfile(profileRepo)
+	requireAnyToken := middleware.RequireAnyToken(cfg, profileRepo)
 
-	protected := v1.Group("", middleware.JWTProtected(cfg))
+	// Household management: who exists, and how much space they use.
+	// Nothing here returns anyone's history — see handlers/admin.go.
+	admin := v1.Group("/admin", requireAdmin)
+	admin.Post("/profiles", adminHandler.CreateProfile)
+	admin.Get("/profiles", adminHandler.ListProfiles)
+	admin.Delete("/profiles/:id", adminHandler.DeleteProfile)
+	admin.Delete("/devices/:tokenId", adminHandler.RevokeDevice)
+	admin.Get("/backup", adminHandler.Backup)
 
-	protected.Get("/me", authHandler.Me)
+	// Device linking, admin half: see who is waiting and say who they
+	// are. Approving is what turns a spoken code into access, which is
+	// why the code itself is harmless.
+	admin.Get("/links", linkHandler.ListPendingLinks)
+	admin.Post("/links/approve", linkHandler.ApproveLink)
 
-	// User's servers (what the app calls to get assigned servers)
-	protected.Get("/me/servers", mediaServerHandler.GetMyServers)
+	// Device linking, device half. Unauthenticated by necessity — the
+	// device has no token yet, which is the problem being solved. Rate
+	// limited so it cannot be used to churn codes or grind claim
+	// secrets.
+	linkLimiter := limiter.New(limiter.Config{
+		Max:        30,
+		Expiration: time.Minute,
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": "too many link attempts; wait a minute",
+			})
+		},
+	})
+	link := v1.Group("/link", linkLimiter)
+	link.Post("/request", linkHandler.RequestLink)
+	link.Post("/claim", linkHandler.Claim)
 
-	families := protected.Group("/families")
-	families.Post("/", familyHandler.Create)
-	families.Get("/", familyHandler.GetMyFamilies)
-	families.Post("/join", familyHandler.Join)
-	families.Get("/:id", familyHandler.GetFamily)
-	families.Delete("/:id/leave", familyHandler.Leave)
-	families.Delete("/:id/members/:userId", familyHandler.RemoveMember)
-	families.Post("/:id/invite-code", familyHandler.RegenerateInviteCode)
+	// The library index describes the household's SERVERS, not any
+	// person, so anyone with a valid token may read it. Only the admin
+	// may sync it. Nothing here deletes media.
+	catalogGroup := v1.Group("/catalog")
+	catalogGroup.Post("/sync", requireAdmin, catalogHandler.SyncSource)
+	catalogGroup.Get("/items", requireAnyToken, catalogHandler.GetItems)
+	catalogGroup.Get("/duplicates", requireAnyToken, catalogHandler.GetDuplicates)
+	catalogGroup.Get("/summary", requireAnyToken, catalogHandler.GetSummary)
 
-	// Media server management (within a family)
-	families.Post("/:id/servers", mediaServerHandler.CreateServer)
-	families.Get("/:id/servers", mediaServerHandler.GetServers)
-	families.Get("/:id/servers/:serverId", mediaServerHandler.GetServer)
-	families.Put("/:id/servers/:serverId", mediaServerHandler.UpdateServer)
-	families.Delete("/:id/servers/:serverId", mediaServerHandler.DeleteServer)
+	// A person's own numbers. requireProfile REJECTS the admin token on
+	// purpose: managing the household must not be a way to read what
+	// someone listened to.
+	// A device pairing another device it already owns: the phone hands a
+	// token to the watch, no code typed on a tiny screen.
+	v1.Post("/devices", requireProfile, linkHandler.ProvisionDevice)
 
-	// Server access management
-	families.Post("/:id/servers/:serverId/access", mediaServerHandler.GrantAccess)
-	families.Delete("/:id/servers/:serverId/access/:userId", mediaServerHandler.RevokeAccess)
+	stats := v1.Group("/stats", requireProfile)
+	stats.Post("/events", statsHandler.AppendEvents)
+	stats.Get("/summary", statsHandler.GetSummary)
+	stats.Delete("/", statsHandler.DeleteOwnStats)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

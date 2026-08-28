@@ -29,7 +29,7 @@ FROM alpine:3.19
 
 # Labels for container metadata
 LABEL org.opencontainers.image.title="Alexandria Server"
-LABEL org.opencontainers.image.description="Self-hosted family media server backend"
+LABEL org.opencontainers.image.description="Companion server for Alexandria: merged library index, dedupe, and LLM coordination"
 LABEL org.opencontainers.image.source="https://github.com/stoutc24/alexandria-server"
 LABEL org.opencontainers.image.vendor="Stout Solutions"
 
@@ -57,8 +57,10 @@ USER alexandria
 # Environment variables with sensible defaults
 ENV PORT=3000
 ENV DB_PATH=/data/alexandria.db
-ENV JWT_SECRET=change-me-in-production
-ENV BCRYPT_COST=12
+# Deliberately the placeholder value: config.Load() rejects it, so a
+# container started without a real token fails fast instead of coming up
+# unauthenticated.
+ENV ALEXANDRIA_API_TOKEN=change-me
 ENV TZ=UTC
 
 # Expose port

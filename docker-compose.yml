@@ -34,11 +34,9 @@ services:
       - PORT=3000
       - DB_PATH=/data/alexandria.db
 
-      # IMPORTANT: Change this in production!
-      - JWT_SECRET=${JWT_SECRET:-please-change-this-secret-key}
-
-      # Password hashing strength (10-14 recommended)
-      - BCRYPT_COST=${BCRYPT_COST:-12}
+      # REQUIRED — the server refuses to start without it.
+      # Generate with:  openssl rand -hex 32
+      - ALEXANDRIA_API_TOKEN=${ALEXANDRIA_API_TOKEN:?set ALEXANDRIA_API_TOKEN in .env}
 
       # Timezone
       - TZ=${TZ:-UTC}

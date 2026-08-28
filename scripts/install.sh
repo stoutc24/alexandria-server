@@ -94,7 +94,7 @@ main() {
     # Create .env file if it doesn't exist
     if [ ! -f .env ]; then
         echo -e "${YELLOW}Generating configuration...${NC}"
-        JWT_SECRET=$(generate_secret)
+        ALEXANDRIA_API_TOKEN=$(generate_secret)
         cat > .env << EOF
 # Alexandria Server Configuration
 # Generated on $(date)
@@ -102,16 +102,17 @@ main() {
 # Server port (default: 3000)
 PORT=3000
 
-# JWT Secret - KEEP THIS SAFE!
-JWT_SECRET=${JWT_SECRET}
-
-# Password hashing cost (10-14 recommended)
-BCRYPT_COST=12
+# Shared API token - KEEP THIS SAFE!
+# The app sends it as: Authorization: Bearer <token>
+# The server refuses to start without it.
+ALEXANDRIA_API_TOKEN=${ALEXANDRIA_API_TOKEN}
 
 # Timezone
 TZ=UTC
 EOF
-        echo -e "${GREEN}✓${NC} .env file created with secure JWT secret"
+        echo -e "${GREEN}✓${NC} .env file created with a generated API token"
+        echo -e "${YELLOW}!${NC} Enter this token in the app under Settings:"
+        echo -e "    ${ALEXANDRIA_API_TOKEN}"
     else
         echo -e "${YELLOW}!${NC} .env file already exists, skipping..."
     fi
