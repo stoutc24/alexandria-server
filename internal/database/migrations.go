@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"strings"
@@ -215,4 +216,41 @@ func RunMigrations() error {
 
 	log.Println("All migrations completed successfully")
 	return nil
+}
+
+// Meta is a tiny key/value table for facts about the database itself —
+// today, just which version of the content-key algorithm the stored
+// keys were computed with.
+func ensureMeta() error {
+	_, err := DB.Exec(`
+		CREATE TABLE IF NOT EXISTS meta (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		)`)
+	return err
+}
+
+// MetaGet returns the stored value, or "" when unset.
+func MetaGet(key string) (string, error) {
+	if err := ensureMeta(); err != nil {
+		return "", err
+	}
+	var v string
+	err := DB.QueryRow(`SELECT value FROM meta WHERE key = ?`, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
+// MetaSet stores a value.
+func MetaSet(key, value string) error {
+	if err := ensureMeta(); err != nil {
+		return err
+	}
+	_, err := DB.Exec(`
+		INSERT INTO meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		key, value)
+	return err
 }

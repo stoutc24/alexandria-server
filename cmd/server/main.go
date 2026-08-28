@@ -33,6 +33,13 @@ func main() {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
 
+	// Derived data heals itself: if the content-key algorithm changed
+	// since this database's keys were written, recompute them now
+	// rather than waiting for a device to re-sync the catalog.
+	if err := repository.RekeyCatalogIfNeeded(); err != nil {
+		log.Fatalf("Failed to rekey catalog: %v", err)
+	}
+
 	app := fiber.New(fiber.Config{
 		AppName:      "Alexandria Server v0.2.0",
 		ErrorHandler: customErrorHandler,
