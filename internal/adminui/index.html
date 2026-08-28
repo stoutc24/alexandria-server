@@ -226,18 +226,55 @@
   }
 
   // ---- pending links -------------------------------------------------
+  //
+  // This list re-renders on a 5s poll. Naively replacing innerHTML wipes
+  // whatever the admin is halfway through typing into a name box, so the
+  // only way to approve anyone was to type and click inside one 5s window.
+  // Two guards: skip the rebuild entirely while the same codes are pending
+  // (just refresh the "asked N ago" text), and if a rebuild is unavoidable,
+  // carry the typed names, focus and caret across it.
+  var pendingSig = null;
+
+  function pendingMeta(p) {
+    return esc(p.deviceLabel || "a device") + ' · asked ' + ago(p.createdAt);
+  }
+
   function renderPending(list) {
     var el = $("pending");
     if (!list.length) {
+      pendingSig = null;
       el.innerHTML = '<p class="empty">Nothing waiting. Codes last 10 minutes.</p>';
       return;
     }
+
+    var sig = list.map(function (p) { return p.code; }).join(",");
+    if (sig === pendingSig) {
+      // Same requests as last tick: leave the inputs alone, age the labels.
+      list.forEach(function (p) {
+        var card = el.querySelector('[data-code-card="' + p.code + '"]');
+        var meta = card && card.querySelector(".meta");
+        if (meta) meta.innerHTML = pendingMeta(p);
+      });
+      return;
+    }
+
+    // Rebuilding: remember what is already typed, and where the caret is.
+    var typed = {}, activeCode = null, caret = 0;
+    var active = document.activeElement;
+    el.querySelectorAll("[data-name-for]").forEach(function (i) {
+      if (i.value) typed[i.dataset.nameFor] = i.value;
+      if (i === active) {
+        activeCode = i.dataset.nameFor;
+        caret = i.selectionStart;
+        typed[activeCode] = i.value;
+      }
+    });
+
     el.innerHTML = list.map(function (p) {
-      return '<div class="card">' +
+      return '<div class="card" data-code-card="' + esc(p.code) + '">' +
         '<div class="row" style="justify-content:space-between">' +
           '<span class="code">' + esc(p.code) + '</span>' +
-          '<span class="meta">' + esc(p.deviceLabel || "a device") +
-            ' · asked ' + ago(p.createdAt) + '</span>' +
+          '<span class="meta">' + pendingMeta(p) + '</span>' +
         '</div>' +
         '<div class="row" style="margin-top:11px">' +
           '<input class="grow" type="text" placeholder="Who is this?" ' +
@@ -246,6 +283,16 @@
         '</div>' +
       '</div>';
     }).join("");
+    pendingSig = sig;
+
+    el.querySelectorAll("[data-name-for]").forEach(function (i) {
+      var was = typed[i.dataset.nameFor];
+      if (was) i.value = was;
+      if (i.dataset.nameFor === activeCode) {
+        i.focus();
+        try { i.setSelectionRange(caret, caret); } catch (e) { /* ignore */ }
+      }
+    });
   }
 
   function approve(code) {
