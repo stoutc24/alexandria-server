@@ -14,15 +14,23 @@ import (
 // deliberately no "read anyone's events" method for an admin route to
 // call — the absence is the privacy boundary, so keep it absent.
 type Event struct {
-	Source     string    `json:"source,omitempty"`
-	ItemID     string    `json:"itemId,omitempty"`
-	ContentKey string    `json:"contentKey,omitempty"`
-	MediaType  string    `json:"mediaType,omitempty"`
-	Title      string    `json:"title,omitempty"`
-	Author     string    `json:"author,omitempty"`
-	EventType  string    `json:"eventType"`
-	Seconds    int       `json:"seconds"`
-	OccurredAt time.Time `json:"occurredAt"`
+	// ClientEventID makes ingest idempotent. It must be stable for the
+	// same real-world event forever, and unique across a person's
+	// devices — otherwise a retry, or a phone and a watch reporting the
+	// same session, silently doubles someone's hours.
+	//
+	// Optional: an event without one is still accepted, just not
+	// deduplicated.
+	ClientEventID string    `json:"clientEventId,omitempty"`
+	Source        string    `json:"source,omitempty"`
+	ItemID        string    `json:"itemId,omitempty"`
+	ContentKey    string    `json:"contentKey,omitempty"`
+	MediaType     string    `json:"mediaType,omitempty"`
+	Title         string    `json:"title,omitempty"`
+	Author        string    `json:"author,omitempty"`
+	EventType     string    `json:"eventType"`
+	Seconds       int       `json:"seconds"`
+	OccurredAt    time.Time `json:"occurredAt"`
 }
 
 // StatsSummary is a person's own rollup, computed in SQL.
@@ -56,6 +64,11 @@ const maxEventsPerBatch = 1000
 // The profileID comes from the caller's token, never from the request
 // body — otherwise anyone could write into someone else's history by
 // naming them.
+//
+// Idempotent: an event whose ClientEventID has been seen before for this
+// profile is ignored rather than duplicated, so clients may retry freely
+// and two devices may report the same session. Returns how many rows
+// were actually new.
 func (r *StatsRepository) AppendEvents(
 	profileID string,
 	events []Event,
@@ -71,10 +84,10 @@ func (r *StatsRepository) AppendEvents(
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`
-		INSERT INTO stats_events
-			(id, profile_id, source, item_id, content_key, media_type,
-			 title, author, event_type, seconds, occurred_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT OR IGNORE INTO stats_events
+			(id, profile_id, client_event_id, source, item_id, content_key,
+			 media_type, title, author, event_type, seconds, occurred_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return 0, err
@@ -93,14 +106,19 @@ func (r *StatsRepository) AppendEvents(
 			e.Seconds = 0
 		}
 
-		if _, err := stmt.Exec(
-			uuid.New().String(), profileID, e.Source, e.ItemID,
-			nullIfEmpty(e.ContentKey), e.MediaType, e.Title, e.Author,
-			e.EventType, e.Seconds, e.OccurredAt.UTC(),
-		); err != nil {
+		res, err := stmt.Exec(
+			uuid.New().String(), profileID, nullIfEmpty(e.ClientEventID),
+			e.Source, e.ItemID, nullIfEmpty(e.ContentKey), e.MediaType,
+			e.Title, e.Author, e.EventType, e.Seconds, e.OccurredAt.UTC(),
+		)
+		if err != nil {
 			return 0, err
 		}
-		written++
+		// A duplicate is ignored, not an error: count only what was new,
+		// so a caller can tell a fresh sync from a replay.
+		if n, _ := res.RowsAffected(); n > 0 {
+			written++
+		}
 	}
 
 	if err := tx.Commit(); err != nil {

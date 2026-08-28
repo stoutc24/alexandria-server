@@ -163,3 +163,83 @@ func TestOversizedBatchIsRejectedWholesale(t *testing.T) {
 		t.Errorf("a rejected batch still wrote %d events", s.TotalEvents)
 	}
 }
+
+// The double-counting guard. A phone and a watch reporting the same
+// session, or any retry, must not inflate someone's hours.
+func TestRepeatedEventsAreIgnoredNotDuplicated(t *testing.T) {
+	profiles, stats := newProfileDB(t)
+	p, _ := mkProfile(t, profiles, "Sarah")
+
+	event := Event{
+		ClientEventID: "device-a:42",
+		Title:         "Unsouled",
+		Author:        "Will Wight",
+		MediaType:     "book",
+		EventType:     "progress",
+		Seconds:       600,
+		OccurredAt:    time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC),
+	}
+
+	n, err := stats.AppendEvents(p.ID, []Event{event})
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("first append wrote %d, want 1", n)
+	}
+
+	// The same event again — a retry, or the watch reporting what the
+	// phone already sent.
+	n, err = stats.AppendEvents(p.ID, []Event{event, event})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("replay wrote %d new rows, want 0", n)
+	}
+
+	s, err := stats.Summarize(p.ID)
+	if err != nil {
+		t.Fatalf("summarize: %v", err)
+	}
+	if s.TotalEvents != 1 {
+		t.Errorf("TotalEvents = %d, want 1 — the event was counted twice",
+			s.TotalEvents)
+	}
+	if s.TotalSeconds != 600 {
+		t.Errorf("TotalSeconds = %d, want 600 — hours were inflated",
+			s.TotalSeconds)
+	}
+}
+
+// Two people may legitimately use the same local row id on their own
+// devices; dedupe is per profile, not global.
+func TestTheSameClientIDForDifferentPeopleIsNotADuplicate(t *testing.T) {
+	profiles, stats := newProfileDB(t)
+	sarah, _ := mkProfile(t, profiles, "Sarah")
+	chris, _ := mkProfile(t, profiles, "Chris")
+
+	e := Event{ClientEventID: "row-1", Title: "T", EventType: "progress",
+		Seconds: 60, OccurredAt: time.Now().UTC()}
+
+	if n, err := stats.AppendEvents(sarah.ID, []Event{e}); err != nil || n != 1 {
+		t.Fatalf("sarah: n=%d err=%v", n, err)
+	}
+	if n, err := stats.AppendEvents(chris.ID, []Event{e}); err != nil || n != 1 {
+		t.Fatalf("chris's identical id was swallowed: n=%d err=%v", n, err)
+	}
+}
+
+// Older clients send no id. They must still be accepted, and must not
+// collide with each other via a shared NULL.
+func TestEventsWithoutAClientIDAreStillAccepted(t *testing.T) {
+	profiles, stats := newProfileDB(t)
+	p, _ := mkProfile(t, profiles, "Sarah")
+
+	e := Event{Title: "T", EventType: "progress", Seconds: 60,
+		OccurredAt: time.Now().UTC()}
+
+	if n, err := stats.AppendEvents(p.ID, []Event{e, e, e}); err != nil || n != 3 {
+		t.Fatalf("unidentified events: n=%d err=%v, want 3", n, err)
+	}
+}

@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"log"
+	"strings"
 )
 
 // RunMigrations brings the schema up to date.
@@ -106,6 +107,7 @@ func RunMigrations() error {
 				CREATE TABLE IF NOT EXISTS stats_events (
 					id TEXT PRIMARY KEY,
 					profile_id TEXT NOT NULL,
+					client_event_id TEXT,
 					source TEXT,
 					item_id TEXT,
 					content_key TEXT,
@@ -120,6 +122,26 @@ func RunMigrations() error {
 				);
 				CREATE INDEX IF NOT EXISTS idx_stats_profile_time ON stats_events(profile_id, occurred_at);
 				CREATE INDEX IF NOT EXISTS idx_stats_profile_key ON stats_events(profile_id, content_key);
+			`,
+		},
+		{
+			// Idempotent ingest.
+			//
+			// A person's phone and watch both report, syncs retry after a
+			// dropped connection, and an offline queue replays whatever
+			// it buffered. None of that may inflate someone's hours. The
+			// client stamps each event with an id that is stable for that
+			// event forever, and this index makes a repeat a no-op
+			// instead of a second row.
+			//
+			// Partial (WHERE NOT NULL) so events sent by older clients,
+			// which carry no id, are still accepted — they simply do not
+			// get deduplicated.
+			name: "add_stats_client_event_id",
+			sql: `
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_stats_client_event
+					ON stats_events(profile_id, client_event_id)
+					WHERE client_event_id IS NOT NULL;
 			`,
 		},
 		{
@@ -158,6 +180,20 @@ func RunMigrations() error {
 		log.Printf("Running migration: %s", m.name)
 		if _, err := DB.Exec(m.sql); err != nil {
 			return fmt.Errorf("migration %s failed: %w", m.name, err)
+		}
+	}
+
+	// Columns added to a table that already exists elsewhere. CREATE
+	// TABLE IF NOT EXISTS will not alter it, so these run separately and
+	// tolerate "duplicate column" — the only way to be idempotent
+	// against both a fresh database and one already in service.
+	for _, alter := range []string{
+		`ALTER TABLE stats_events ADD COLUMN client_event_id TEXT`,
+	} {
+		if _, err := DB.Exec(alter); err != nil {
+			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+				return fmt.Errorf("alter failed (%s): %w", alter, err)
+			}
 		}
 	}
 
