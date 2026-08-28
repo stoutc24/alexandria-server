@@ -113,10 +113,21 @@ func main() {
 	link.Post("/claim", linkHandler.Claim)
 
 	// The library index describes the household's SERVERS, not any
-	// person, so anyone with a valid token may read it. Only the admin
-	// may sync it. Nothing here deletes media.
+	// person, so anyone with a valid token may read it — and write it.
+	//
+	// Sync is NOT admin-only, deliberately. The index is populated by
+	// the app, from what it can already see on the servers it is signed
+	// in to; gating it behind the admin token would leave it empty
+	// unless somebody ran curl by hand. The worst a household member can
+	// do is refresh it with their own view, which degrades an index, not
+	// security — and anyone can refresh it back.
+	//
+	// The trade-off to know about: sync REPLACES a source wholesale, so
+	// if two people see different subsets of the same server, the last
+	// to sync wins. Fine when everyone shares the same libraries, which
+	// is the case this is built for.
 	catalogGroup := v1.Group("/catalog")
-	catalogGroup.Post("/sync", requireAdmin, catalogHandler.SyncSource)
+	catalogGroup.Post("/sync", requireAnyToken, catalogHandler.SyncSource)
 	catalogGroup.Get("/items", requireAnyToken, catalogHandler.GetItems)
 	catalogGroup.Get("/duplicates", requireAnyToken, catalogHandler.GetDuplicates)
 	catalogGroup.Get("/summary", requireAnyToken, catalogHandler.GetSummary)
