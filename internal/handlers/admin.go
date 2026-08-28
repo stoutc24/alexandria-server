@@ -126,8 +126,17 @@ func (h *AdminHandler) DeleteProfile(c *fiber.Ctx) error {
 // Backup streams a consistent snapshot of the database.
 //
 // VACUUM INTO takes the snapshot without stopping the server or copying
-// a file mid-write. This hands the admin the same bytes they already
-// have on disk — it is a convenience, not a new disclosure.
+// a file mid-write.
+//
+// BE HONEST ABOUT WHAT THIS IS: the snapshot contains every stats row —
+// titles, authors, timestamps — so this is the one admin route through
+// which history CAN leave the server, and the "admin cannot read
+// anyone's history" boundary explicitly does not cover it. It exists
+// because backups are the point of the data being here at all, and it
+// hands the operator the same bytes sitting on their own disk. What it
+// changes is reach: a LEAKED admin token turns this into remote
+// exfiltration, where every other admin route yields only counts. Treat
+// the admin token accordingly, and keep this the only such route.
 func (h *AdminHandler) Backup(c *fiber.Ctx) error {
 	tmpDir, err := os.MkdirTemp("", "alexandria-backup")
 	if err != nil {

@@ -85,61 +85,107 @@ func classify(e Event, now time.Time) (rejected bool, backfilled bool) {
 // overlapping finds an existing event for the same content whose time
 // range intersects this one.
 //
-// Identity is content_key when the item could be keyed across services —
-// so finishing the same album on Plex and on Navidrome is recognised as
-// one thing — and falls back to source+item_id when it could not.
+// OccurredAt is the session START — the tests in this package define
+// that, and the Dart client derives it as recorded-at minus duration. A
+// review caught the app sending the pause timestamp instead, which
+// shifted every range forward by its own length: real follow-up
+// listening was discarded as overlap, and two devices' accounts of one
+// session could fail to intersect at all.
+//
+// Identity matches the content key OR the raw item — never only the
+// key. Rows written by clients that send no key must still collapse
+// with rows from clients that do, or a mixed-version household double
+// counts everything during the upgrade window.
 //
 // The comparison is integer epoch seconds, deliberately. An earlier
 // version compared SQLite text dates and matched nothing at all,
 // silently, because the driver's stored format did not match the
-// literal being compared against. Arithmetic on instants belongs on
-// integers.
+// literal being compared against.
 func overlapping(
 	tx *sql.Tx,
 	profileID string,
 	e Event,
-) (id string, seconds int, ok bool, err error) {
+) (id string, storedStart int64, storedSecs int, ok bool, err error) {
 	// A zero-length event has no range to overlap with. Completions are
-	// points in time and are handled by completionAlreadyRecorded.
-	if e.Seconds <= 0 {
-		return "", 0, false, nil
+	// points in time and are handled by completionAlreadyRecorded — and
+	// must NEVER be matched here, or a finish that happens to carry a
+	// duration is swallowed by an ordinary progress row and the book is
+	// never marked finished.
+	if e.Seconds <= 0 || e.EventType == "finished" {
+		return "", 0, 0, false, nil
+	}
+
+	// Exact identity first: a shared session id IS the same session, by
+	// definition, however the timestamps compare. This is what makes a
+	// phone and a watch describing one session collapse even when one of
+	// them has a wrong clock — the temporal heuristic below cannot.
+	if e.SessionID != "" {
+		row := tx.QueryRow(`
+			SELECT id, COALESCE(occurred_at_unix, 0), seconds
+			FROM stats_events
+			WHERE profile_id = ? AND session_id = ? AND seconds > 0
+			  AND event_type != 'finished'
+			ORDER BY seconds DESC LIMIT 1
+		`, profileID, e.SessionID)
+		err = row.Scan(&id, &storedStart, &storedSecs)
+		if err == nil {
+			return id, storedStart, storedSecs, true, nil
+		}
+		if err != sql.ErrNoRows {
+			return "", 0, 0, false, err
+		}
+		// No row with this session id yet — fall through to temporal.
 	}
 
 	start := e.OccurredAt.UTC().Unix()
 	end := start + int64(e.Seconds)
 
-	var row *sql.Row
-	if e.ContentKey != "" {
-		row = tx.QueryRow(`
-			SELECT id, seconds FROM stats_events
-			WHERE profile_id = ? AND content_key = ? AND seconds > 0
-			  AND occurred_at_unix IS NOT NULL
-			  AND occurred_at_unix < ?
-			  AND occurred_at_unix + seconds > ?
-			ORDER BY seconds DESC LIMIT 1
-		`, profileID, e.ContentKey, end, start)
-	} else if e.ItemID != "" {
-		row = tx.QueryRow(`
-			SELECT id, seconds FROM stats_events
-			WHERE profile_id = ? AND source = ? AND item_id = ? AND seconds > 0
-			  AND occurred_at_unix IS NOT NULL
-			  AND occurred_at_unix < ?
-			  AND occurred_at_unix + seconds > ?
-			ORDER BY seconds DESC LIMIT 1
-		`, profileID, e.Source, e.ItemID, end, start)
-	} else {
+	where, args := identityClause(e)
+	if where == "" {
 		// Nothing to identify it by; treat as new rather than guess.
-		return "", 0, false, nil
+		return "", 0, 0, false, nil
 	}
 
-	err = row.Scan(&id, &seconds)
+	args = append([]any{profileID}, args...)
+	args = append(args, end, start)
+
+	row := tx.QueryRow(`
+		SELECT id, occurred_at_unix, seconds FROM stats_events
+		WHERE profile_id = ? AND `+where+` AND seconds > 0
+		  AND event_type != 'finished'
+		  AND occurred_at_unix IS NOT NULL
+		  AND occurred_at_unix < ?
+		  AND occurred_at_unix + seconds > ?
+		ORDER BY seconds DESC LIMIT 1
+	`, args...)
+
+	err = row.Scan(&id, &storedStart, &storedSecs)
 	if err == sql.ErrNoRows {
-		return "", 0, false, nil
+		return "", 0, 0, false, nil
 	}
 	if err != nil {
-		return "", 0, false, err
+		return "", 0, 0, false, err
 	}
-	return id, seconds, true, nil
+	return id, storedStart, storedSecs, true, nil
+}
+
+// identityClause names one piece of content: the cross-service key when
+// present, always OR-ed with the raw item so keyed and keyless rows
+// still find each other.
+func identityClause(e Event) (string, []any) {
+	hasKey := e.ContentKey != ""
+	hasItem := e.ItemID != ""
+	switch {
+	case hasKey && hasItem:
+		return "(content_key = ? OR (source = ? AND item_id = ?))",
+			[]any{e.ContentKey, e.Source, e.ItemID}
+	case hasKey:
+		return "content_key = ?", []any{e.ContentKey}
+	case hasItem:
+		return "(source = ? AND item_id = ?)", []any{e.Source, e.ItemID}
+	default:
+		return "", nil
+	}
 }
 
 // rereadGap is how far apart two completions of the same work must be
@@ -166,29 +212,25 @@ func completionAlreadyRecorded(
 		return false, nil
 	}
 
+	where, args := identityClause(e)
+	if where == "" {
+		return false, nil
+	}
+
 	at := e.OccurredAt.UTC().Unix()
 	lo := at - int64(rereadGap.Seconds())
 	hi := at + int64(rereadGap.Seconds())
 
+	full := append([]any{profileID}, args...)
+	full = append(full, lo, hi)
+
 	var n int
-	var err error
-	if e.ContentKey != "" {
-		err = tx.QueryRow(`
-			SELECT COUNT(*) FROM stats_events
-			WHERE profile_id = ? AND event_type = 'finished'
-			  AND content_key = ?
-			  AND occurred_at_unix BETWEEN ? AND ?
-		`, profileID, e.ContentKey, lo, hi).Scan(&n)
-	} else if e.ItemID != "" {
-		err = tx.QueryRow(`
-			SELECT COUNT(*) FROM stats_events
-			WHERE profile_id = ? AND event_type = 'finished'
-			  AND source = ? AND item_id = ?
-			  AND occurred_at_unix BETWEEN ? AND ?
-		`, profileID, e.Source, e.ItemID, lo, hi).Scan(&n)
-	} else {
-		return false, nil
-	}
+	err := tx.QueryRow(`
+		SELECT COUNT(*) FROM stats_events
+		WHERE profile_id = ? AND event_type = 'finished'
+		  AND `+where+`
+		  AND occurred_at_unix BETWEEN ? AND ?
+	`, full...).Scan(&n)
 	if err != nil {
 		return false, err
 	}

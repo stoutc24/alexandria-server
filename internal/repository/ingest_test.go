@@ -62,38 +62,146 @@ func TestIndependentReportsOfOneSessionAreNotAddedTwice(t *testing.T) {
 	}
 }
 
-// Partial overlap is still the same session: the watch caught the first
-// fifteen minutes, the phone the whole twenty.
-func TestAPartialOverlapKeepsTheFullerAccount(t *testing.T) {
+// Partial overlap is still the same session, and the honest account is
+// the UNION of the two reports: the watch saw 10:00–10:15, the phone
+// 10:02–10:22, and the person listened 10:00–10:22 — 22 minutes that
+// neither device saw whole.
+func TestAPartialOverlapStoresTheUnion(t *testing.T) {
 	profiles, stats := newProfileDB(t)
 	p, _ := mkProfile(t, profiles, "Sarah")
 
 	start := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 
 	if _, err := stats.AppendEvents(p.ID, []Event{
-		session("watch:1", "book-1", start, 900), // 15 min
+		session("watch:1", "book-1", start, 900), // 10:00–10:15
 	}); err != nil {
 		t.Fatalf("watch: %v", err)
 	}
 
-	// The phone reports the same listening, but saw more of it.
 	r, err := stats.AppendEvents(p.ID, []Event{
-		session("phone:1", "book-1", start.Add(2*time.Minute), 1200),
+		session("phone:1", "book-1", start.Add(2*time.Minute), 1200), // 10:02–10:22
 	})
 	if err != nil {
 		t.Fatalf("phone: %v", err)
 	}
 	if r.Extended != 1 {
-		t.Errorf("expected the longer report to extend the session: %+v", r)
+		t.Errorf("expected the union to extend the session: %+v", r)
+	}
+
+	s, _ := stats.Summarize(p.ID)
+	if s.TotalSeconds != 1320 {
+		t.Errorf("TotalSeconds = %d, want 1320 (the union 10:00–10:22, "+
+			"not 900+1200 and not just the longer report)", s.TotalSeconds)
+	}
+	if s.TotalEvents != 1 {
+		t.Errorf("TotalEvents = %d, want 1", s.TotalEvents)
+	}
+}
+
+// The review's headline case, from the OTHER direction: a report that
+// starts EARLIER than the stored row must pull the stored start back,
+// or the range drifts off the true session forever.
+func TestAnEarlierStartingReportExtendsBackwards(t *testing.T) {
+	profiles, stats := newProfileDB(t)
+	p, _ := mkProfile(t, profiles, "Sarah")
+
+	ten := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+
+	// Phone reports 10:05–10:20 first.
+	if _, err := stats.AppendEvents(p.ID, []Event{
+		session("phone:1", "book-1", ten.Add(5*time.Minute), 900),
+	}); err != nil {
+		t.Fatalf("phone: %v", err)
+	}
+	// Watch saw the same session from its real start, 10:00–10:20.
+	r, err := stats.AppendEvents(p.ID, []Event{
+		session("watch:1", "book-1", ten, 1200),
+	})
+	if err != nil {
+		t.Fatalf("watch: %v", err)
+	}
+	if r.Extended != 1 {
+		t.Fatalf("expected an extension: %+v", r)
 	}
 
 	s, _ := stats.Summarize(p.ID)
 	if s.TotalSeconds != 1200 {
-		t.Errorf("TotalSeconds = %d, want 1200 (the fuller account, not "+
-			"900+1200)", s.TotalSeconds)
+		t.Errorf("TotalSeconds = %d, want 1200 (10:00–10:20)", s.TotalSeconds)
 	}
-	if s.TotalEvents != 1 {
-		t.Errorf("TotalEvents = %d, want 1", s.TotalEvents)
+
+	// And the stored start must now be 10:00 — a third report of
+	// 10:01–10:04 has to land INSIDE the row, not beside it.
+	r3, err := stats.AppendEvents(p.ID, []Event{
+		session("tv:1", "book-1", ten.Add(time.Minute), 180),
+	})
+	if err != nil {
+		t.Fatalf("tv: %v", err)
+	}
+	if r3.Overlapped != 1 || r3.Accepted != 0 {
+		t.Errorf("the stored start was not pulled back: %+v", r3)
+	}
+}
+
+// Keyed and keyless clients describe the same session and must find
+// each other — a mixed-version household (old phone, new watch) would
+// otherwise double count everything until both updated.
+func TestKeyedAndKeylessReportsOfOneSessionCollapse(t *testing.T) {
+	profiles, stats := newProfileDB(t)
+	p, _ := mkProfile(t, profiles, "Sarah")
+
+	start := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+
+	keyless := session("old-phone:1", "book-1", start, 1200)
+	keyless.ContentKey = ""
+
+	keyed := session("new-watch:1", "book-1", start, 1200)
+	// keyed keeps its ContentKey from the helper.
+
+	if _, err := stats.AppendEvents(p.ID, []Event{keyless}); err != nil {
+		t.Fatalf("keyless: %v", err)
+	}
+	r, err := stats.AppendEvents(p.ID, []Event{keyed})
+	if err != nil {
+		t.Fatalf("keyed: %v", err)
+	}
+	if r.Accepted != 0 {
+		t.Errorf("a keyed report failed to find the keyless row: %+v", r)
+	}
+
+	s, _ := stats.Summarize(p.ID)
+	if s.TotalSeconds != 1200 {
+		t.Errorf("TotalSeconds = %d, want 1200", s.TotalSeconds)
+	}
+}
+
+// A completion that happens to carry a duration must never be swallowed
+// by an ordinary progress row — the book would never be marked finished.
+func TestAFinishedEventWithSecondsIsNotSwallowed(t *testing.T) {
+	profiles, stats := newProfileDB(t)
+	p, _ := mkProfile(t, profiles, "Sarah")
+
+	start := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+
+	if _, err := stats.AppendEvents(p.ID, []Event{
+		session("phone:1", "book-1", start, 1800),
+	}); err != nil {
+		t.Fatalf("progress: %v", err)
+	}
+
+	fin := session("phone:2", "book-1", start.Add(25*time.Minute), 300)
+	fin.EventType = "finished"
+
+	r, err := stats.AppendEvents(p.ID, []Event{fin})
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+	if r.Accepted != 1 {
+		t.Errorf("the finish was swallowed by the progress row: %+v", r)
+	}
+
+	s, _ := stats.Summarize(p.ID)
+	if s.Finished != 1 {
+		t.Errorf("Finished = %d, want 1", s.Finished)
 	}
 }
 
@@ -279,5 +387,61 @@ func TestAnOfflineDeviceDumpingItsBacklogConverges(t *testing.T) {
 	}
 	if s.TotalSeconds != 12*1800 {
 		t.Errorf("TotalSeconds = %d, want %d", s.TotalSeconds, 12*1800)
+	}
+}
+
+// A shared session id is definitional identity: the two reports collapse
+// even when their time ranges do not touch — the case a wrong clock on
+// one device creates, and the one temporal overlap cannot catch.
+func TestASharedSessionIDCollapsesDespiteDisjointClocks(t *testing.T) {
+	profiles, stats := newProfileDB(t)
+	p, _ := mkProfile(t, profiles, "Sarah")
+
+	ten := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+
+	phone := session("phone:1", "book-1", ten, 1200)
+	phone.SessionID = "sess-abc"
+
+	// The watch's clock runs 40 minutes fast: its account of the SAME
+	// session sits nowhere near the phone's on the timeline.
+	watch := session("watch:1", "book-1", ten.Add(40*time.Minute), 1500)
+	watch.SessionID = "sess-abc"
+
+	if _, err := stats.AppendEvents(p.ID, []Event{phone}); err != nil {
+		t.Fatalf("phone: %v", err)
+	}
+	r, err := stats.AppendEvents(p.ID, []Event{watch})
+	if err != nil {
+		t.Fatalf("watch: %v", err)
+	}
+	if r.Accepted != 0 {
+		t.Errorf("a shared session id was not treated as identity: %+v", r)
+	}
+
+	s, _ := stats.Summarize(p.ID)
+	if s.TotalEvents != 1 {
+		t.Errorf("TotalEvents = %d, want 1", s.TotalEvents)
+	}
+}
+
+// Different session ids for the same book, back to back, are genuinely
+// different sessions and must both count — the id must never OVER-merge.
+func TestDifferentSessionIDsStayDistinct(t *testing.T) {
+	profiles, stats := newProfileDB(t)
+	p, _ := mkProfile(t, profiles, "Sarah")
+
+	ten := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+
+	a := session("phone:1", "book-1", ten, 1200)
+	a.SessionID = "sess-1"
+	b := session("phone:2", "book-1", ten.Add(30*time.Minute), 1200)
+	b.SessionID = "sess-2"
+
+	r, err := stats.AppendEvents(p.ID, []Event{a, b})
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if r.Accepted != 2 {
+		t.Errorf("two distinct sessions were merged: %+v", r)
 	}
 }

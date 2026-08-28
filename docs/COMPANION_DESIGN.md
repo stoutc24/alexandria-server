@@ -245,7 +245,12 @@ The admin runs the household, so they can see **who exists, when they
 were last active, how many events they have, and how much time those
 add up to.** That is enough to manage storage and membership.
 
-They cannot call an API that returns a title, an author, or an event.
+They cannot call an API that returns a title, an author, or an event —
+with ONE deliberate exception: `/admin/backup` streams the whole
+database, stats rows included, because backups are the point of the
+data being here. It is the single admin route that carries history, and
+a leaked admin token therefore reaches everything a stolen disk would.
+Every other admin route yields counts.
 `RequireProfile` rejects the admin token outright, and the stats
 repository offers no "read another profile" method for a future route to
 reach for. The absence is the boundary — keep it absent.

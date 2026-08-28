@@ -21,16 +21,21 @@ type Event struct {
 	//
 	// Optional: an event without one is still accepted, just not
 	// deduplicated.
-	ClientEventID string    `json:"clientEventId,omitempty"`
-	Source        string    `json:"source,omitempty"`
-	ItemID        string    `json:"itemId,omitempty"`
-	ContentKey    string    `json:"contentKey,omitempty"`
-	MediaType     string    `json:"mediaType,omitempty"`
-	Title         string    `json:"title,omitempty"`
-	Author        string    `json:"author,omitempty"`
-	EventType     string    `json:"eventType"`
-	Seconds       int       `json:"seconds"`
-	OccurredAt    time.Time `json:"occurredAt"`
+	ClientEventID string `json:"clientEventId,omitempty"`
+	// SessionID names one continuous playback session, minted by the
+	// device that started it. Exact identity: two events sharing one are
+	// the same session regardless of what their timestamps say, which
+	// beats inferring it from overlap — and survives clock skew.
+	SessionID  string    `json:"sessionId,omitempty"`
+	Source     string    `json:"source,omitempty"`
+	ItemID     string    `json:"itemId,omitempty"`
+	ContentKey string    `json:"contentKey,omitempty"`
+	MediaType  string    `json:"mediaType,omitempty"`
+	Title      string    `json:"title,omitempty"`
+	Author     string    `json:"author,omitempty"`
+	EventType  string    `json:"eventType"`
+	Seconds    int       `json:"seconds"`
+	OccurredAt time.Time `json:"occurredAt"`
 }
 
 // StatsSummary is a person's own rollup, computed in SQL.
@@ -105,10 +110,10 @@ func (r *StatsRepository) AppendEvents(
 
 	insert, err := tx.Prepare(`
 		INSERT OR IGNORE INTO stats_events
-			(id, profile_id, client_event_id, source, item_id, content_key,
-			 media_type, title, author, event_type, seconds, occurred_at,
-			 occurred_at_unix)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(id, profile_id, client_event_id, session_id, source, item_id,
+			 content_key, media_type, title, author, event_type, seconds,
+			 occurred_at, occurred_at_unix)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return result, err
@@ -145,19 +150,33 @@ func (r *StatsRepository) AppendEvents(
 		}
 
 		// Same activity already recorded, by this device or another one?
-		existingID, existingSecs, found, err := overlapping(tx, profileID, e)
+		existingID, existingStart, existingSecs, found, err :=
+			overlapping(tx, profileID, e)
 		if err != nil {
 			return result, err
 		}
 		if found {
-			// Two reports of one session. Keep the fuller account: a
-			// watch that saw twenty-five minutes and a phone that saw
-			// twenty are describing the same listening, and the longer
-			// reading is the more complete one — not something to add.
-			if e.Seconds > existingSecs {
-				if _, err := tx.Exec(
-					`UPDATE stats_events SET seconds = ? WHERE id = ?`,
-					e.Seconds, existingID,
+			// Two reports of one session. Store the UNION of the two
+			// ranges, not the longer count: a watch that saw 10:00–10:15
+			// and a phone that saw 10:02–10:22 are describing one
+			// continuous 10:00–10:22 of listening — 22 minutes, which
+			// neither device saw whole. Updating only the seconds (as an
+			// earlier version did) leaves the stored start wrong
+			// whenever the second report began earlier.
+			inStart := e.OccurredAt.UTC().Unix()
+			inEnd := inStart + int64(e.Seconds)
+			exEnd := existingStart + int64(existingSecs)
+
+			uStart := min(existingStart, inStart)
+			uEnd := max(exEnd, inEnd)
+
+			if uStart < existingStart || uEnd > exEnd {
+				if _, err := tx.Exec(`
+					UPDATE stats_events
+					SET seconds = ?, occurred_at_unix = ?, occurred_at = ?
+					WHERE id = ?`,
+					uEnd-uStart, uStart,
+					time.Unix(uStart, 0).UTC(), existingID,
 				); err != nil {
 					return result, err
 				}
@@ -170,6 +189,7 @@ func (r *StatsRepository) AppendEvents(
 
 		res, err := insert.Exec(
 			uuid.New().String(), profileID, nullIfEmpty(e.ClientEventID),
+			nullIfEmpty(e.SessionID),
 			e.Source, e.ItemID, nullIfEmpty(e.ContentKey), e.MediaType,
 			e.Title, e.Author, e.EventType, e.Seconds, e.OccurredAt.UTC(),
 			e.OccurredAt.UTC().Unix(),

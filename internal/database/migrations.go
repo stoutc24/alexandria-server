@@ -118,6 +118,7 @@ func RunMigrations() error {
 					seconds INTEGER NOT NULL DEFAULT 0,
 					occurred_at DATETIME NOT NULL,
 					occurred_at_unix INTEGER,
+					session_id TEXT,
 					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 					FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
 				);
@@ -125,6 +126,7 @@ func RunMigrations() error {
 				CREATE INDEX IF NOT EXISTS idx_stats_profile_key ON stats_events(profile_id, content_key);
 				CREATE INDEX IF NOT EXISTS idx_stats_profile_item ON stats_events(profile_id, source, item_id);
 				CREATE INDEX IF NOT EXISTS idx_stats_profile_when ON stats_events(profile_id, occurred_at_unix);
+				CREATE INDEX IF NOT EXISTS idx_stats_profile_session ON stats_events(profile_id, session_id);
 			`,
 		},
 		{
@@ -198,6 +200,11 @@ func RunMigrations() error {
 		// which fails silently rather than loudly. An integer cannot be
 		// ambiguous.
 		`ALTER TABLE stats_events ADD COLUMN occurred_at_unix INTEGER`,
+		// A client-minted id for one continuous playback session. When
+		// two events carry the same one they ARE the same session, by
+		// definition — no time arithmetic required. Temporal overlap
+		// remains the fallback for events that carry none.
+		`ALTER TABLE stats_events ADD COLUMN session_id TEXT`,
 	} {
 		if _, err := DB.Exec(alter); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {

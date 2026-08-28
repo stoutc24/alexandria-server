@@ -192,11 +192,21 @@ func (r *LinkRepository) Approve(code, profileID string) error {
 		return ErrLinkExpired
 	}
 
+	// The guard in the UPDATE, not just the SELECT above: two concurrent
+	// approvals both pass the read, and without it the second silently
+	// re-binds the code. Zero rows affected means somebody else won.
 	now := time.Now().UTC()
-	_, err = database.DB.Exec(`
-		UPDATE link_requests SET profile_id = ?, approved_at = ? WHERE id = ?
+	res, err := database.DB.Exec(`
+		UPDATE link_requests SET profile_id = ?, approved_at = ?
+		WHERE id = ? AND profile_id IS NULL
 	`, profileID, now, id)
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrLinkUsed
+	}
+	return nil
 }
 
 // Claim is the app collecting its token.
@@ -232,11 +242,19 @@ func (r *LinkRepository) Claim(claimSecret string) (profileID, deviceLabel strin
 		return "", "", nil
 	}
 
-	if _, err := database.DB.Exec(
-		`UPDATE link_requests SET claimed_at = ? WHERE id = ?`,
+	// Single use has to hold under CONCURRENCY, which a SELECT-then-
+	// UPDATE does not: two racing claims with the same secret both pass
+	// the read and both mint a token. The claimed_at guard makes the
+	// second UPDATE touch zero rows, and zero rows means already used.
+	res, err := database.DB.Exec(
+		`UPDATE link_requests SET claimed_at = ? WHERE id = ? AND claimed_at IS NULL`,
 		time.Now().UTC(), id,
-	); err != nil {
+	)
+	if err != nil {
 		return "", "", err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return "", "", ErrLinkUsed
 	}
 	return profile.String, label.String, nil
 }
