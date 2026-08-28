@@ -44,6 +44,7 @@ var capabilities = []string{
 	"stats.smart-ingest",
 	"link",
 	"devices.provision",
+	"nowplaying",
 }
 
 func Health(c *fiber.Ctx) error {

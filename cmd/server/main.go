@@ -18,6 +18,7 @@ import (
 	"github.com/stoutsolutions/alexandria-server/internal/database"
 	"github.com/stoutsolutions/alexandria-server/internal/handlers"
 	"github.com/stoutsolutions/alexandria-server/internal/middleware"
+	"github.com/stoutsolutions/alexandria-server/internal/nowplaying"
 	"github.com/stoutsolutions/alexandria-server/internal/repository"
 )
 
@@ -73,6 +74,7 @@ func main() {
 	linkRepo := repository.NewLinkRepository()
 
 	catalogHandler := handlers.NewCatalogHandler(catalogRepo)
+	nowPlayingHandler := handlers.NewNowPlayingHandler(nowplaying.NewStore())
 	adminHandler := handlers.NewAdminHandler(profileRepo, cfg.DBPath)
 	statsHandler := handlers.NewStatsHandler(statsRepo)
 	linkHandler := handlers.NewLinkHandler(linkRepo, profileRepo)
@@ -157,6 +159,15 @@ func main() {
 	// A device pairing another device it already owns: the phone hands a
 	// token to the watch, no code typed on a tiny screen.
 	v1.Post("/devices", requireProfile, linkHandler.ProvisionDevice)
+
+	// The party line: a profile's own devices report and read what is
+	// playing RIGHT NOW, so a TV can join mid-stream. Behind
+	// requireProfile — the admin token is rejected, same boundary as
+	// stats. In memory only; nothing here ever touches the database.
+	np := v1.Group("/nowplaying", requireProfile)
+	np.Put("/", nowPlayingHandler.Report)
+	np.Get("/", nowPlayingHandler.Get)
+	np.Delete("/", nowPlayingHandler.Clear)
 
 	stats := v1.Group("/stats", requireProfile)
 	stats.Post("/events", statsHandler.AppendEvents)

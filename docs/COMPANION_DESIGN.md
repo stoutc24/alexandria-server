@@ -255,6 +255,27 @@ Every other admin route yields counts.
 repository offers no "read another profile" method for a future route to
 reach for. The absence is the boundary — keep it absent.
 
+### Now playing — the party line
+
+A profile's devices can see what that profile is playing RIGHT NOW
+(`PUT/GET/DELETE /api/v1/nowplaying`), so a TV can join a book or an
+album mid-stream at the same spot.
+
+Three properties carry the design:
+
+- **Opt in, off by default.** Nothing is published until the person
+  flips the switch on the companion screen.
+- **Per profile, admin excluded.** The routes sit behind the profile
+  guard; the admin token is 401'd on every method. Live listening is
+  the most intimate data here — more so than history.
+- **Memory only, never the database.** Presence expires 90 seconds
+  after the last heartbeat and survives no restart. What someone is
+  playing at this moment is never written anywhere.
+
+The server stamps reports with ITS OWN clock, so a joiner extrapolates
+`position + (serverNow − updatedAtMs)` without caring about either
+device's clock.
+
 ### The honest limit
 
 **Whoever runs this server owns the file the data sits in, and can open
