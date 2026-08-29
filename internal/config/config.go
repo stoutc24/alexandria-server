@@ -12,6 +12,13 @@ type Config struct {
 	Port     string
 	DBPath   string
 	APIToken string
+
+	// ServerName labels this server in LAN discovery pick-lists. It
+	// defaults to the machine's hostname, which is WRONG in Docker:
+	// there the hostname is the container id, so the server appears to
+	// be a different machine after every recreate (reported from a live
+	// deployment). Set ALEXANDRIA_SERVER_NAME to pin it.
+	ServerName string
 }
 
 // defaultToken is the placeholder shipped in .env.example and the
@@ -21,9 +28,10 @@ const defaultToken = "change-me"
 
 func Load() *Config {
 	cfg := &Config{
-		Port:     getEnv("PORT", "4000"),
-		DBPath:   getEnv("DB_PATH", "./alexandria.db"),
-		APIToken: os.Getenv("ALEXANDRIA_API_TOKEN"),
+		Port:       getEnv("PORT", "4000"),
+		DBPath:     getEnv("DB_PATH", "./alexandria.db"),
+		APIToken:   os.Getenv("ALEXANDRIA_API_TOKEN"),
+		ServerName: os.Getenv("ALEXANDRIA_SERVER_NAME"),
 	}
 
 	// Refuse to start rather than come up unauthenticated. This server

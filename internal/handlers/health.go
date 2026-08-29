@@ -56,13 +56,24 @@ var capabilities = []string{
 	"nowplaying",
 }
 
+// configuredName is the operator's chosen label, set at startup. Empty
+// falls back to the hostname — fine on a NAS, useless in Docker where
+// the hostname is a per-recreate container id.
+var configuredName string
+
+// SetServerName pins the discovery label. Called once from main.
+func SetServerName(name string) { configuredName = name }
+
 func Health(c *fiber.Ctx) error {
 	dbStatus := "connected"
 	if err := database.DB.Ping(); err != nil {
 		dbStatus = "disconnected"
 	}
 
-	host, _ := os.Hostname()
+	host := configuredName
+	if host == "" {
+		host, _ = os.Hostname()
+	}
 	return c.JSON(HealthResponse{
 		App:       "alexandria-companion",
 		Name:      host,

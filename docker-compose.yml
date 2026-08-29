@@ -38,6 +38,10 @@ services:
       # Generate with:  openssl rand -hex 32
       - ALEXANDRIA_API_TOKEN=${ALEXANDRIA_API_TOKEN:?set ALEXANDRIA_API_TOKEN in .env}
 
+      # Discovery label. Without it the container id is used, which
+      # changes on every recreate and makes this look like a new machine.
+      - ALEXANDRIA_SERVER_NAME=${ALEXANDRIA_SERVER_NAME:-Alexandria Companion}
+
       # Timezone
       - TZ=${TZ:-UTC}
 

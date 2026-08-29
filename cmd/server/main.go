@@ -87,6 +87,8 @@ func main() {
 	// Unauthenticated on purpose: the app needs to know whether a
 	// companion exists and what it can do before it has been given a
 	// token. It reveals capabilities, never library contents.
+	// Discovery label: pinned by ALEXANDRIA_SERVER_NAME, else hostname.
+	handlers.SetServerName(cfg.ServerName)
 	app.Get("/health", handlers.Health)
 
 	// The management page. Inert markup until someone signs in through
