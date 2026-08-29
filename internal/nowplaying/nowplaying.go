@@ -33,6 +33,11 @@ type State struct {
 	// DeviceLabel names the reporting device ("Chris's iPhone"), so a
 	// joiner can say where the audio is coming from.
 	DeviceLabel string `json:"deviceLabel,omitempty"`
+	// QueueIndex is where the leader currently sits in its published
+	// queue; QueueLen tells a joiner a queue exists without a second
+	// request. Both zero when no queue was published.
+	QueueIndex int `json:"queueIndex,omitempty"`
+	QueueLen   int `json:"queueLen,omitempty"`
 	// UpdatedAtMs is the SERVER clock when this report landed. A joiner
 	// extrapolates: position + (now - updatedAt) while playing. Using
 	// the server clock sidesteps device clock skew entirely — both the
@@ -49,6 +54,18 @@ type State struct {
 	ServerNowMs int64 `json:"serverNowMs,omitempty"`
 }
 
+// QueueItem is one entry of the leader's play queue — METADATA ONLY.
+// The server never holds a stream, a URL, or a credential; a joiner
+// resolves each entry against its own connections, and an entry it
+// cannot resolve is skipped, never guessed.
+type QueueItem struct {
+	Source      string `json:"source"`
+	ItemID      string `json:"itemId"`
+	Title       string `json:"title"`
+	Author      string `json:"author,omitempty"`
+	DurationSec int    `json:"durationSec,omitempty"`
+}
+
 // staleAfter is how long a report stays credible without a heartbeat.
 // The publisher heartbeats every few seconds while playing; a state
 // older than this means the device died mid-song, and advertising a
@@ -59,10 +76,15 @@ const staleAfter = 90 * time.Second
 type Store struct {
 	mu sync.RWMutex
 	m  map[string]State
+	// The leader's queue, alongside its state. Sent only when it
+	// CHANGES (a station reshuffle, a smart-queue append) — heartbeats
+	// stay tiny. Same lifetime rules as the state: memory only, gone
+	// with the state.
+	q map[string][]QueueItem
 }
 
 func NewStore() *Store {
-	return &Store{m: make(map[string]State)}
+	return &Store{m: make(map[string]State), q: make(map[string][]QueueItem)}
 }
 
 // Set records what a profile is playing. Last writer wins — the device
@@ -100,5 +122,34 @@ func (s *Store) Get(profileID string) (State, bool) {
 func (s *Store) Clear(profileID string) {
 	s.mu.Lock()
 	delete(s.m, profileID)
+	delete(s.q, profileID)
 	s.mu.Unlock()
+}
+
+// SetQueue replaces the leader's queue for a profile.
+func (s *Store) SetQueue(profileID string, items []QueueItem) {
+	s.mu.Lock()
+	if len(items) == 0 {
+		delete(s.q, profileID)
+	} else {
+		s.q[profileID] = items
+	}
+	s.mu.Unlock()
+}
+
+// Queue returns the leader's queue — valid only while the state itself
+// is fresh, so a dead session cannot hand out a stale tracklist.
+func (s *Store) Queue(profileID string) ([]QueueItem, bool) {
+	if _, ok := s.Get(profileID); !ok {
+		return nil, false
+	}
+	s.mu.RLock()
+	items, ok := s.q[profileID]
+	s.mu.RUnlock()
+	if !ok || len(items) == 0 {
+		return nil, false
+	}
+	out := make([]QueueItem, len(items))
+	copy(out, items)
+	return out, true
 }

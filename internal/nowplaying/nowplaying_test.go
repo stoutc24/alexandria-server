@@ -75,3 +75,58 @@ func TestLastWriterWins(t *testing.T) {
 		t.Fatalf("expected the most recent reporter, got %+v", st)
 	}
 }
+
+// The queue is only as alive as the session: a joiner must never get a
+// tracklist for a session that has gone stale or been cleared.
+func TestQueueLifetimeIsTiedToTheState(t *testing.T) {
+	s := NewStore()
+
+	s.SetQueue("p1", []QueueItem{{Source: "plex", ItemID: "plex:1", Title: "A"}})
+	if _, ok := s.Queue("p1"); ok {
+		t.Fatal("a queue with no live state was handed out")
+	}
+
+	s.Set("p1", State{Title: "A", IsPlaying: true})
+	items, ok := s.Queue("p1")
+	if !ok || len(items) != 1 {
+		t.Fatalf("queue missing alongside a live state: ok=%v n=%d", ok, len(items))
+	}
+
+	s.Clear("p1")
+	if _, ok := s.Queue("p1"); ok {
+		t.Fatal("Clear left the queue behind")
+	}
+}
+
+// Heartbeats without a queue attached must not clear the stored queue —
+// the queue travels only when it changes.
+func TestHeartbeatsLeaveTheQueueAlone(t *testing.T) {
+	s := NewStore()
+	s.Set("p1", State{Title: "A", IsPlaying: true})
+	s.SetQueue("p1", []QueueItem{{Source: "plex", ItemID: "plex:1", Title: "A"}})
+
+	// Ten heartbeats later...
+	for i := 0; i < 10; i++ {
+		s.Set("p1", State{Title: "A", IsPlaying: true, PositionSec: i * 20})
+	}
+	if _, ok := s.Queue("p1"); !ok {
+		t.Fatal("heartbeats without a queue wiped the stored queue")
+	}
+
+	// And an explicit empty replace clears it.
+	s.SetQueue("p1", nil)
+	if _, ok := s.Queue("p1"); ok {
+		t.Fatal("an empty queue replace did not clear")
+	}
+}
+
+func TestQueuesAreIsolatedPerProfile(t *testing.T) {
+	s := NewStore()
+	s.Set("sarah", State{Title: "A", IsPlaying: true})
+	s.SetQueue("sarah", []QueueItem{{Source: "plex", ItemID: "plex:1", Title: "A"}})
+
+	s.Set("chris", State{Title: "B", IsPlaying: true})
+	if _, ok := s.Queue("chris"); ok {
+		t.Fatal("chris got sarah's queue")
+	}
+}

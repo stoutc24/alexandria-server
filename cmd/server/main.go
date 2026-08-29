@@ -196,6 +196,7 @@ func main() {
 	np := v1.Group("/nowplaying", requireProfile)
 	np.Put("/", nowPlayingHandler.Report)
 	np.Get("/", nowPlayingHandler.Get)
+	np.Get("/queue", nowPlayingHandler.GetQueue)
 	np.Delete("/", nowPlayingHandler.Clear)
 
 	stats := v1.Group("/stats", requireProfile)

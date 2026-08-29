@@ -36,11 +36,26 @@ func (h *NowPlayingHandler) Report(c *fiber.Ctx) error {
 		})
 	}
 
-	var st nowplaying.State
-	if err := c.BodyParser(&st); err != nil {
+	// The queue rides the same PUT, optionally: present = replace,
+	// absent = keep what is stored. Heartbeats stay tiny; the queue
+	// travels only when it changes.
+	var req struct {
+		nowplaying.State
+		Queue *[]nowplaying.QueueItem `json:"queue"`
+	}
+	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "invalid request body",
 		})
+	}
+	st := req.State
+	if req.Queue != nil {
+		if len(*req.Queue) > 500 {
+			return c.Status(fiber.StatusRequestEntityTooLarge).JSON(fiber.Map{
+				"error": "queue too large; send at most 500 entries",
+			})
+		}
+		h.store.SetQueue(profileID, *req.Queue)
 	}
 	if st.Title == "" && st.ItemID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -71,6 +86,23 @@ func (h *NowPlayingHandler) Get(c *fiber.Ctx) error {
 	// and stay immune to clock skew. Never stored.
 	st.ServerNowMs = time.Now().UnixMilli()
 	return c.JSON(st)
+}
+
+// GetQueue hands a joiner the leader's queue, so it can keep playing
+// past the current track instead of going silent when the song ends.
+// 204 when no queue is published — a single-track join still works.
+func (h *NowPlayingHandler) GetQueue(c *fiber.Ctx) error {
+	profileID := middleware.ProfileID(c)
+	if profileID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "a profile token is required",
+		})
+	}
+	items, ok := h.store.Queue(profileID)
+	if !ok {
+		return c.SendStatus(fiber.StatusNoContent)
+	}
+	return c.JSON(fiber.Map{"items": items, "count": len(items)})
 }
 
 // Clear is the explicit stop — playback ended, drop the advertisement
