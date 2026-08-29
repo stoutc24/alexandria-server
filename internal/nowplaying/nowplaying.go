@@ -38,6 +38,15 @@ type State struct {
 	// the server clock sidesteps device clock skew entirely — both the
 	// reporter and the joiner talk to the same clock.
 	UpdatedAtMs int64 `json:"updatedAtMs"`
+
+	// ServerNowMs is the server clock AT READ TIME, stamped by the GET
+	// handler and never stored. It lets a joiner compute the report's
+	// age entirely in server time — (serverNow − updatedAt) — and then
+	// add only its own local elapsed-since-receipt, so the joiner's
+	// wall clock never gets compared against the server's. Without it,
+	// a few seconds of clock skew between a Windows server and an Apple
+	// TV became a few seconds of playback lag (device report).
+	ServerNowMs int64 `json:"serverNowMs,omitempty"`
 }
 
 // staleAfter is how long a report stays credible without a heartbeat.

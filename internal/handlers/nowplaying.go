@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/stoutsolutions/alexandria-server/internal/middleware"
 	"github.com/stoutsolutions/alexandria-server/internal/nowplaying"
@@ -65,6 +67,9 @@ func (h *NowPlayingHandler) Get(c *fiber.Ctx) error {
 	if !ok {
 		return c.SendStatus(fiber.StatusNoContent)
 	}
+	// Read-time stamp so the joiner can do its age math in server time
+	// and stay immune to clock skew. Never stored.
+	st.ServerNowMs = time.Now().UnixMilli()
 	return c.JSON(st)
 }
 
