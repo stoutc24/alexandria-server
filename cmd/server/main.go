@@ -104,7 +104,7 @@ func main() {
 	// ever an entitlement.
 	requireAdmin := middleware.RequireAdmin(cfg, adminAuthRepo)
 	requireProfile := middleware.RequireProfile(profileRepo)
-	requireAnyToken := middleware.RequireAnyToken(cfg, profileRepo)
+	requireAnyToken := middleware.RequireAnyToken(cfg, profileRepo, adminAuthRepo)
 
 	// Household management: who exists, and how much space they use.
 	// Nothing here returns anyone's history — see handlers/admin.go.

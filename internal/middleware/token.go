@@ -146,11 +146,30 @@ func RequireProfile(profiles *repository.ProfileRepository) fiber.Handler {
 // RequireAnyToken gates shared, non-personal data — the library index.
 // It describes the household's servers, not any individual, so both
 // token kinds may read it.
+//
+// A signed-in admin counts too, and must: the admin page reads
+// /catalog/summary on every poll, and once the login replaced the token
+// box that page has no bearer token left to send. Without this branch
+// the page authenticates fine, draws itself, and then throws its own
+// user back to the login screen on the one call that still wanted a
+// header — which is exactly what it did.
+//
+// Safe to accept here because the session cookie is SameSite=Strict, so
+// it is not sent on cross-site requests at all; a foreign page cannot
+// borrow it to read the index or to POST a sync.
 func RequireAnyToken(
 	cfg *config.Config,
 	profiles *repository.ProfileRepository,
+	auth *repository.AdminAuthRepository,
 ) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		if raw := c.Cookies(AdminSessionCookie); raw != "" {
+			ok, err := auth.SessionValid(adminauth.HashToken(raw))
+			if err == nil && ok {
+				return c.Next()
+			}
+		}
+
 		token, ok := bearerToken(c)
 		if !ok {
 			return unauthorized(c, "missing or malformed authorization header")
