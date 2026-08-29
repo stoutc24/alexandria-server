@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"os"
 	"runtime"
 	"time"
 
@@ -11,6 +12,14 @@ import (
 var startTime = time.Now()
 
 type HealthResponse struct {
+	// App identifies WHICH self-hosted thing answered: LAN discovery
+	// sweeps a subnet probing :4000/health, and plenty of software
+	// answers a /health probe with 200 — the sweep must never offer a
+	// stranger's service as an Alexandria companion.
+	App string `json:"app"`
+	// Name labels this server in a discovery pick-list ("DESKTOP-PC")
+	// so a household with two companions can tell them apart.
+	Name      string `json:"name,omitempty"`
 	Status    string `json:"status"`
 	Uptime    string `json:"uptime"`
 	Database  string `json:"database"`
@@ -53,7 +62,10 @@ func Health(c *fiber.Ctx) error {
 		dbStatus = "disconnected"
 	}
 
+	host, _ := os.Hostname()
 	return c.JSON(HealthResponse{
+		App:       "alexandria-companion",
+		Name:      host,
 		Status:    "healthy",
 		Uptime:    time.Since(startTime).Round(time.Second).String(),
 		Database:  dbStatus,
