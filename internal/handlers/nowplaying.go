@@ -105,6 +105,36 @@ func (h *NowPlayingHandler) GetQueue(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"items": items, "count": len(items)})
 }
 
+// Follow registers this device as actively following, which is what
+// makes a party ACTIVE. With no followers the leader is just a device
+// playing music and everything stays local; with followers, staying in
+// step is worth the effort. Heartbeat it while following; it expires on
+// its own if a TV sleeps.
+func (h *NowPlayingHandler) Follow(c *fiber.Ctx) error {
+	profileID := middleware.ProfileID(c)
+	if profileID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "a profile token is required",
+		})
+	}
+	var body struct {
+		DeviceKey string `json:"deviceKey"`
+		Stop      bool   `json:"stop"`
+	}
+	_ = c.BodyParser(&body)
+	if body.DeviceKey == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "deviceKey is required",
+		})
+	}
+	if body.Stop {
+		h.store.StopFollowing(profileID, body.DeviceKey)
+	} else {
+		h.store.Following(profileID, body.DeviceKey)
+	}
+	return c.JSON(fiber.Map{"ok": true})
+}
+
 // Clear is the explicit stop — playback ended, drop the advertisement
 // now rather than letting it age out.
 func (h *NowPlayingHandler) Clear(c *fiber.Ctx) error {

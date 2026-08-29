@@ -183,3 +183,73 @@ func TestQueueRevisionMovesOnlyOnQueueChange(t *testing.T) {
 		t.Errorf("a reshuffle did not move the queue revision")
 	}
 }
+
+// The anchor is what every device plays from, so it must be STABLE
+// while a track plays and must move when the leader actually moves.
+func TestTrackAnchorHoldsThenReanchors(t *testing.T) {
+	s := NewStore()
+
+	s.Set("p1", State{ItemID: "t1", PositionSec: 10, IsPlaying: true})
+	first, _ := s.Get("p1")
+	if first.TrackStartedAtMs == 0 {
+		t.Fatal("no anchor derived")
+	}
+
+	// An ordinary heartbeat a moment later must NOT move it — a
+	// wandering anchor is a wandering playback position on every
+	// follower at once.
+	s.Set("p1", State{ItemID: "t1", PositionSec: 10, IsPlaying: true})
+	second, _ := s.Get("p1")
+	if second.TrackStartedAtMs != first.TrackStartedAtMs {
+		t.Errorf("anchor drifted on a heartbeat: %d -> %d",
+			first.TrackStartedAtMs, second.TrackStartedAtMs)
+	}
+
+	// A scrub (position jumps far from what the anchor implies) must
+	// re-anchor, or followers would keep playing the old spot.
+	s.Set("p1", State{ItemID: "t1", PositionSec: 120, IsPlaying: true})
+	scrubbed, _ := s.Get("p1")
+	if scrubbed.TrackStartedAtMs == first.TrackStartedAtMs {
+		t.Error("a scrub did not re-anchor")
+	}
+
+	// A new track always re-anchors.
+	s.Set("p1", State{ItemID: "t2", PositionSec: 0, IsPlaying: true})
+	next, _ := s.Get("p1")
+	if next.TrackStartedAtMs == scrubbed.TrackStartedAtMs {
+		t.Error("a track change did not re-anchor")
+	}
+}
+
+// Party active/inactive: with nobody following, a leader is just a
+// device playing music.
+func TestFollowerCountGatesTheParty(t *testing.T) {
+	s := NewStore()
+	s.Set("p1", State{ItemID: "t1", IsPlaying: true})
+
+	alone, _ := s.Get("p1")
+	if alone.FollowerCount != 0 {
+		t.Fatalf("FollowerCount = %d with nobody following", alone.FollowerCount)
+	}
+
+	s.Following("p1", "appletv-livingroom")
+	s.Following("p1", "appletv-bedroom")
+	shared, _ := s.Get("p1")
+	if shared.FollowerCount != 2 {
+		t.Errorf("FollowerCount = %d, want 2", shared.FollowerCount)
+	}
+
+	// Leaving is immediate, not TTL-delayed.
+	s.StopFollowing("p1", "appletv-bedroom")
+	after, _ := s.Get("p1")
+	if after.FollowerCount != 1 {
+		t.Errorf("FollowerCount = %d after one left, want 1", after.FollowerCount)
+	}
+
+	// And one profile's followers are not another's.
+	s.Set("p2", State{ItemID: "x", IsPlaying: true})
+	other, _ := s.Get("p2")
+	if other.FollowerCount != 0 {
+		t.Errorf("follower leaked across profiles: %d", other.FollowerCount)
+	}
+}
