@@ -72,21 +72,26 @@ func main() {
 	profileRepo := repository.NewProfileRepository()
 	statsRepo := repository.NewStatsRepository()
 	linkRepo := repository.NewLinkRepository()
+	adminAuthRepo := repository.NewAdminAuthRepository()
+	if err := adminAuthRepo.PurgeExpiredSessions(); err != nil {
+		log.Printf("could not purge expired admin sessions: %v", err)
+	}
 
 	catalogHandler := handlers.NewCatalogHandler(catalogRepo)
 	nowPlayingHandler := handlers.NewNowPlayingHandler(nowplaying.NewStore())
 	adminHandler := handlers.NewAdminHandler(profileRepo, cfg.DBPath)
 	statsHandler := handlers.NewStatsHandler(statsRepo)
 	linkHandler := handlers.NewLinkHandler(linkRepo, profileRepo)
+	adminAuthHandler := handlers.NewAdminAuthHandler(adminAuthRepo)
 
 	// Unauthenticated on purpose: the app needs to know whether a
 	// companion exists and what it can do before it has been given a
 	// token. It reveals capabilities, never library contents.
 	app.Get("/health", handlers.Health)
 
-	// The management page. Inert markup until someone types the admin
-	// token into it, so it needs no auth of its own — every call it
-	// makes goes to /api/v1/admin/*, which does.
+	// The management page. Inert markup until someone signs in through
+	// it, so it needs no auth of its own — every call it makes goes to
+	// /api/v1/admin/*, which does.
 	app.Get("/admin", adminui.Handler)
 
 	api := app.Group("/api")
@@ -97,12 +102,36 @@ func main() {
 	// to whoever runs the box, and a profile token exists only to keep
 	// one person's stats out of another person's totals. Neither is
 	// ever an entitlement.
-	requireAdmin := middleware.RequireAdmin(cfg)
+	requireAdmin := middleware.RequireAdmin(cfg, adminAuthRepo)
 	requireProfile := middleware.RequireProfile(profileRepo)
 	requireAnyToken := middleware.RequireAnyToken(cfg, profileRepo)
 
 	// Household management: who exists, and how much space they use.
 	// Nothing here returns anyone's history — see handlers/admin.go.
+	// The admin login. Rate limited hard: this is the one place on the
+	// server where guessing is the attack, and 10/min makes grinding a
+	// 6-digit code hopeless while never inconveniencing a person who
+	// mistypes it twice.
+	authLimiter := limiter.New(limiter.Config{
+		Max:        10,
+		Expiration: time.Minute,
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": "too many sign-in attempts; wait a minute",
+			})
+		},
+	})
+	adminAuth := v1.Group("/admin/auth", authLimiter)
+	adminAuth.Get("/status", adminAuthHandler.Status)
+	adminAuth.Post("/login", adminAuthHandler.Login)
+	adminAuth.Post("/logout", adminAuthHandler.Logout)
+	// Enrolment is the ONE route that still trusts the environment token
+	// outright. It is the break-glass path: whoever holds the .env can
+	// always set up a new login, which is what recovers a companion
+	// whose authenticator went into a lake.
+	adminAuth.Post("/enroll",
+		middleware.RequireAdminToken(cfg), adminAuthHandler.Enroll)
+
 	admin := v1.Group("/admin", requireAdmin)
 	admin.Post("/profiles", adminHandler.CreateProfile)
 	admin.Get("/profiles", adminHandler.ListProfiles)

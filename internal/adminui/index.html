@@ -121,16 +121,44 @@
 </header>
 
 <main>
-  <section id="login">
-    <h2>Admin token</h2>
-    <p class="hint">The <code>ALEXANDRIA_API_TOKEN</code> from your server's
-      environment. It stays in this browser and is never sent anywhere but
-      this server.</p>
+  <section id="login" hidden>
+    <h2>Sign in</h2>
+    <p class="hint">Your admin password and the current code from your
+      authenticator app.</p>
     <div class="row">
-      <input class="grow" type="password" id="token" placeholder="Paste admin token"
-             autocomplete="off" spellcheck="false">
-      <button class="primary" id="signin">Continue</button>
+      <input class="grow" type="password" id="password" placeholder="Password"
+             autocomplete="current-password" spellcheck="false">
     </div>
+    <div class="row" style="margin-top:11px">
+      <input class="grow" type="text" id="code" placeholder="6-digit code"
+             inputmode="numeric" autocomplete="one-time-code"
+             maxlength="6" spellcheck="false">
+      <button class="primary" id="signin">Sign in</button>
+    </div>
+    <p class="hint" style="margin-top:11px">
+      Lost your authenticator? <a href="#" id="use-recovery">Use a recovery code</a>,
+      or <a href="#" id="show-enroll">start over with your admin token</a>.
+    </p>
+  </section>
+
+  <section id="enroll" hidden>
+    <h2>Set up admin sign-in</h2>
+    <p class="hint">Setting up a login takes the place of the admin token:
+      once you finish, that token no longer opens this page and is kept only
+      for recovery. Doing this again replaces the existing password and
+      authenticator, and signs out every browser.</p>
+    <div class="row">
+      <input class="grow" type="password" id="enroll-token"
+             placeholder="ALEXANDRIA_API_TOKEN from your server's .env"
+             autocomplete="off" spellcheck="false">
+    </div>
+    <div class="row" style="margin-top:11px">
+      <input class="grow" type="password" id="enroll-password"
+             placeholder="Choose a password (12+ characters)"
+             autocomplete="new-password" spellcheck="false">
+      <button class="primary" id="do-enroll">Create</button>
+    </div>
+    <div id="enroll-result" hidden style="margin-top:18px"></div>
   </section>
 
   <div id="app" hidden>
@@ -171,9 +199,11 @@
 <script>
 (function () {
   "use strict";
-  var KEY = "alexandria_admin_token";
-  var token = "";
-  try { token = sessionStorage.getItem(KEY) || ""; } catch (e) { token = ""; }
+  // No token is held here any more. The session lives in an HttpOnly
+  // cookie the browser sends on its own and script cannot read, so a
+  // scripting bug on this page cannot exfiltrate the credential the way
+  // a sessionStorage token could.
+  var usingRecovery = false;
 
   var $ = function (id) { return document.getElementById(id); };
 
@@ -187,12 +217,12 @@
   function api(path, opts) {
     opts = opts || {};
     opts.headers = opts.headers || {};
-    opts.headers["Authorization"] = "Bearer " + token;
+    opts.credentials = "same-origin";
     if (opts.body) opts.headers["Content-Type"] = "application/json";
     return fetch("/api/v1" + path, opts).then(function (res) {
       if (res.status === 401) {
-        signOut();
-        throw new Error("That admin token was not accepted.");
+        showLogin();
+        throw new Error("Your session has ended. Sign in again.");
       }
       if (!res.ok) {
         return res.json().catch(function () { return {}; }).then(function (b) {
@@ -379,34 +409,101 @@
     }).catch(function (e) { toast(e.message, true); });
   }
 
+  function showLogin() {
+    $("app").hidden = true;
+    $("enroll").hidden = true;
+    $("login").hidden = false;
+  }
+
+  function showApp() {
+    $("login").hidden = true;
+    $("enroll").hidden = true;
+    $("app").hidden = false;
+    $("password").value = "";
+    $("code").value = "";
+    load();
+    if (!window._alexPoll) {
+      window._alexPoll = setInterval(function () {
+        if (!$("app").hidden) load();
+      }, 5000);
+    }
+  }
+
   function signIn() {
-    var val = $("token").value.trim();
-    if (!val) { toast("Paste your admin token.", true); return; }
-    token = val;
-    api("/admin/profiles").then(function () {
-      try { sessionStorage.setItem(KEY, token); } catch (e) { /* private mode */ }
-      $("login").hidden = true;
-      $("app").hidden = false;
-      $("token").value = "";
-      load();
-      if (!window._alexPoll) {
-        window._alexPoll = setInterval(function () {
-          if (!$("app").hidden) load();
-        }, 5000);
+    var body = { password: $("password").value };
+    var second = $("code").value.trim();
+    if (!body.password) { toast("Enter your password.", true); return; }
+    if (!second) { toast("Enter your code.", true); return; }
+    if (usingRecovery) { body.recoveryCode = second; } else { body.code = second; }
+
+    fetch("/api/v1/admin/auth/login", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (b) {
+        if (!res.ok) throw new Error(b.error || "Sign-in failed.");
+        return b;
+      });
+    }).then(function (b) {
+      if (b.usedRecoveryCode) {
+        toast("Signed in with a recovery code \u2014 " +
+          b.recoveryCodesRemaining + " left.");
       }
+      usingRecovery = false;
+      showApp();
     }).catch(function (e) { toast(e.message, true); });
   }
 
   function signOut() {
-    token = "";
-    try { sessionStorage.removeItem(KEY); } catch (e) { /* ignore */ }
-    $("app").hidden = true;
-    $("login").hidden = false;
+    fetch("/api/v1/admin/auth/logout", {
+      method: "POST", credentials: "same-origin"
+    }).then(showLogin).catch(showLogin);
+  }
+
+  function enroll() {
+    var tok = $("enroll-token").value.trim();
+    var pw = $("enroll-password").value;
+    if (!tok) { toast("Paste the admin token from your .env.", true); return; }
+    if (pw.length < 12) { toast("Password must be at least 12 characters.", true); return; }
+
+    fetch("/api/v1/admin/auth/enroll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json",
+                 "Authorization": "Bearer " + tok },
+      body: JSON.stringify({ password: pw })
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (b) {
+        if (!res.ok) throw new Error(b.error || "Setup failed.");
+        return b;
+      });
+    }).then(function (b) {
+      $("enroll-token").value = "";
+      $("enroll-password").value = "";
+      // Shown once and never again: the secret is not readable back out
+      // of the server, by design.
+      $("enroll-result").hidden = false;
+      $("enroll-result").innerHTML =
+        '<div class="card"><h3>Add this to your authenticator</h3>' +
+        '<p class="hint">Enter the setup key by hand \u2014 in Google ' +
+        'Authenticator, choose <em>Enter a setup key</em>.</p>' +
+        '<p class="code" style="word-break:break-all">' + esc(b.secret) + '</p>' +
+        '<h3 style="margin-top:18px">Recovery codes</h3>' +
+        '<p class="hint">Write these down now. Each works once, and this is ' +
+        'the only time they are shown.</p>' +
+        '<p class="code" style="line-height:1.9">' +
+          b.recoveryCodes.map(esc).join('<br>') + '</p>' +
+        '<button class="primary" id="enroll-done" style="margin-top:14px">' +
+          'I have saved these</button></div>';
+      $("enroll-done").addEventListener("click", showLogin);
+      toast("Admin login created. The token no longer opens this page.");
+    }).catch(function (e) { toast(e.message, true); });
   }
 
   function backup() {
     fetch("/api/v1/admin/backup", {
-      headers: { "Authorization": "Bearer " + token }
+      credentials: "same-origin"
     }).then(function (res) {
       if (!res.ok) throw new Error("Backup failed (" + res.status + ")");
       return res.blob();
@@ -434,8 +531,29 @@
   });
 
   $("signin").addEventListener("click", signIn);
-  $("token").addEventListener("keydown", function (e) {
+  $("do-enroll").addEventListener("click", enroll);
+  $("password").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") $("code").focus();
+  });
+  $("code").addEventListener("keydown", function (e) {
     if (e.key === "Enter") signIn();
+  });
+  $("show-enroll").addEventListener("click", function (e) {
+    e.preventDefault();
+    $("login").hidden = true;
+    $("enroll").hidden = false;
+  });
+  $("use-recovery").addEventListener("click", function (e) {
+    e.preventDefault();
+    usingRecovery = !usingRecovery;
+    var f = $("code");
+    f.placeholder = usingRecovery ? "Recovery code" : "6-digit code";
+    f.maxLength = usingRecovery ? 11 : 6;
+    f.value = "";
+    f.focus();
+    this.textContent = usingRecovery
+      ? "Use a code from your authenticator instead"
+      : "Use a recovery code";
   });
   $("refresh").addEventListener("click", function () {
     load().then(function () { toast("Refreshed."); });
@@ -443,10 +561,16 @@
   $("signout").addEventListener("click", signOut);
   $("backup").addEventListener("click", backup);
 
-  if (token) {
-    $("token").value = token;
-    signIn();
-  }
+  // Which screen to draw: set-up if nobody has enrolled, the app if the
+  // cookie is still good, otherwise the login.
+  fetch("/api/v1/admin/auth/status", { credentials: "same-origin" })
+    .then(function (r) { return r.json(); })
+    .then(function (st) {
+      if (!st.enrolled) { $("enroll").hidden = false; return; }
+      if (st.signedIn) { showApp(); return; }
+      showLogin();
+    })
+    .catch(function () { showLogin(); });
 })();
 </script>
 </body>

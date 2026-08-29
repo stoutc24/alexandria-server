@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/stoutsolutions/alexandria-server/internal/adminauth"
 	"github.com/stoutsolutions/alexandria-server/internal/config"
 	"github.com/stoutsolutions/alexandria-server/internal/repository"
 )
@@ -41,9 +42,69 @@ func unauthorized(c *fiber.Ctx, msg string) error {
 	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": msg})
 }
 
-// RequireAdmin gates routes that manage the server: catalog sync,
-// creating and deleting profiles, backups.
-func RequireAdmin(cfg *config.Config) fiber.Handler {
+// AdminSessionCookie is the browser's half of the admin login.
+const AdminSessionCookie = "alx_admin"
+
+// RequireAdmin gates routes that manage the server: creating and
+// deleting profiles, revoking devices, backups.
+//
+// Two ways in, and which ones are open depends on whether a login has
+// been enrolled:
+//
+//   - BEFORE enrolment, the environment token works. It has to: it is
+//     the only credential that exists, and it is what authorises
+//     enrolment itself.
+//   - AFTER enrolment, the environment token STOPS WORKING HERE. Only a
+//     session cookie from a password + TOTP login is accepted.
+//
+// That second rule is the entire point. Leaving the static token valid
+// alongside the login would make the login decoration: an attacker with
+// the token would simply not visit the page, and GET /admin/backup --
+// which returns the whole database -- would still be one header away on
+// an internet-reachable companion. A second factor you can skip is not a
+// second factor.
+//
+// The token is not dead, it is demoted: it still authorises enrolment
+// and re-enrolment (see handlers.AdminAuthHandler), which is the
+// break-glass path for a lost authenticator. Whoever holds the .env can
+// always get back in, but they must set up a login to do it, and doing
+// so kills every existing session.
+func RequireAdmin(
+	cfg *config.Config,
+	auth *repository.AdminAuthRepository,
+) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		enrolled, err := auth.Enrolled()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).
+				JSON(fiber.Map{"error": "could not read admin credentials"})
+		}
+
+		if enrolled {
+			if raw := c.Cookies(AdminSessionCookie); raw != "" {
+				ok, err := auth.SessionValid(adminauth.HashToken(raw))
+				if err == nil && ok {
+					return c.Next()
+				}
+			}
+			return unauthorized(c, "admin session required — sign in at /admin")
+		}
+
+		token, ok := bearerToken(c)
+		if !ok {
+			return unauthorized(c, "missing or malformed authorization header")
+		}
+		if !isAdminToken(cfg, token) {
+			return unauthorized(c, "admin token required")
+		}
+		return c.Next()
+	}
+}
+
+// RequireAdminToken gates the enrolment routes on the environment token
+// alone. It is the only thing that still trusts that token outright, and
+// it exists so someone holding the .env can always recover the box.
+func RequireAdminToken(cfg *config.Config) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		token, ok := bearerToken(c)
 		if !ok {

@@ -180,6 +180,40 @@ func RunMigrations() error {
 				CREATE INDEX IF NOT EXISTS idx_link_claim ON link_requests(claim_hash);
 			`,
 		},
+		{
+			// The admin login: one password, one TOTP secret.
+			//
+			// This is not the account system that was removed. That one
+			// held every household member, their media-server
+			// credentials, and a registry of servers. This holds exactly
+			// one row -- the person with physical access to the box --
+			// pinned by CHECK (id = 1) so it cannot grow into a user
+			// table by accident.
+			//
+			// last_totp_step is what stops a code being replayed inside
+			// its own 30-second window; see internal/adminauth/totp.go.
+			name: "create_admin_auth_tables",
+			sql: `
+				CREATE TABLE IF NOT EXISTS admin_credentials (
+					id INTEGER PRIMARY KEY CHECK (id = 1),
+					password_hash TEXT NOT NULL,
+					totp_secret TEXT NOT NULL,
+					last_totp_step INTEGER DEFAULT 0,
+					created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+				);
+				CREATE TABLE IF NOT EXISTS admin_recovery_codes (
+					code_hash TEXT PRIMARY KEY,
+					used_at DATETIME
+				);
+				CREATE TABLE IF NOT EXISTS admin_sessions (
+					token_hash TEXT PRIMARY KEY,
+					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+					expires_at DATETIME NOT NULL
+				);
+				CREATE INDEX IF NOT EXISTS idx_admin_session_expiry
+					ON admin_sessions(expires_at);
+			`,
+		},
 	}
 
 	for _, m := range migrations {
