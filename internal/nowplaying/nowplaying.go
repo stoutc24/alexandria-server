@@ -38,6 +38,18 @@ type State struct {
 	// request. Both zero when no queue was published.
 	QueueIndex int `json:"queueIndex,omitempty"`
 	QueueLen   int `json:"queueLen,omitempty"`
+
+	// Revision increments on every publish. A follower uses it to tell
+	// "the leader said something new" from "same state, new heartbeat"
+	// without diffing every field — and, more importantly, to notice it
+	// MISSED updates (a jump of several revisions) so it can reconcile
+	// hard instead of assuming continuity.
+	Revision int64 `json:"revision"`
+
+	// QueueRevision increments only when the tracklist itself changes,
+	// so a follower refetches the queue on a shuffle or a reorder and
+	// never on an ordinary heartbeat.
+	QueueRevision int64 `json:"queueRevision"`
 	// UpdatedAtMs is the SERVER clock when this report landed. A joiner
 	// extrapolates: position + (now - updatedAt) while playing. Using
 	// the server clock sidesteps device clock skew entirely — both the
@@ -74,8 +86,10 @@ const staleAfter = 90 * time.Second
 
 // Store holds one state per profile.
 type Store struct {
-	mu sync.RWMutex
-	m  map[string]State
+	mu   sync.RWMutex
+	m    map[string]State
+	rev  map[string]int64
+	qrev map[string]int64
 	// The leader's queue, alongside its state. Sent only when it
 	// CHANGES (a station reshuffle, a smart-queue append) — heartbeats
 	// stay tiny. Same lifetime rules as the state: memory only, gone
@@ -84,7 +98,12 @@ type Store struct {
 }
 
 func NewStore() *Store {
-	return &Store{m: make(map[string]State), q: make(map[string][]QueueItem)}
+	return &Store{
+		m:    make(map[string]State),
+		q:    make(map[string][]QueueItem),
+		rev:  make(map[string]int64),
+		qrev: make(map[string]int64),
+	}
 }
 
 // Set records what a profile is playing. Last writer wins — the device
@@ -92,6 +111,9 @@ func NewStore() *Store {
 func (s *Store) Set(profileID string, st State) {
 	st.UpdatedAtMs = time.Now().UnixMilli()
 	s.mu.Lock()
+	s.rev[profileID]++
+	st.Revision = s.rev[profileID]
+	st.QueueRevision = s.qrev[profileID]
 	s.m[profileID] = st
 	s.mu.Unlock()
 }
@@ -123,16 +145,27 @@ func (s *Store) Clear(profileID string) {
 	s.mu.Lock()
 	delete(s.m, profileID)
 	delete(s.q, profileID)
+	// Revisions deliberately SURVIVE a clear: a follower that reconnects
+	// must never see a revision go backwards, which it would read as
+	// "nothing changed" and sit on stale playback.
 	s.mu.Unlock()
 }
 
 // SetQueue replaces the leader's queue for a profile.
 func (s *Store) SetQueue(profileID string, items []QueueItem) {
 	s.mu.Lock()
+	s.qrev[profileID]++
 	if len(items) == 0 {
 		delete(s.q, profileID)
 	} else {
 		s.q[profileID] = items
+	}
+	// Keep a already-stored state's queue revision current, so a
+	// follower polling between a queue change and the next heartbeat
+	// still learns the tracklist moved.
+	if st, ok := s.m[profileID]; ok {
+		st.QueueRevision = s.qrev[profileID]
+		s.m[profileID] = st
 	}
 	s.mu.Unlock()
 }

@@ -130,3 +130,56 @@ func TestQueuesAreIsolatedPerProfile(t *testing.T) {
 		t.Fatal("chris got sarah's queue")
 	}
 }
+
+// A follower distinguishes "the leader did something" from "another
+// heartbeat" by the revision, and notices MISSED updates by a jump.
+func TestRevisionsAdvanceAndSurviveClear(t *testing.T) {
+	s := NewStore()
+
+	s.Set("p1", State{Title: "A", IsPlaying: true})
+	first, _ := s.Get("p1")
+	s.Set("p1", State{Title: "A", IsPlaying: true})
+	second, _ := s.Get("p1")
+	if second.Revision <= first.Revision {
+		t.Fatalf("revision did not advance: %d -> %d",
+			first.Revision, second.Revision)
+	}
+
+	// A stop-and-restart must never rewind the revision: a follower
+	// would read that as "nothing new" and sit on stale playback.
+	s.Clear("p1")
+	s.Set("p1", State{Title: "B", IsPlaying: true})
+	third, _ := s.Get("p1")
+	if third.Revision <= second.Revision {
+		t.Errorf("revision rewound across a clear: %d then %d",
+			second.Revision, third.Revision)
+	}
+}
+
+// Shuffling changes the tracklist but not necessarily the current
+// track — the queue revision is what tells a follower to refetch.
+func TestQueueRevisionMovesOnlyOnQueueChange(t *testing.T) {
+	s := NewStore()
+	s.Set("p1", State{Title: "A", IsPlaying: true})
+	s.SetQueue("p1", []QueueItem{{ItemID: "1"}, {ItemID: "2"}})
+
+	afterQueue, _ := s.Get("p1")
+	if afterQueue.QueueRevision == 0 {
+		t.Fatal("queue revision did not move when the queue was set")
+	}
+
+	// Heartbeats must not move it.
+	s.Set("p1", State{Title: "A", IsPlaying: true, PositionSec: 30})
+	afterBeat, _ := s.Get("p1")
+	if afterBeat.QueueRevision != afterQueue.QueueRevision {
+		t.Errorf("a heartbeat moved the queue revision: %d -> %d",
+			afterQueue.QueueRevision, afterBeat.QueueRevision)
+	}
+
+	// A reshuffle must.
+	s.SetQueue("p1", []QueueItem{{ItemID: "2"}, {ItemID: "1"}})
+	afterShuffle, _ := s.Get("p1")
+	if afterShuffle.QueueRevision <= afterBeat.QueueRevision {
+		t.Errorf("a reshuffle did not move the queue revision")
+	}
+}
