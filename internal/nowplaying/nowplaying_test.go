@@ -253,3 +253,89 @@ func TestFollowerCountGatesTheParty(t *testing.T) {
 		t.Errorf("follower leaked across profiles: %d", other.FollowerCount)
 	}
 }
+
+// Long polling is what removes the reaction floor: a follower must hear
+// about a change when it happens, not up to a poll interval later.
+func TestWaitForChangeWakesOnPublish(t *testing.T) {
+	s := NewStore()
+	s.Set("p1", State{ItemID: "t1", IsPlaying: true})
+	start, _ := s.Get("p1")
+
+	woke := make(chan time.Duration, 1)
+	go func() {
+		began := time.Now()
+		s.WaitForChange("p1", start.Revision, 5*time.Second)
+		woke <- time.Since(began)
+	}()
+
+	// Let the waiter park, then publish.
+	time.Sleep(50 * time.Millisecond)
+	s.Set("p1", State{ItemID: "t2", IsPlaying: true})
+
+	select {
+	case took := <-woke:
+		if took > time.Second {
+			t.Errorf("waiter took %v to notice a publish", took)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter never woke on a publish")
+	}
+}
+
+// A follower that is BEHIND must not park at all — it has catching up
+// to do, and parking would delay it by a whole timeout.
+func TestWaitForChangeReturnsImmediatelyWhenBehind(t *testing.T) {
+	s := NewStore()
+	s.Set("p1", State{ItemID: "t1", IsPlaying: true})
+	s.Set("p1", State{ItemID: "t2", IsPlaying: true})
+
+	began := time.Now()
+	s.WaitForChange("p1", 0, 5*time.Second) // asking from revision 0
+	if elapsed := time.Since(began); elapsed > 200*time.Millisecond {
+		t.Errorf("a behind follower parked for %v", elapsed)
+	}
+}
+
+// Nothing to report is a normal outcome: the wait expires quietly.
+func TestWaitForChangeTimesOutQuietly(t *testing.T) {
+	s := NewStore()
+	s.Set("p1", State{ItemID: "t1", IsPlaying: true})
+	cur, _ := s.Get("p1")
+
+	began := time.Now()
+	s.WaitForChange("p1", cur.Revision, 150*time.Millisecond)
+	elapsed := time.Since(began)
+	if elapsed < 100*time.Millisecond {
+		t.Errorf("returned too early: %v", elapsed)
+	}
+	if elapsed > time.Second {
+		t.Errorf("overshot the timeout: %v", elapsed)
+	}
+}
+
+// Several followers park on one profile; a single publish must wake
+// them all, not just whichever arrived first.
+func TestOnePublishWakesEveryWaiter(t *testing.T) {
+	s := NewStore()
+	s.Set("p1", State{ItemID: "t1", IsPlaying: true})
+	cur, _ := s.Get("p1")
+
+	const followers = 4
+	done := make(chan struct{}, followers)
+	for i := 0; i < followers; i++ {
+		go func() {
+			s.WaitForChange("p1", cur.Revision, 3*time.Second)
+			done <- struct{}{}
+		}()
+	}
+	time.Sleep(50 * time.Millisecond)
+	s.Set("p1", State{ItemID: "t2", IsPlaying: true})
+
+	for i := 0; i < followers; i++ {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d of %d waiters woke", i, followers)
+		}
+	}
+}

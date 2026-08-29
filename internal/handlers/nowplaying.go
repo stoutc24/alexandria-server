@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -76,6 +77,18 @@ func (h *NowPlayingHandler) Get(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "a profile token is required",
 		})
+	}
+
+	// LONG POLL: with ?waitFor=<revision> the request is held until
+	// something actually changes, so a follower learns about a track
+	// change when it happens rather than up to a poll interval later.
+	// Without the parameter this stays an ordinary immediate read.
+	if raw := c.Query("waitFor"); raw != "" {
+		if since, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			// Comfortably inside the follower TTL, so a held request
+			// still counts as the device being alive.
+			h.store.WaitForChange(profileID, since, 15*time.Second)
+		}
 	}
 
 	st, ok := h.store.Get(profileID)

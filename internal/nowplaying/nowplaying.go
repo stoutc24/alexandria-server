@@ -119,6 +119,13 @@ type Store struct {
 	// followers[profile][deviceKey] = last heartbeat, for the
 	// active/inactive party distinction.
 	followers map[string]map[string]time.Time
+
+	// waiters[profile] is closed to wake every long-poll waiting on
+	// that profile. Polling has a floor — a follower cannot react
+	// faster than its interval, which was two seconds of the leader
+	// having already moved on. Holding the request open removes that
+	// floor entirely: the answer arrives when the change does.
+	waiters map[string]chan struct{}
 }
 
 func NewStore() *Store {
@@ -129,6 +136,7 @@ func NewStore() *Store {
 		qrev:      make(map[string]int64),
 		anchor:    make(map[string]int64),
 		followers: make(map[string]map[string]time.Time),
+		waiters:   make(map[string]chan struct{}),
 	}
 }
 
@@ -160,6 +168,7 @@ func (s *Store) Set(profileID string, st State) {
 	st.Revision = s.rev[profileID]
 	st.QueueRevision = s.qrev[profileID]
 	s.m[profileID] = st
+	s.notifyLocked(profileID)
 	s.mu.Unlock()
 }
 
@@ -207,6 +216,40 @@ func (s *Store) followerCountLocked(profileID string) int {
 	return live
 }
 
+// notifyLocked wakes everything waiting on this profile. Caller holds
+// the write lock.
+func (s *Store) notifyLocked(profileID string) {
+	if ch, ok := s.waiters[profileID]; ok {
+		close(ch)
+		delete(s.waiters, profileID)
+	}
+}
+
+// WaitForChange blocks until this profile's revision passes sinceRev,
+// or the timeout expires. Returns immediately when it already has —
+// which is what makes a reconnecting follower catch up instantly
+// instead of waiting out a cycle.
+func (s *Store) WaitForChange(profileID string, sinceRev int64, timeout time.Duration) {
+	s.mu.Lock()
+	if s.rev[profileID] > sinceRev {
+		s.mu.Unlock()
+		return
+	}
+	ch, ok := s.waiters[profileID]
+	if !ok {
+		ch = make(chan struct{})
+		s.waiters[profileID] = ch
+	}
+	s.mu.Unlock()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ch:
+	case <-timer.C:
+	}
+}
+
 // Get returns the profile's current state, or ok=false when nothing is
 // playing or the last report has gone stale.
 func (s *Store) Get(profileID string) (State, bool) {
@@ -240,6 +283,8 @@ func (s *Store) Clear(profileID string) {
 	// Revisions deliberately SURVIVE a clear: a follower that reconnects
 	// must never see a revision go backwards, which it would read as
 	// "nothing changed" and sit on stale playback.
+	s.rev[profileID]++
+	s.notifyLocked(profileID)
 	s.mu.Unlock()
 }
 
@@ -259,6 +304,7 @@ func (s *Store) SetQueue(profileID string, items []QueueItem) {
 		st.QueueRevision = s.qrev[profileID]
 		s.m[profileID] = st
 	}
+	s.notifyLocked(profileID)
 	s.mu.Unlock()
 }
 
