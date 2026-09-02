@@ -139,8 +139,25 @@ func RequireProfile(profiles *repository.ProfileRepository) fiber.Handler {
 		profiles.TouchLastSeen(caller.TokenID)
 		c.Locals(profileLocalsKey, caller.ProfileID)
 		c.Locals("profileName", caller.ProfileName)
+		c.Locals(deviceIDLocalsKey, caller.TokenID)
+		c.Locals(deviceLabelLocalsKey, caller.TokenLabel)
 		return c.Next()
 	}
+}
+
+const (
+	deviceIDLocalsKey    = "deviceTokenID"
+	deviceLabelLocalsKey = "deviceLabel"
+)
+
+// Device returns the calling device — the token id and the label it was
+// linked with. Empty for an admin caller. The party line keys the
+// leader seat on this, so a device's identity is whatever it proved by
+// authenticating, never something it claimed in a body.
+func Device(c *fiber.Ctx) (id, label string) {
+	id, _ = c.Locals(deviceIDLocalsKey).(string)
+	label, _ = c.Locals(deviceLabelLocalsKey).(string)
+	return id, label
 }
 
 // RequireAnyToken gates shared, non-personal data — the library index.

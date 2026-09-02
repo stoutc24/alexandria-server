@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -61,6 +62,11 @@ type Caller struct {
 	ProfileID   string
 	ProfileName string
 	TokenID     string
+	// TokenLabel is the device name chosen at link time ("iPhone",
+	// "Living Room TV"). The token IS the device identity: the party
+	// line uses it to know which device holds the leader seat, so no
+	// client ever has to mint or persist a key of its own.
+	TokenLabel string
 }
 
 type ProfileRepository struct{}
@@ -156,11 +162,11 @@ func (r *ProfileRepository) MintToken(
 func (r *ProfileRepository) FindByToken(token string) (*Caller, error) {
 	c := &Caller{}
 	err := database.DB.QueryRow(`
-		SELECT t.id, p.id, p.name
+		SELECT t.id, p.id, p.name, COALESCE(t.label, '')
 		FROM profile_tokens t
 		JOIN profiles p ON p.id = t.profile_id
 		WHERE t.token_hash = ?
-	`, HashToken(token)).Scan(&c.TokenID, &c.ProfileID, &c.ProfileName)
+	`, HashToken(token)).Scan(&c.TokenID, &c.ProfileID, &c.ProfileName, &c.TokenLabel)
 
 	if err == sql.ErrNoRows {
 		return nil, ErrProfileNotFound
@@ -171,9 +177,25 @@ func (r *ProfileRepository) FindByToken(token string) (*Caller, error) {
 	return c, nil
 }
 
+// lastSeenWritten throttles TouchLastSeen: a following TV holds a
+// long-poll open every ~15s and the leader heartbeats every 5s, so an
+// unconditional UPDATE per authed call became a steady stream of
+// SQLite writes that told nobody anything new. Minute resolution is
+// all "last seen" has ever meant to the devices page.
+var lastSeenWritten sync.Map // tokenID -> time.Time of the last write
+
+const lastSeenResolution = time.Minute
+
 // TouchLastSeen records device activity. Best-effort: a failure here
 // must never fail the request the caller actually made.
 func (r *ProfileRepository) TouchLastSeen(tokenID string) {
+	now := time.Now()
+	if prev, ok := lastSeenWritten.Load(tokenID); ok {
+		if now.Sub(prev.(time.Time)) < lastSeenResolution {
+			return
+		}
+	}
+	lastSeenWritten.Store(tokenID, now)
 	_, _ = database.DB.Exec(
 		`UPDATE profile_tokens SET last_seen_at = ? WHERE id = ?`,
 		time.Now().UTC(), tokenID,

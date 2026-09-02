@@ -276,6 +276,52 @@ The server stamps reports with ITS OWN clock, so a joiner extrapolates
 `position + (serverNow − updatedAtMs)` without caring about either
 device's clock.
 
+#### The conductor (v2): one seat, absolute intents
+
+Any device in the party may pause, seek or skip, and every device —
+the one making the noise included — converges on the result. The
+server is a conductor, not a relay: it holds ONE state per profile and
+devices reconcile to it. Nothing dispatches a command at a device.
+
+- **The seat.** The device actually playing owns the clock. Its
+  identity is its token (`leaderTokenId`, `leaderLabel` from the link
+  label) — never something a body claims. A second device reporting
+  while the seat is held gets `409 seat-held`; an older client that
+  sends no `basedOnRevision` is swallowed (`200 {ignored:true}`) so
+  it cannot flap the state. A silent seat (30 s) is `leaderDormant`
+  and unprotected; a follower may `claimSeat` on it, and `takeOver` is
+  the explicit "play here instead" that works on a live one.
+- **Intents** (`POST /nowplaying/intent`) are absolute and idempotent:
+  `setPlaying(bool)`, `setPositionMs`, `setIndex`, each carrying the
+  `basedOnRevision` the presser saw. Staleness is judged against the
+  revision the current ITEM landed on, not the heartbeat counter, so a
+  pause pressed during a heartbeat still lands and a second "next"
+  computed from a state that predates the first is dropped — never
+  re-applied as a double skip. Refusals are honest codes with the
+  state to catch up on: `stale`, `legacy-leader` (the playing device
+  predates this), `leader-asleep` (a suspended phone cannot be resumed
+  from here — iOS, not us), `no-queue`.
+- **The leader converges like everyone else.** After an intent the
+  leader's next report based on the old revision is `409 stale` with
+  the state to apply; the first report that has seen it is the ack,
+  and it re-anchors the clock from the leader's real position.
+- **Milliseconds and rate.** `positionMs` and `rate` (1.5× audiobooks)
+  feed the anchor `now − positionMs/rate`; it re-anchors on item
+  change, on pause, on paused→playing (always — or followers run ahead
+  by the length of the pause), after an ack, and on >2 s drift.
+- **Revisions track the clock** (`max(prev+1, nowMs)`), so a restart
+  can only move them forward; queue changes and presence CHANGES bump
+  them, presence heartbeats do not (or a follower could never park).
+- **Presence has roles.** `follower` counts toward the party;
+  `viewer` is a screen merely showing the session — enough for the
+  leader to listen for its intents, not enough to keep it in step.
+- **Leaving.** `DELETE ?reason=stopped` from a leader with followers
+  vacates the seat and keeps the music going; `stop-sharing` (or no
+  reason) ends the session; from a mere member it is just leaving.
+
+`/health` advertises `nowplaying.leader`, `nowplaying.intents` and
+`nowplaying.ms`, so a client on an older server degrades to v1.
+
 ### The honest limit
 
 **Whoever runs this server owns the file the data sits in, and can open

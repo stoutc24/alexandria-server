@@ -54,6 +54,12 @@ var capabilities = []string{
 	"link",
 	"devices.provision",
 	"nowplaying",
+	// The conductor protocol: device identity from the token, absolute
+	// intents, millisecond anchors. Clients branch on these, never on a
+	// 404 from a route an older server simply does not have.
+	"nowplaying.leader",
+	"nowplaying.intents",
+	"nowplaying.ms",
 }
 
 // configuredName is the operator's chosen label, set at startup. Empty

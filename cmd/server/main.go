@@ -200,6 +200,7 @@ func main() {
 	np.Get("/", nowPlayingHandler.Get)
 	np.Get("/queue", nowPlayingHandler.GetQueue)
 	np.Post("/follow", nowPlayingHandler.Follow)
+	np.Post("/intent", nowPlayingHandler.Intent)
 	np.Delete("/", nowPlayingHandler.Clear)
 
 	stats := v1.Group("/stats", requireProfile)
