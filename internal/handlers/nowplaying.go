@@ -228,6 +228,7 @@ func (h *NowPlayingHandler) Intent(c *fiber.Ctx) error {
 		PositionMs      *int64 `json:"positionMs"`
 		Index           *int   `json:"index"`
 		BasedOnRevision int64  `json:"basedOnRevision"`
+		IfQueueRevision *int64 `json:"ifQueueRevision"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -251,6 +252,7 @@ func (h *NowPlayingHandler) Intent(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "index is required"})
 		}
 		in.Index = *body.Index
+		in.IfQueueRevision = body.IfQueueRevision
 	default:
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "type must be setPlaying, setPositionMs or setIndex",

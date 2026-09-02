@@ -261,6 +261,13 @@ type IntentRequest struct {
 	PositionMs      int64
 	Index           int
 	BasedOnRevision int64
+	// IfQueueRevision, when set on setIndex, is the queue revision the
+	// index was computed against. A reorder or a re-published window
+	// bumps the session revision but not the item revision, so without
+	// this an index chosen from the old list lands on whatever now sits
+	// in that slot. Optional: a device that predates it is unguarded,
+	// not refused.
+	IfQueueRevision *int64
 }
 
 // Intent types.
@@ -581,6 +588,12 @@ func (s *Store) ApplyIntent(profileID, byLabel string, in IntentRequest) (State,
 		if in.BasedOnRevision < st.ItemRevision {
 			// The track already moved since this device looked. Never
 			// apply — that is how two rooms skip twice.
+			return s.readLocked(profileID, st, nowMs), OutcomeStale
+		}
+		if in.IfQueueRevision != nil && *in.IfQueueRevision != st.QueueRevision {
+			// The list this index points into is not the list the
+			// device saw. The answer carries the new queue revision;
+			// the device re-reads the queue and chooses again.
 			return s.readLocked(profileID, st, nowMs), OutcomeStale
 		}
 		entry := items[idx]

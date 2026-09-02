@@ -297,7 +297,12 @@ devices reconcile to it. Nothing dispatches a command at a device.
   revision the current ITEM landed on, not the heartbeat counter, so a
   pause pressed during a heartbeat still lands and a second "next"
   computed from a state that predates the first is dropped — never
-  re-applied as a double skip. Refusals are honest codes with the
+  re-applied as a double skip. `setIndex` may also carry
+  `ifQueueRevision`, the queue revision the index was chosen from: a
+  reorder bumps the session revision but not the item revision, so
+  without it an index picked from the old list would land on whatever
+  now sits in that slot (mismatch → `stale`; omitted → unguarded, for
+  older devices). Refusals are honest codes with the
   state to catch up on: `stale`, `legacy-leader` (the playing device
   predates this), `leader-asleep` (a suspended phone cannot be resumed
   from here — iOS, not us), `no-queue`.

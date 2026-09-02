@@ -464,6 +464,45 @@ func TestSetIndexIsAbsoluteAndNeverDoubleSkips(t *testing.T) {
 	}
 }
 
+// A reorder bumps the session revision but not the item revision, so
+// an index chosen from the OLD list would land on whatever now sits in
+// that slot. ifQueueRevision names the list the index was chosen from;
+// a mismatch is stale, and an older device that omits it is unguarded
+// rather than refused.
+func TestSetIndexRefusedWhenQueueChangedUnderIt(t *testing.T) {
+	s := NewStore()
+	s.SetQueue("p1", []QueueItem{{ItemID: "a"}, {ItemID: "b"}, {ItemID: "c"}})
+	phone := ReportOpts{DeviceID: "tok-phone", BasedOnRevision: rev(0)}
+	st, _ := s.Report("p1", State{ItemID: "a", QueueIndex: 0, IsPlaying: true}, phone)
+	seen := st.QueueRevision
+
+	// The leader reorders: "c" now sits where "b" was. Same item plays on.
+	s.SetQueue("p1", []QueueItem{{ItemID: "a"}, {ItemID: "c"}, {ItemID: "b"}})
+	cur, _ := s.Get("p1")
+	if cur.QueueRevision == seen {
+		t.Fatalf("SetQueue did not bump the queue revision")
+	}
+
+	// A TV that chose index 1 meaning "b" from the old list → stale, "a" still plays.
+	old := seen
+	if _, out := s.ApplyIntent("p1", "TV", IntentRequest{Type: IntentSetIndex, Index: 1, BasedOnRevision: cur.Revision, IfQueueRevision: &old}); out != OutcomeStale {
+		t.Fatalf("index into a replaced queue was applied: %v", out)
+	}
+	if now, _ := s.Get("p1"); now.ItemID != "a" {
+		t.Fatalf("stale index moved the session: %+v", now)
+	}
+	// Chosen again from the new list → applied, and it is "c".
+	fresh := cur.QueueRevision
+	next, out := s.ApplyIntent("p1", "TV", IntentRequest{Type: IntentSetIndex, Index: 1, BasedOnRevision: cur.Revision, IfQueueRevision: &fresh})
+	if out != OutcomeOK || next.ItemID != "c" {
+		t.Fatalf("fresh index refused or wrong: %v %+v", out, next)
+	}
+	// An older device sends no guard: still served (index 2 = "b" now).
+	if got, out := s.ApplyIntent("p1", "old TV", IntentRequest{Type: IntentSetIndex, Index: 2, BasedOnRevision: next.Revision}); out != OutcomeOK || got.ItemID != "b" {
+		t.Fatalf("unguarded setIndex refused: %v %+v", out, got)
+	}
+}
+
 // Legacy leaders cannot be controlled; asleep leaders cannot be resumed.
 func TestIntentRefusalsAreHonest(t *testing.T) {
 	s := NewStore()
