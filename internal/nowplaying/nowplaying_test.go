@@ -1,6 +1,7 @@
 package nowplaying
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -265,7 +266,7 @@ func TestWaitForChangeWakesOnPublish(t *testing.T) {
 	woke := make(chan time.Duration, 1)
 	go func() {
 		began := time.Now()
-		s.WaitForChange("p1", start.Revision, 5*time.Second)
+		s.WaitForChange(context.Background(), "p1", start.Revision, 5*time.Second)
 		woke <- time.Since(began)
 	}()
 
@@ -291,7 +292,7 @@ func TestWaitForChangeReturnsImmediatelyWhenBehind(t *testing.T) {
 	s.Set("p1", State{ItemID: "t2", IsPlaying: true})
 
 	began := time.Now()
-	s.WaitForChange("p1", 0, 5*time.Second) // asking from revision 0
+	s.WaitForChange(context.Background(), "p1", 0, 5*time.Second) // asking from revision 0
 	if elapsed := time.Since(began); elapsed > 200*time.Millisecond {
 		t.Errorf("a behind follower parked for %v", elapsed)
 	}
@@ -304,7 +305,7 @@ func TestWaitForChangeTimesOutQuietly(t *testing.T) {
 	cur, _ := s.Get("p1")
 
 	began := time.Now()
-	s.WaitForChange("p1", cur.Revision, 150*time.Millisecond)
+	s.WaitForChange(context.Background(), "p1", cur.Revision, 150*time.Millisecond)
 	elapsed := time.Since(began)
 	if elapsed < 100*time.Millisecond {
 		t.Errorf("returned too early: %v", elapsed)
@@ -325,7 +326,7 @@ func TestOnePublishWakesEveryWaiter(t *testing.T) {
 	done := make(chan struct{}, followers)
 	for i := 0; i < followers; i++ {
 		go func() {
-			s.WaitForChange("p1", cur.Revision, 3*time.Second)
+			s.WaitForChange(context.Background(), "p1", cur.Revision, 3*time.Second)
 			done <- struct{}{}
 		}()
 	}
@@ -338,6 +339,83 @@ func TestOnePublishWakesEveryWaiter(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("only %d of %d waiters woke", i, followers)
 		}
+	}
+	if n := s.Waiting("p1"); n != 0 {
+		t.Errorf("waiter count leaked: %d parked after every waiter woke", n)
+	}
+}
+
+// A held request is a goroutine; a token holder must not be able to
+// park an unbounded number of them. Past the cap a poll is answered at
+// once — plain polling, never a refusal.
+func TestWaitForChangeCapsParkedPollsPerProfile(t *testing.T) {
+	s := NewStore()
+	s.Set("p1", State{ItemID: "t1", IsPlaying: true})
+	cur, _ := s.Get("p1")
+
+	done := make(chan struct{}, MaxWaitersPerProfile)
+	for i := 0; i < MaxWaitersPerProfile; i++ {
+		go func() {
+			s.WaitForChange(context.Background(), "p1", cur.Revision, 3*time.Second)
+			done <- struct{}{}
+		}()
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for s.Waiting("p1") < MaxWaitersPerProfile {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d of %d waiters parked", s.Waiting("p1"), MaxWaitersPerProfile)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// The next one over the cap does not park at all.
+	began := time.Now()
+	s.WaitForChange(context.Background(), "p1", cur.Revision, 3*time.Second)
+	if elapsed := time.Since(began); elapsed > 200*time.Millisecond {
+		t.Errorf("poll over the cap parked for %v", elapsed)
+	}
+	// Another profile is unaffected by this one's crowd.
+	if n := s.Waiting("p2"); n != 0 {
+		t.Errorf("cap leaked across profiles: p2 has %d parked", n)
+	}
+
+	s.Set("p1", State{ItemID: "t2", IsPlaying: true})
+	for i := 0; i < MaxWaitersPerProfile; i++ {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d of %d capped waiters woke", i, MaxWaitersPerProfile)
+		}
+	}
+}
+
+// A shutting-down server must not be held for a poll cycle: the
+// request context ending releases the wait immediately.
+func TestWaitForChangeReleasesOnContextDone(t *testing.T) {
+	s := NewStore()
+	s.Set("p1", State{ItemID: "t1", IsPlaying: true})
+	cur, _ := s.Get("p1")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	woke := make(chan time.Duration, 1)
+	go func() {
+		began := time.Now()
+		s.WaitForChange(ctx, "p1", cur.Revision, 5*time.Second)
+		woke <- time.Since(began)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case took := <-woke:
+		if took > time.Second {
+			t.Errorf("waiter took %v to notice the context ending", took)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter never released on context done")
+	}
+	if n := s.Waiting("p1"); n != 0 {
+		t.Errorf("waiter count leaked after context done: %d", n)
 	}
 }
 

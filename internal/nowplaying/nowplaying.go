@@ -23,6 +23,7 @@
 package nowplaying
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -312,6 +313,12 @@ type Store struct {
 	// having already moved on. Holding the request open removes that
 	// floor entirely: the answer arrives when the change does.
 	waiters map[string]chan struct{}
+	// waiting[profile] = how many long-polls are parked right now. A
+	// held request is a goroutine and a worker slot, and a token holder
+	// could open them without limit; past the cap a poll is answered
+	// immediately instead of parked, which costs the surplus client its
+	// zero-latency wake and costs the server nothing.
+	waiting map[string]int
 
 	// bootMs seeds every revision counter, so revisions are monotonic
 	// across restarts. A follower holding revision 57 across a restart
@@ -329,6 +336,7 @@ func NewStore() *Store {
 		followers:    make(map[string]map[string]presenceEntry),
 		lastActivity: make(map[string]time.Time),
 		waiters:      make(map[string]chan struct{}),
+		waiting:      make(map[string]int),
 		bootMs:       time.Now().UnixMilli(),
 	}
 }
@@ -744,13 +752,29 @@ func (s *Store) notifyLocked(profileID string) {
 	}
 }
 
+// MaxWaitersPerProfile is how many long-polls one profile may hold open
+// at once. A household is a phone, a TV, a watch and a spare or two —
+// and a reconnecting device can briefly double up while its old request
+// times out — so 16 is generous for real use while keeping what one
+// leaked token can pin down to a handful of goroutines.
+const MaxWaitersPerProfile = 16
+
 // WaitForChange blocks until this profile's revision passes sinceRev,
-// or the timeout expires. Returns immediately when it already has —
-// which is what makes a reconnecting follower catch up instantly
-// instead of waiting out a cycle.
-func (s *Store) WaitForChange(profileID string, sinceRev int64, timeout time.Duration) {
+// the timeout expires, or ctx is done. Returns immediately when the
+// revision already has — which is what makes a reconnecting follower
+// catch up instantly instead of waiting out a cycle — and immediately
+// when the profile already holds MaxWaitersPerProfile requests open,
+// so a flood of polls degrades to plain polling rather than pinning
+// goroutines.
+//
+// ctx is the request's: it ends the wait on server shutdown, so a
+// graceful stop is not held for a full poll cycle. (Under fasthttp a
+// client that hangs up is NOT reflected in ctx — the wait runs to its
+// timeout and the write to the dead socket fails quietly. That is why
+// the cap and the timeout both exist.)
+func (s *Store) WaitForChange(ctx context.Context, profileID string, sinceRev int64, timeout time.Duration) {
 	s.mu.Lock()
-	if s.rev[profileID] > sinceRev {
+	if s.rev[profileID] > sinceRev || s.waiting[profileID] >= MaxWaitersPerProfile {
 		s.mu.Unlock()
 		return
 	}
@@ -759,14 +783,34 @@ func (s *Store) WaitForChange(profileID string, sinceRev int64, timeout time.Dur
 		ch = make(chan struct{})
 		s.waiters[profileID] = ch
 	}
+	s.waiting[profileID]++
 	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		if s.waiting[profileID] <= 1 {
+			delete(s.waiting, profileID)
+		} else {
+			s.waiting[profileID]--
+		}
+		s.mu.Unlock()
+	}()
 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case <-ch:
 	case <-timer.C:
+	case <-ctx.Done():
 	}
+}
+
+// Waiting reports how many long-polls are parked on a profile. Test and
+// diagnostics only.
+func (s *Store) Waiting(profileID string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.waiting[profileID]
 }
 
 // Get returns the profile's current state, or ok=false when nothing is

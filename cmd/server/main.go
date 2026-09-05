@@ -53,9 +53,22 @@ func main() {
 
 		// Trim the idle footprint: fewer, smaller buffers held per
 		// connection between requests on a box that is mostly quiet.
+		// Concurrency is a ceiling on open connections, not a
+		// pre-allocation, so a high one costs nothing while idle — and
+		// a low one is what let a few hundred slow sockets close the
+		// door on the household (SECURITY_AUDIT_2026-09 #15).
 		ReadBufferSize:    4096,
-		Concurrency:       256,
+		Concurrency:       4096,
 		ReduceMemoryUsage: true,
+
+		// No request may sit half-sent forever. Read covers the whole
+		// request incl. an 8 MB catalog chunk on a slow uplink; Write
+		// must outlast the 15 s now-playing long poll plus the reply;
+		// Idle is the keep-alive gap between requests. Without these,
+		// fasthttp waited without limit on every one of them.
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  90 * time.Second,
 	})
 
 	app.Use(recover.New())

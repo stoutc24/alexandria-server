@@ -26,6 +26,11 @@ type NowPlayingHandler struct {
 	store *nowplaying.Store
 }
 
+// longPollHold is how long GET /nowplaying?waitFor= may stay open. It
+// must sit well inside the server's WriteTimeout (cmd/server/main.go),
+// or a held poll would be cut off before its answer could be written.
+const longPollHold = 15 * time.Second
+
 func NewNowPlayingHandler(store *nowplaying.Store) *NowPlayingHandler {
 	return &NowPlayingHandler{store: store}
 }
@@ -147,8 +152,11 @@ func (h *NowPlayingHandler) Get(c *fiber.Ctx) error {
 	if raw := c.Query("waitFor"); raw != "" {
 		if since, err := strconv.ParseInt(raw, 10, 64); err == nil {
 			// Comfortably inside the follower TTL, so a held request
-			// still counts as the device being alive.
-			h.store.WaitForChange(profileID, since, 15*time.Second)
+			// still counts as the device being alive — and inside the
+			// server's write timeout, so the answer can still be sent.
+			// c.Context() ends the hold on shutdown; see WaitForChange
+			// for why a hung-up client does not.
+			h.store.WaitForChange(c.Context(), profileID, since, longPollHold)
 		}
 	}
 
