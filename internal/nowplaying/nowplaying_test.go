@@ -690,8 +690,31 @@ func TestPresenceChangesWakeButHeartbeatsDoNot(t *testing.T) {
 	}
 	s.Join("p1", "tv-2", "Bedroom TV", RoleViewer)
 	r3, _ := s.Get("p1")
-	if r3.Viewers != 1 || r3.FollowerCount != 1 {
+	if r3.Viewers != 1 || r3.FollowerCount != 1 || r3.Controllers != 0 {
 		t.Fatalf("viewer counted wrong: %+v", r3)
+	}
+	// A remote is a viewer (the leader keeps listening) that is also
+	// counted on its own, and never a follower.
+	s.Join("p1", "phone-1", "Chris's iPhone", RoleController)
+	r4, _ := s.Get("p1")
+	if r4.Viewers != 2 || r4.Controllers != 1 || r4.FollowerCount != 1 {
+		t.Fatalf("controller counted wrong: %+v", r4)
+	}
+	if r4.Revision <= r3.Revision {
+		t.Fatal("a remote opening did not wake the leader")
+	}
+	// Opening the Remote from a watching screen is a role change under
+	// the same key: still one entry, now a remote.
+	s.Join("p1", "tv-2", "Bedroom TV", RoleController)
+	r5, _ := s.Get("p1")
+	if r5.Viewers != 2 || r5.Controllers != 2 {
+		t.Fatalf("viewer→controller role change counted wrong: %+v", r5)
+	}
+	// An unknown role is a follower, as before.
+	s.Join("p1", "tv-3", "Kitchen TV", "dj")
+	r6, _ := s.Get("p1")
+	if r6.FollowerCount != 2 {
+		t.Fatalf("unknown role not coerced to follower: %+v", r6)
 	}
 }
 

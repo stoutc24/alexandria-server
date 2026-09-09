@@ -141,8 +141,15 @@ type State struct {
 	// session on a Home card. The leader listens for remote intents
 	// only while somebody is following OR viewing — nobody looking
 	// means no extra socket on the phone.
-	Followers []Presence `json:"followers,omitempty"`
-	Viewers   int        `json:"viewers,omitempty"`
+	//
+	// Controllers is how many of those viewers are REMOTES: a device on
+	// the Remote screen, steering the session without playing it.
+	// They are counted inside Viewers too, so a leader from before the
+	// role existed still listens for their intents; Controllers is
+	// only the header's "· 1 remote".
+	Followers   []Presence `json:"followers,omitempty"`
+	Viewers     int        `json:"viewers,omitempty"`
+	Controllers int        `json:"controllers,omitempty"`
 
 	// Revision increments on every change: publish, queue change, intent,
 	// presence change, clear. A follower uses it to tell "something new"
@@ -205,10 +212,14 @@ const leaderLostAfter = 30 * time.Second
 // own rather than pretending someone is still listening.
 const followerTTL = 30 * time.Second
 
-// Roles a device can register with.
+// Roles a device can register with. A controller is a viewer that has
+// opened the Remote: it may send intents like any viewer, is never part
+// of the party (it plays nothing), and is counted so the others can see
+// a remote is on.
 const (
-	RoleFollower = "follower"
-	RoleViewer   = "viewer"
+	RoleFollower   = "follower"
+	RoleViewer     = "viewer"
+	RoleController = "controller"
 )
 
 // Outcome is what the store decided about a report or an intent. The
@@ -656,7 +667,7 @@ func (s *Store) Following(profileID, deviceKey string) {
 // at once; a heartbeat refresh must not, or the follower's own
 // heartbeat-then-wait would never park.
 func (s *Store) Join(profileID, deviceKey, label, role string) {
-	if role != RoleViewer {
+	if role != RoleViewer && role != RoleController {
 		role = RoleFollower
 	}
 	now := time.Now()
@@ -700,16 +711,20 @@ func (s *Store) StopFollowing(profileID, deviceKey string) {
 	s.mu.Unlock()
 }
 
-// presenceLocked returns live followers and the viewer count, pruning
-// expired entries. Caller holds the write lock.
-func (s *Store) presenceLocked(profileID string) (followers []Presence, viewers int) {
+// presenceLocked returns live followers, the viewer count (remotes
+// included) and the remote count, pruning expired entries. Caller
+// holds the write lock.
+func (s *Store) presenceLocked(profileID string) (followers []Presence, viewers, controllers int) {
 	for key, e := range s.followers[profileID] {
 		if time.Since(e.last) > followerTTL {
 			delete(s.followers[profileID], key)
 			continue
 		}
-		if e.role == RoleViewer {
+		if e.role == RoleViewer || e.role == RoleController {
 			viewers++
+			if e.role == RoleController {
+				controllers++
+			}
 			continue
 		}
 		followers = append(followers, Presence{
@@ -718,20 +733,20 @@ func (s *Store) presenceLocked(profileID string) (followers []Presence, viewers 
 			SinceMs: e.since.UnixMilli(),
 		})
 	}
-	return followers, viewers
+	return followers, viewers, controllers
 }
 
 // followerCountLocked keeps the old name for the tests and the
 // read path. Caller holds the write lock.
 func (s *Store) followerCountLocked(profileID string) int {
-	f, _ := s.presenceLocked(profileID)
+	f, _, _ := s.presenceLocked(profileID)
 	return len(f)
 }
 
 // readLocked decorates a stored state with everything computed at read
 // time. Caller holds the write lock.
 func (s *Store) readLocked(profileID string, st State, nowMs int64) State {
-	st.Followers, st.Viewers = s.presenceLocked(profileID)
+	st.Followers, st.Viewers, st.Controllers = s.presenceLocked(profileID)
 	st.FollowerCount = len(st.Followers)
 	st.LeaderDormant = st.LeaderTokenID != "" && !s.seatLiveLocked(st, nowMs)
 	// The counter is the truth: presence changes bump it without

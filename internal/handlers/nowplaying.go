@@ -188,7 +188,8 @@ func (h *NowPlayingHandler) GetQueue(c *fiber.Ctx) error {
 // step is worth the effort. Heartbeat it while following; it expires on
 // its own if a TV sleeps. role "viewer" is a device merely showing the
 // session on screen — enough for the leader to listen for its intents,
-// not enough to count as part of the party.
+// not enough to count as part of the party. role "controller" is a
+// viewer on the Remote screen: same standing, counted separately.
 func (h *NowPlayingHandler) Follow(c *fiber.Ctx) error {
 	profileID := middleware.ProfileID(c)
 	if profileID == "" {
