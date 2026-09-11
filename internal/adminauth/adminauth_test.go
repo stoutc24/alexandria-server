@@ -3,6 +3,7 @@ package adminauth
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAGeneratedCodeVerifies(t *testing.T) {
@@ -150,5 +151,49 @@ func TestTokenHashIsStableAndOpaque(t *testing.T) {
 	}
 	if strings.Contains(HashToken(tok), tok) {
 		t.Fatal("the hash contains the token")
+	}
+}
+
+// A stored step in the future must not lock the owner out forever.
+//
+// It happens for real: a container whose clock ran ahead accepts a code
+// and records that step; NTP later corrects the clock backwards; every
+// genuine code from then on is "already spent" and the admin can never
+// sign in again, with a password that still verifies.
+func TestFutureStepDoesNotLockTheOwnerOut(t *testing.T) {
+	secret, err := NewSecret()
+	if err != nil {
+		t.Fatalf("NewSecret: %v", err)
+	}
+	now := time.Now().Unix()
+	code, err := codeAt(secret, now/totpPeriod)
+	if err != nil {
+		t.Fatalf("codeAt: %v", err)
+	}
+
+	// A step an hour ahead of the real clock, recorded while it was wrong.
+	poisoned := (now / totpPeriod) + 120
+
+	if _, ok := Verify(secret, code, now, poisoned); !ok {
+		t.Fatal("a code from the CURRENT step was refused because a future " +
+			"step was recorded: the admin is locked out for good")
+	}
+}
+
+// Replay protection itself must survive the fix above.
+func TestASpentStepIsStillRefused(t *testing.T) {
+	secret, err := NewSecret()
+	if err != nil {
+		t.Fatalf("NewSecret: %v", err)
+	}
+	now := time.Now().Unix()
+	step := now / totpPeriod
+	code, err := codeAt(secret, step)
+	if err != nil {
+		t.Fatalf("codeAt: %v", err)
+	}
+
+	if _, ok := Verify(secret, code, now, step); ok {
+		t.Fatal("a code was accepted twice in its own window")
 	}
 }

@@ -130,6 +130,11 @@ func (h *AdminAuthHandler) Login(c *fiber.Ctx) error {
 	// and retypes it while the code on screen has not rolled over yet,
 	// which is how this was found.
 	if !adminauth.VerifyPassword(cred.PasswordHash, req.Password) {
+		// The RESPONSE stays deliberately vague; the server log does not.
+		// Whoever runs the box can read it, and an attacker cannot, so
+		// "my password is unchanged and it still will not let me in" is
+		// answerable without handing anyone half the answer.
+		log.Print("admin sign-in refused: password did not match")
 		return c.Status(fiber.StatusUnauthorized).
 			JSON(fiber.Map{"error": "wrong password or code"})
 	}
@@ -154,6 +159,14 @@ func (h *AdminAuthHandler) Login(c *fiber.Ctx) error {
 	}
 
 	if !secondFactorOK {
+		if req.RecoveryCode != "" {
+			log.Print("admin sign-in refused: password was correct, " +
+				"recovery code unknown or already used")
+		} else {
+			log.Printf("admin sign-in refused: password was correct, "+
+				"TOTP code rejected (server step %d, last accepted step %d)",
+				time.Now().Unix()/30, cred.LastTOTPStep)
+		}
 		return c.Status(fiber.StatusUnauthorized).
 			JSON(fiber.Map{"error": "wrong password or code"})
 	}

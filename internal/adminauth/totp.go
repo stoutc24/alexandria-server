@@ -112,6 +112,18 @@ func Verify(secret, code string, now int64, lastUsedStep int64) (int64, bool) {
 	}
 
 	current := now / totpPeriod
+
+	// A step in the FUTURE cannot have been spent, so a stored value
+	// beyond the acceptance window is corrupt, not history — a clock that
+	// ran ahead when a code was accepted and was later corrected, or a bad
+	// write. Honouring it would refuse EVERY genuine code from then on,
+	// with the password still passing: an admin locked out of their own
+	// server, permanently, with nothing changed on their side. Replay
+	// protection for the present and the past is untouched.
+	if lastUsedStep > current+totpSkewSteps {
+		lastUsedStep = 0
+	}
+
 	for delta := int64(-totpSkewSteps); delta <= totpSkewSteps; delta++ {
 		step := current + delta
 		if step <= lastUsedStep {
