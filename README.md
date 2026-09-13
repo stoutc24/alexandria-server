@@ -23,11 +23,6 @@ listening does not land in anybody else's totals.
 server. It only ever *reports* them — there is no route in this server
 that deletes media, and there never will be.
 
-**Trailers for the TV.** Jellyfin hands the app a YouTube link as a
-film's trailer, and an Apple TV cannot play a YouTube page. The
-companion turns that link into a real MP4 the TV plays directly. See
-[Trailers](#trailers) below — it is the one feature with moving parts.
-
 ## What it does not do
 
 - **It does not manage accounts.** No passwords, no registration, no
@@ -48,8 +43,6 @@ companion turns that link into a real MP4 the TV plays directly. See
 
 - Docker (or Docker Compose)
 - ~100 MB of disk for the index, plus whatever your library grows into
-- Up to 4 GB more for cached trailers, if the TV uses them (adjustable —
-  see [Trailers](#trailers))
 - A machine that stays on — a NAS, a home server, a desktop
 
 Runs on `linux/amd64` and `linux/arm64`.
@@ -163,60 +156,6 @@ genuinely worth backing up is people's stats.
 
 ---
 
-## Trailers
-
-Alexandria's TV app shows a trailer for a film or show. Jellyfin only
-knows a YouTube URL for it, and an Apple TV cannot play a YouTube page —
-so the TV asks the companion, which downloads the trailer, merges its
-video and audio into one MP4 (YouTube serves them as separate streams
-now), caches the file on the data volume and streams it back. The TV
-plays it like any other video, seeking included.
-
-**Three tools do the work**, all included in the Docker image:
-
-| Tool | Job |
-|---|---|
-| `yt-dlp` | Talks to YouTube and picks an H.264 stream the TV can play |
-| `ffmpeg` | Merges the separate video and audio into one MP4 |
-| `deno` | A JavaScript runtime — YouTube extraction does not work without one |
-
-On a bare-metal install put them on `PATH`, or point at them with
-`YT_DLP_PATH`, `FFMPEG_PATH` and `DENO_PATH`. None is required: without
-them the server starts normally, logs which one is missing and how to
-fix it, and `/health` simply does not list `trailers.youtube` — the TV
-then falls back to opening the trailer in the YouTube app.
-
-**The cache.** Trailers are kept as MP4s in `TRAILER_CACHE_DIR`
-(`/data/trailers` in Docker; otherwise a `trailers` directory beside the
-database), up to `TRAILER_CACHE_MB` (default 4096). Past the cap the
-least recently played trailers are deleted first. You can wipe the
-directory at any time; it refills on demand.
-
-**It can break, and it heals.** YouTube changes things and yt-dlp stops
-working until it is updated — that is the nature of the tool, not a bug
-here. The server therefore runs `yt-dlp -U` half a minute after start
-and once a day after that, and every failure is reported to the TV as a
-clean error, so the worst case is the YouTube-app fallback for a day.
-If trailers stop working, `docker logs alexandria-server` shows
-yt-dlp's complaint, and `docker compose pull && docker compose up -d`
-gets a fresh image.
-
-**What it will and will not fetch.** The endpoint accepts YouTube video
-links only (`youtube.com/watch?v=`, `youtu.be/`, `/embed/`, `/shorts/`)
-and only ever fetches the URL the app was given by your media server.
-It is not a general downloader: it will not take a playlist, a channel
-or a link to any other site, and the files it keeps are named by
-YouTube's video id, nothing else.
-
-The endpoints, for the curious — both need a token, like everything
-else: `GET /api/v1/trailers/prepare?url=<youtube url>` answers `200`
-with a `streamPath` once the MP4 is ready, `202` while it is still
-downloading (poll again), `501` when the tools are missing and `502`
-when the download failed; `GET /api/v1/trailers/stream/<id>` is the MP4
-itself, with HTTP Range support.
-
----
-
 ## Upgrading
 
 ```bash
@@ -269,12 +208,6 @@ one.
 **The library index is empty.** Nothing has synced yet. The index is
 populated by the app, not by the server reaching out to your media
 servers.
-
-**Trailers do not play on the TV.** `curl http://server:4000/health`
-and look for `trailers.youtube` under `capabilities`. If it is missing,
-the logs say which tool was not found. If it is there and trailers still
-fail, the logs show yt-dlp's error — usually YouTube changed something,
-which the daily self-update fixes; or pull a fresh image.
 
 ---
 

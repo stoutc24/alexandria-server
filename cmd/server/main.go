@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"log"
 	"os"
 	"os/signal"
@@ -21,7 +20,6 @@ import (
 	"github.com/stoutsolutions/alexandria-server/internal/middleware"
 	"github.com/stoutsolutions/alexandria-server/internal/nowplaying"
 	"github.com/stoutsolutions/alexandria-server/internal/repository"
-	"github.com/stoutsolutions/alexandria-server/internal/trailers"
 )
 
 func main() {
@@ -98,22 +96,6 @@ func main() {
 	statsHandler := handlers.NewStatsHandler(statsRepo)
 	linkHandler := handlers.NewLinkHandler(linkRepo, profileRepo)
 	adminAuthHandler := handlers.NewAdminAuthHandler(adminAuthRepo)
-
-	// Trailers. The TV cannot play the YouTube page a media server hands
-	// it as a trailer, so the companion downloads the streams, merges
-	// them into an MP4 and serves that. It needs yt-dlp, ffmpeg and deno
-	// on the box; without them the service still constructs, says in the
-	// log what is missing and how to fix it, and /health simply does not
-	// advertise "trailers.youtube" — the TV then opens the YouTube app.
-	trailerSvc := trailers.New(trailers.Options{
-		YtDlpPath:  cfg.YtDlpPath,
-		FfmpegPath: cfg.FfmpegPath,
-		DenoPath:   cfg.DenoPath,
-		CacheDir:   cfg.TrailerCacheDir,
-		CacheMB:    cfg.TrailerCacheMB,
-	})
-	trailerHandler := handlers.NewTrailerHandler(trailerSvc)
-	handlers.AdvertiseCapability("trailers.youtube", trailerSvc.Available)
 
 	// Unauthenticated on purpose: the app needs to know whether a
 	// companion exists and what it can do before it has been given a
@@ -239,17 +221,6 @@ func main() {
 	stats.Get("/summary", statsHandler.GetSummary)
 	stats.Delete("/", statsHandler.DeleteOwnStats)
 
-	// Trailers. Any token will do: a trailer is public YouTube content a
-	// media server pointed at, not anyone's data, and the only thing
-	// these routes ever fetch is a YouTube URL the app was given. The TV
-	// sends its bearer token on the stream request too, through
-	// AVURLAsset's header options, so the same guard covers both — there
-	// is no query-string token, and there must not be one, because a URL
-	// with a credential in it ends up in access logs and screenshots.
-	tr := v1.Group("/trailers", requireAnyToken)
-	tr.Get("/prepare", trailerHandler.Prepare)
-	tr.Get("/stream/:id", trailerHandler.Stream)
-
 	// Housekeeping. Expired link codes are the only table that grows
 	// without anybody deleting from it, and a stale row is dead weight
 	// in every pending-links query. Hourly is far more often than
@@ -265,15 +236,6 @@ func main() {
 			}
 		}
 	}()
-
-	// yt-dlp is the piece YouTube breaks, and updating it is the fix.
-	// Once shortly after start — not AT start, so the server is up and
-	// answering /health before it spends time on this — then daily. A
-	// failure is a log line and can never take the server down; with no
-	// yt-dlp installed it does nothing at all.
-	updaterCtx, stopUpdater := context.WithCancel(context.Background())
-	defer stopUpdater()
-	go trailerSvc.RunUpdater(updaterCtx, 30*time.Second, 24*time.Hour)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
