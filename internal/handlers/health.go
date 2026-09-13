@@ -3,6 +3,7 @@ package handlers
 import (
 	"os"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -62,6 +63,50 @@ var capabilities = []string{
 	"nowplaying.ms",
 }
 
+// optionalCapabilities are advertised only while their probe says yes.
+//
+// Some services depend on things outside the binary — the trailer
+// resolver needs yt-dlp, ffmpeg and deno on the box — and a capability
+// the routes cannot actually deliver is worse than none: the app would
+// try it, fail, and only then fall back. So these are asked on every
+// /health call rather than listed once at compile time. The static list
+// above stays exactly as it is; this is for the conditional ones only.
+type optionalCapability struct {
+	name      string
+	available func() bool
+}
+
+var (
+	optionalMu           sync.RWMutex
+	optionalCapabilities []optionalCapability
+)
+
+// AdvertiseCapability registers a capability that is advertised only
+// while available() returns true. Called from main at startup. The probe
+// must be cheap: /health is what LAN discovery and the container health
+// check poll.
+func AdvertiseCapability(name string, available func() bool) {
+	optionalMu.Lock()
+	defer optionalMu.Unlock()
+	optionalCapabilities = append(optionalCapabilities, optionalCapability{name, available})
+}
+
+// capabilityList is the static set plus whichever optional ones are
+// available right now. A fresh slice each call, so nothing downstream
+// can mutate the static list through it.
+func capabilityList() []string {
+	optionalMu.RLock()
+	defer optionalMu.RUnlock()
+	out := make([]string, 0, len(capabilities)+len(optionalCapabilities))
+	out = append(out, capabilities...)
+	for _, oc := range optionalCapabilities {
+		if oc.available() {
+			out = append(out, oc.name)
+		}
+	}
+	return out
+}
+
 // configuredName is the operator's chosen label, set at startup. Empty
 // falls back to the hostname — fine on a NAS, useless in Docker where
 // the hostname is a per-recreate container id.
@@ -89,6 +134,6 @@ func Health(c *fiber.Ctx) error {
 		GoVersion: runtime.Version(),
 		Version:   "0.2.0",
 
-		Capabilities: capabilities,
+		Capabilities: capabilityList(),
 	})
 }

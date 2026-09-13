@@ -161,6 +161,54 @@ Health checks across libraries: items missing metadata, broken files,
 series with gaps. Deliberately last; the three above pay for themselves
 first.
 
+### 5. Trailers (`/api/v1/trailers`) — BUILT
+
+The TV shows trailers. Jellyfin holds them as YouTube page URLs, and
+AVPlayer cannot play a YouTube page. Nor can the server just resolve a
+direct link and hand it over: YouTube now serves yt-dlp only SEPARATE
+DASH video and audio — no muxed MP4, no muxed HLS. So `prepare`
+downloads both, has ffmpeg merge them (a stream copy) into `<id>.mp4`
+under the cache directory, and `stream/:id` serves that file with Range
+support, without which AVPlayer will not play at all.
+
+| Route | Does |
+|---|---|
+| `GET /trailers/prepare?url=&wait=` | 200 ready / 202 still downloading / 400 / 501 no tools / 502 failed — with a `reason` |
+| `GET /trailers/stream/:id` | The MP4, Range-capable; bearer token like everything else |
+
+Points worth keeping:
+
+- **The URL is the only untrusted input**, and the only thing that ever
+  reaches a command line. `ExtractVideoID` accepts four YouTube shapes
+  and an eleven-character id, refuses everything else, and the service
+  rebuilds a canonical watch URL from the id it validated. Files are
+  `<id>.mp4`; the stream route checks `:id` against the same regex
+  before it touches the disk.
+- **Single-flight per id.** A second caller joins the running download.
+  A caller whose `wait` runs out gets a 202 and the download continues;
+  the TV polls.
+- **The format selector is H.264 + AAC, ≤ 1080p**
+  (`bv*[ext=mp4][vcodec^=avc1]…`). VP9 and AV1 are what yt-dlp prefers
+  on its own and what tvOS will not play.
+- **Extraction needs a JavaScript runtime** (`--js-runtimes deno`);
+  without deno yt-dlp finds no formats and says "Requested format is not
+  available". That is why the image moved from Alpine to Debian: deno's
+  Linux build is glibc-linked.
+- **yt-dlp is the cat-and-mouse piece.** `yt-dlp -U` runs 30 s after
+  start and daily — the binary lives under `/app` so the server's user
+  can rewrite it — and every failure is a classified error
+  (`tool_missing`, `unavailable`, `timeout`, `failed`) the TV falls back
+  from.
+- **The cache is LRU by mtime** under `TRAILER_CACHE_MB`; serving
+  touches the file. `/health` advertises `trailers.youtube` only while
+  all three tools are present, so an image without them degrades
+  cleanly.
+
+Work, not permission, as ever: the routes answer "is it ready, here are
+the bytes" for a URL a media server supplied. Implementation:
+`internal/trailers` (service; tested against a fake runner, no network),
+`internal/handlers/trailers.go` (routes; tested against a fake service).
+
 ---
 
 ## Profiles, not accounts
@@ -377,6 +425,7 @@ app.
 4. ✅ Device linking (`/link/*`, `/admin/links/*`) + per-device tokens.
 5. `/llm/*` status, queue, unload.
 6. Media review.
+7. ✅ Trailers (`/trailers/*`): YouTube link → MP4 for the TV.
 
 ---
 

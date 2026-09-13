@@ -50,3 +50,6 @@ internal/admin/dist/
 
 # Testing images/screenshots
 testing images/
+
+# Trailer cache from a local run (the default puts it beside the db)
+/trailers/
