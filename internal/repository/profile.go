@@ -243,6 +243,24 @@ func (r *ProfileRepository) RevokeToken(tokenID string) error {
 	return nil
 }
 
+// RenameToken changes the label a device was linked with — the name the
+// party shows for it. The label was fixed at link time and nothing could
+// change it, so "Apple TV" stayed "Apple TV" on every other screen no
+// matter what the TV's own Settings said. The token id remains the
+// identity; only the label moves, and the next request carries it.
+func (r *ProfileRepository) RenameToken(tokenID, label string) error {
+	res, err := database.DB.Exec(
+		`UPDATE profile_tokens SET label = ? WHERE id = ?`,
+		strings.TrimSpace(label), tokenID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrTokenNotFound
+	}
+	return nil
+}
+
 // List returns every profile with its devices and storage footprint —
 // the admin's management view. No event content crosses this boundary.
 func (r *ProfileRepository) List() ([]ProfileSummary, error) {

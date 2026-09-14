@@ -203,6 +203,9 @@ func main() {
 	// A device pairing another device it already owns: the phone hands a
 	// token to the watch, no code typed on a tiny screen.
 	v1.Post("/devices", requireProfile, linkHandler.ProvisionDevice)
+	// A device renaming itself: the party name every other screen shows
+	// for it. The label used to be fixed at link time.
+	v1.Patch("/devices/me", requireProfile, linkHandler.RenameSelf)
 
 	// The party line: a profile's own devices report and read what is
 	// playing RIGHT NOW, so a TV can join mid-stream. Behind

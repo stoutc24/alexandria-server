@@ -53,6 +53,8 @@ var capabilities = []string{
 	"stats.smart-ingest",
 	"link",
 	"devices.provision",
+	// PATCH /devices/me: a device changes the name the party shows for it.
+	"devices.rename",
 	"nowplaying",
 	// The conductor protocol: device identity from the token, absolute
 	// intents, millisecond anchors. Clients branch on these, never on a

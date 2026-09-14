@@ -269,3 +269,36 @@ func mustAppend(t *testing.T, stats *StatsRepository, profileID string, n int) {
 		t.Fatalf("append: %v", err)
 	}
 }
+
+// A device may change the name the party shows for it; the next caller
+// lookup carries the new label under the same token id.
+func TestRenameTokenChangesTheLabelACallerSees(t *testing.T) {
+	r, _ := newProfileDB(t)
+	_, token := mkProfile(t, r, "Ann")
+
+	before, err := r.FindByToken(token)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if before.TokenLabel != "Ann's phone" {
+		t.Fatalf("label before = %q", before.TokenLabel)
+	}
+
+	if err := r.RenameToken(before.TokenID, "  Bedroom  "); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	after, err := r.FindByToken(token)
+	if err != nil {
+		t.Fatalf("find after: %v", err)
+	}
+	if after.TokenLabel != "Bedroom" {
+		t.Errorf("label after = %q, want Bedroom (trimmed)", after.TokenLabel)
+	}
+	if after.TokenID != before.TokenID {
+		t.Errorf("token id changed on rename: %q → %q", before.TokenID, after.TokenID)
+	}
+
+	if err := r.RenameToken("no-such-token", "x"); err != ErrTokenNotFound {
+		t.Errorf("unknown token: err = %v, want ErrTokenNotFound", err)
+	}
+}

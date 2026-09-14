@@ -243,6 +243,46 @@ type ProvisionDeviceBody struct {
 	Label string `json:"label"`
 }
 
+// RenameSelfBody is what a device sends to change its own party name.
+type RenameSelfBody struct {
+	DeviceLabel string `json:"deviceLabel"`
+}
+
+// RenameSelf lets the calling device change the label it was linked
+// with — the name the party shows for it ("Living Room" instead of a
+// second "Apple TV"). Until now the name was fixed at link time, and a
+// TV's Device name field changed only what the TV called itself, so
+// two rooms could never be told apart without relinking. The token id
+// stays the identity (the seat, the presence entry); only the label
+// moves. PATCH /api/v1/devices/me, advertised as "devices.rename".
+func (h *LinkHandler) RenameSelf(c *fiber.Ctx) error {
+	deviceID, _ := middleware.Device(c)
+	if deviceID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "a device token is required",
+		})
+	}
+
+	var body RenameSelfBody
+	_ = c.BodyParser(&body)
+	label := strings.TrimSpace(body.DeviceLabel)
+	if label == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "deviceLabel is required",
+		})
+	}
+	if len(label) > 80 {
+		label = label[:80]
+	}
+
+	if err := h.profiles.RenameToken(deviceID, label); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to rename device",
+		})
+	}
+	return c.JSON(fiber.Map{"deviceLabel": label})
+}
+
 // ProvisionDevice mints an ADDITIONAL token for the caller's own
 // profile, so a phone can hand one to a watch over WatchConnectivity
 // without anybody typing a code on a 40mm screen.
