@@ -200,6 +200,10 @@ func (h *NowPlayingHandler) Follow(c *fiber.Ctx) error {
 		DeviceKey string `json:"deviceKey"`
 		Role      string `json:"role"`
 		Stop      bool   `json:"stop"`
+		// RefreshAnchor: a follower about to launch again (the leader
+		// pulled it to another track) asks for a settled anchor. A new
+		// follower gets one without asking.
+		RefreshAnchor bool `json:"refreshAnchor"`
 	}
 	_ = c.BodyParser(&body)
 	// Older TVs mint their own key; anything newer is keyed on its
@@ -215,10 +219,17 @@ func (h *NowPlayingHandler) Follow(c *fiber.Ctx) error {
 	}
 	if body.Stop {
 		h.store.StopFollowing(profileID, key)
-	} else {
-		h.store.Join(profileID, key, deviceLabel, body.Role)
+		return c.JSON(fiber.Map{"ok": true})
 	}
-	return c.JSON(fiber.Map{"ok": true})
+	// The revision the join (or the refresh request) landed at: an
+	// anchor revision past it was taken after this device arrived.
+	rev := h.store.Join(profileID, key, deviceLabel, body.Role)
+	if body.RefreshAnchor {
+		if r := h.store.RequestAnchorRefresh(profileID); r > rev {
+			rev = r
+		}
+	}
+	return c.JSON(fiber.Map{"ok": true, "revision": rev})
 }
 
 // Intent is a device proposing a state change: setPlaying, setPositionMs
@@ -296,15 +307,18 @@ func (h *NowPlayingHandler) Intent(c *fiber.Ctx) error {
 }
 
 // Clear is the explicit stop. ?reason=stopped from a leader with
-// followers vacates the seat and keeps the party going; anything else
-// (the sharing toggle, playback ending with nobody listening) drops
-// the advertisement now rather than letting it age out.
+// followers vacates the seat and keeps the party going; ?reason=stop-all
+// from the leader ends it for every device; anything else (the
+// sharing toggle, playback ending with nobody listening) drops the
+// advertisement now rather than letting it age out. The answer says
+// which of those actually happened — a phone that asked to stop
+// everywhere must not report success when it had merely left.
 func (h *NowPlayingHandler) Clear(c *fiber.Ctx) error {
 	profileID := middleware.ProfileID(c)
 	if profileID == "" {
 		return unauthorizedProfile(c)
 	}
-	deviceID, _ := middleware.Device(c)
-	h.store.End(profileID, deviceID, c.Query("reason"))
-	return c.JSON(fiber.Map{"ok": true})
+	deviceID, deviceLabel := middleware.Device(c)
+	outcome := h.store.EndBy(profileID, deviceID, deviceLabel, c.Query("reason"))
+	return c.JSON(fiber.Map{"ok": true, "outcome": outcome.String()})
 }

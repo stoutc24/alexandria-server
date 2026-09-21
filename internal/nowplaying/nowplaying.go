@@ -117,6 +117,27 @@ type State struct {
 	SeatVacantSinceMs  int64 `json:"seatVacantSinceMs,omitempty"`
 	EndedByLeader      bool  `json:"endedByLeader,omitempty"`
 
+	// AnchorRevision is the revision at which TrackStartedAtMs was last
+	// derived. A follower that joined at revision J and later holds a
+	// state whose AnchorRevision > J knows the anchor was taken AFTER
+	// its arrival — from a settled heartbeat, not from the first report
+	// of a track (which the leader sends before its own player has
+	// rolled, so followers launched on it ran a constant few hundred
+	// milliseconds ahead until a scrub forced a re-anchor).
+	AnchorRevision int64 `json:"anchorRevision,omitempty"`
+	// AnchorRefreshPending (read-time): a follower joined, or asked,
+	// and the leader's next accepted report re-anchors regardless of
+	// the 2 s keep-window. A leader that sees this reports at once.
+	AnchorRefreshPending bool `json:"anchorRefreshPending,omitempty"`
+	// Ended: the leader stopped FOR EVERYONE (DELETE ?reason=stop-all).
+	// The record lingers for endedTTL, paused, so every parked poll
+	// wakes to a state that says so — a 204 reads as "leader quiet,
+	// keep playing", which is the opposite of what was asked.
+	// EndedByLabel names the device; EndedAtMs is when.
+	Ended        bool   `json:"ended,omitempty"`
+	EndedByLabel string `json:"endedByLabel,omitempty"`
+	EndedAtMs    int64  `json:"endedAtMs,omitempty"`
+
 	// Intent bookkeeping. LastIntentRevision is the revision the most
 	// recent intent produced; a leader report based on anything older
 	// has not seen it yet and is refused (409 stale) so a heartbeat can
@@ -211,6 +232,12 @@ const leaderLostAfter = 30 * time.Second
 // assumed gone (app closed, TV asleep), so the party goes quiet on its
 // own rather than pretending someone is still listening.
 const followerTTL = 30 * time.Second
+
+// endedTTL is how long an ended party's record stays readable. Long
+// enough for every follower to wake and read it (a parked poll wakes
+// at once; one in its 2 s back-off reads next), short enough that a
+// stopped party is not advertised as a paused one for long.
+const endedTTL = 30 * time.Second
 
 // Roles a device can register with. A controller is a viewer that has
 // opened the Remote: it may send intents like any viewer, is never part
@@ -310,6 +337,9 @@ type Store struct {
 
 	// anchor[profile] = when the current track started (server ms).
 	anchor map[string]int64
+	// anchorRefresh[profile] = a follower joined (or asked) since the
+	// leader last reported: that report re-anchors unconditionally.
+	anchorRefresh map[string]bool
 	// followers[profile][deviceKey] = presence, for the active/inactive
 	// party distinction and the who-is-listening list.
 	followers map[string]map[string]presenceEntry
@@ -339,16 +369,17 @@ type Store struct {
 
 func NewStore() *Store {
 	return &Store{
-		m:            make(map[string]State),
-		q:            make(map[string][]QueueItem),
-		rev:          make(map[string]int64),
-		qrev:         make(map[string]int64),
-		anchor:       make(map[string]int64),
-		followers:    make(map[string]map[string]presenceEntry),
-		lastActivity: make(map[string]time.Time),
-		waiters:      make(map[string]chan struct{}),
-		waiting:      make(map[string]int),
-		bootMs:       time.Now().UnixMilli(),
+		m:             make(map[string]State),
+		q:             make(map[string][]QueueItem),
+		rev:           make(map[string]int64),
+		qrev:          make(map[string]int64),
+		anchor:        make(map[string]int64),
+		anchorRefresh: make(map[string]bool),
+		followers:     make(map[string]map[string]presenceEntry),
+		lastActivity:  make(map[string]time.Time),
+		waiters:       make(map[string]chan struct{}),
+		waiting:       make(map[string]int),
+		bootMs:        time.Now().UnixMilli(),
 	}
 }
 
@@ -400,6 +431,12 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 	defer s.mu.Unlock()
 
 	prev, had := s.m[profileID]
+	if had && prev.Ended {
+		// An ended party is a tombstone, not a session: whoever reports
+		// next starts fresh — seat, anchor and intent bookkeeping alike.
+		had = false
+		prev = State{}
+	}
 	if had && !s.seatLiveLocked(prev, nowMs) {
 		// A dormant or vacant seat protects nobody: whoever is actually
 		// making noise now takes it.
@@ -448,15 +485,27 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 	// landed inside the 2s window, and followers ran ahead all track.
 	implied := nowMs - int64(float64(posMs)/rate)
 	ack := had && !legacy && prev.LeaderAckRevision < prev.LastIntentRevision
+	// A follower joined (or asked) since the last report: re-anchor
+	// from THIS report even inside the keep-window. The anchor a track
+	// starts with comes from the leader's first report, sent before its
+	// own player has rolled, and the window then holds that for the
+	// whole track — every follower launched on it sat a constant few
+	// hundred milliseconds ahead until a scrub on the phone forced a
+	// fresh one. A join now asks for exactly that, without the scrub.
+	refresh := s.anchorRefresh[profileID]
+	reanchored := true
 	switch {
-	case !had, prev.ItemID != st.ItemID, !st.IsPlaying, !prev.IsPlaying && st.IsPlaying, ack:
+	case !had, prev.ItemID != st.ItemID, !st.IsPlaying, !prev.IsPlaying && st.IsPlaying, ack, refresh:
 		s.anchor[profileID] = implied
 	default:
 		if existing, ok := s.anchor[profileID]; !ok ||
 			abs64(existing-implied) > 2000 {
 			s.anchor[profileID] = implied
+		} else {
+			reanchored = false
 		}
 	}
+	delete(s.anchorRefresh, profileID)
 	st.TrackStartedAtMs = s.anchor[profileID]
 
 	// Seat and bookkeeping the reporter cannot know.
@@ -488,6 +537,11 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 	if ack {
 		st.LeaderAckRevision = rev
 	}
+	if reanchored {
+		st.AnchorRevision = rev
+	} else {
+		st.AnchorRevision = prev.AnchorRevision
+	}
 	s.m[profileID] = st
 	s.lastActivity[profileID] = now
 	s.notifyLocked(profileID)
@@ -504,7 +558,7 @@ func (s *Store) qrevOrSeedLocked(profileID string) int64 {
 // seatLiveLocked: the seat holder has reported recently enough to be
 // trusted with it.
 func (s *Store) seatLiveLocked(st State, nowMs int64) bool {
-	if st.LeaderTokenID == "" {
+	if st.LeaderTokenID == "" || st.Ended {
 		return false
 	}
 	return nowMs-st.LeaderReportedAtMs <= leaderLostAfter.Milliseconds()
@@ -547,7 +601,9 @@ func (s *Store) ApplyIntent(profileID, byLabel string, in IntentRequest) (State,
 	defer s.mu.Unlock()
 
 	st, ok := s.m[profileID]
-	if !ok {
+	if !ok || st.Ended {
+		// An ended party takes no intents: nothing is playing anywhere,
+		// and "play" from a room must not resurrect it for the others.
 		return State{}, OutcomeNoSession
 	}
 	seatLive := s.seatLiveLocked(st, nowMs)
@@ -647,6 +703,8 @@ func (s *Store) ApplyIntent(profileID, byLabel string, in IntentRequest) (State,
 		if in.Type == IntentSetIndex {
 			st.ItemRevision = rev
 		}
+		// Every intent above re-anchored.
+		st.AnchorRevision = rev
 		st.TrackStartedAtMs = s.anchor[profileID]
 		st.UpdatedAtMs = nowMs
 		s.m[profileID] = st
@@ -666,12 +724,19 @@ func (s *Store) Following(profileID, deviceKey string) {
 // role change bumps the revision so the leader's long-poll learns of it
 // at once; a heartbeat refresh must not, or the follower's own
 // heartbeat-then-wait would never park.
-func (s *Store) Join(profileID, deviceKey, label, role string) {
+//
+// A new FOLLOWER also asks the leader for a fresh anchor (see
+// AnchorRevision): it is about to launch on the anchor as it stands,
+// and a first-report anchor is the leader's optimistic position.
+// Returns the profile's revision after the join (0 without a session),
+// so the joiner knows which anchor revisions postdate its arrival.
+func (s *Store) Join(profileID, deviceKey, label, role string) int64 {
 	if role != RoleViewer && role != RoleController {
 		role = RoleFollower
 	}
 	now := time.Now()
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.followers[profileID] == nil {
 		s.followers[profileID] = make(map[string]presenceEntry)
 	}
@@ -688,13 +753,37 @@ func (s *Store) Join(profileID, deviceKey, label, role string) {
 	e.last = now
 	s.followers[profileID][deviceKey] = e
 	s.lastActivity[profileID] = now
-	if changed {
-		if _, has := s.m[profileID]; has {
-			s.nextRevLocked(profileID)
-			s.notifyLocked(profileID)
-		}
+	st, has := s.m[profileID]
+	if !has {
+		return 0
 	}
-	s.mu.Unlock()
+	if changed {
+		if role == RoleFollower && !st.Ended {
+			s.anchorRefresh[profileID] = true
+		}
+		s.nextRevLocked(profileID)
+		s.notifyLocked(profileID)
+	}
+	return s.rev[profileID]
+}
+
+// RequestAnchorRefresh: a follower about to launch again (the leader
+// pulled it to another track, a rejoin) asks for a settled anchor
+// without re-registering. The revision bump wakes the leader's poll,
+// which reports at once; the answer is the revision the request
+// landed at, so an anchor newer than it is the one asked for. 0 when
+// nothing is playing.
+func (s *Store) RequestAnchorRefresh(profileID string) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, has := s.m[profileID]
+	if !has || st.Ended {
+		return 0
+	}
+	s.anchorRefresh[profileID] = true
+	s.nextRevLocked(profileID)
+	s.notifyLocked(profileID)
+	return s.rev[profileID]
 }
 
 // StopFollowing removes a device immediately, rather than waiting out
@@ -749,6 +838,7 @@ func (s *Store) readLocked(profileID string, st State, nowMs int64) State {
 	st.Followers, st.Viewers, st.Controllers = s.presenceLocked(profileID)
 	st.FollowerCount = len(st.Followers)
 	st.LeaderDormant = st.LeaderTokenID != "" && !s.seatLiveLocked(st, nowMs)
+	st.AnchorRefreshPending = !st.Ended && s.anchorRefresh[profileID]
 	// The counter is the truth: presence changes bump it without
 	// rewriting the stored state, and a reader must see that bump or
 	// its next long-poll parks on a revision that has already passed.
@@ -847,7 +937,19 @@ func (s *Store) Get(profileID string) (State, bool) {
 		// Expired: drop it so the map does not accumulate ghosts.
 		delete(s.m, profileID)
 		delete(s.q, profileID)
+		delete(s.anchorRefresh, profileID)
 		return State{}, false
+	}
+	if st.Ended {
+		// The tombstone of a party the leader ended for everyone: read
+		// as-is until every follower has had time to see it, then gone.
+		if now.Sub(time.UnixMilli(st.EndedAtMs)) > endedTTL {
+			delete(s.m, profileID)
+			delete(s.q, profileID)
+			delete(s.lastActivity, profileID)
+			return State{}, false
+		}
+		return s.readLocked(profileID, st, nowMs), true
 	}
 	if st.LeaderTokenID != "" && now.Sub(time.UnixMilli(st.LeaderReportedAtMs)) > staleAfter {
 		// The leader is long gone but followers keep the session alive:
@@ -868,20 +970,77 @@ func (s *Store) Clear(profileID string) {
 	s.End(profileID, "", "")
 }
 
-// End is a device saying it stopped. From the leader with followers and
-// reason "stopped", the seat is vacated and the state kept — the party
-// keeps playing and a follower may claim it. Any other leader reason
-// ("stop-sharing", or nothing) deletes the session outright: the
-// sharing toggle means "stop advertising NOW". From a member of the
-// party that does not hold the seat — a TV that was following, whether
-// or not the seat is still held — it is merely leaving: one room
-// switching off must not silence the others.
-func (s *Store) End(profileID, deviceID, reason string) {
+// EndOutcome is what a DELETE actually did, for the caller's screen:
+// "stopped everywhere" and "you merely left" must not look alike.
+type EndOutcome int
+
+const (
+	// EndNoSession: nothing was playing.
+	EndNoSession EndOutcome = iota
+	// EndLeft: a member of the party left; the others play on.
+	EndLeft
+	// EndVacated: the leader left the seat; the party plays on and a
+	// follower may claim it.
+	EndVacated
+	// EndDeleted: the advertisement is gone (sharing off, or nobody
+	// was listening).
+	EndDeleted
+	// EndAll: the leader ended the party for every device.
+	EndAll
+)
+
+func (o EndOutcome) String() string {
+	switch o {
+	case EndLeft:
+		return "left"
+	case EndVacated:
+		return "vacated"
+	case EndDeleted:
+		return "deleted"
+	case EndAll:
+		return "ended-all"
+	default:
+		return "no-session"
+	}
+}
+
+// End is a device saying it stopped (no label; see EndBy).
+func (s *Store) End(profileID, deviceID, reason string) EndOutcome {
+	return s.EndBy(profileID, deviceID, "", reason)
+}
+
+// EndBy is a device saying it stopped. From the leader with followers
+// and reason "stopped", the seat is vacated and the state kept — the
+// party keeps playing and a follower may claim it. Reason "stop-all"
+// from the leader ends the party for EVERY device: the record stays
+// for endedTTL, paused and marked Ended, so each follower wakes to a
+// state that tells it to stop (a deletion would wake them with a 204,
+// which a follower rightly reads as "leader quiet, keep playing").
+// Any other leader reason ("stop-sharing", or nothing) deletes the
+// session outright: the sharing toggle means "stop advertising NOW".
+// From a member of the party that does not hold the seat — a TV that
+// was following, whether or not the seat is still held — it is merely
+// leaving: one room switching off must not silence the others.
+func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcome {
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st, ok := s.m[profileID]
 	_, isMember := s.followers[profileID][deviceID]
+	if ok && st.Ended {
+		// A tombstone: there is nothing left to end. A member leaving
+		// is noted; anyone's DELETE otherwise leaves it to expire, so a
+		// follower that has not read it yet still will.
+		if isMember {
+			delete(s.followers[profileID], deviceID)
+			s.nextRevLocked(profileID)
+			s.notifyLocked(profileID)
+		}
+		if reason == "stop-all" {
+			return EndAll
+		}
+		return EndLeft
+	}
 	holdsSeat := st.LeaderTokenID == deviceID
 	if ok && deviceID != "" && !holdsSeat && (st.LeaderTokenID != "" || isMember) {
 		if isMember {
@@ -889,7 +1048,27 @@ func (s *Store) End(profileID, deviceID, reason string) {
 			s.nextRevLocked(profileID)
 			s.notifyLocked(profileID)
 		}
-		return
+		return EndLeft
+	}
+	if ok && reason == "stop-all" {
+		pos := s.extrapolatedLocked(profileID, st, now.UnixMilli())
+		st.IsPlaying = false
+		st.PositionMs = pos
+		st.PositionSec = int(pos / 1000)
+		st.Ended = true
+		st.EndedByLabel = deviceLabel
+		if st.EndedByLabel == "" {
+			st.EndedByLabel = st.LeaderLabel
+		}
+		st.EndedAtMs = now.UnixMilli()
+		st.UpdatedAtMs = now.UnixMilli()
+		st.Revision = s.nextRevLocked(profileID)
+		s.m[profileID] = st
+		delete(s.q, profileID)
+		delete(s.anchorRefresh, profileID)
+		s.lastActivity[profileID] = now
+		s.notifyLocked(profileID)
+		return EndAll
 	}
 	if ok && reason == "stopped" && s.followerCountLocked(profileID) > 0 {
 		st.LeaderTokenID = ""
@@ -900,16 +1079,21 @@ func (s *Store) End(profileID, deviceID, reason string) {
 		s.m[profileID] = st
 		s.lastActivity[profileID] = now
 		s.notifyLocked(profileID)
-		return
+		return EndVacated
 	}
 	delete(s.m, profileID)
 	delete(s.q, profileID)
 	delete(s.lastActivity, profileID)
+	delete(s.anchorRefresh, profileID)
 	// Revisions deliberately SURVIVE a clear: a follower that reconnects
 	// must never see a revision go backwards, which it would read as
 	// "nothing changed" and sit on stale playback.
 	s.nextRevLocked(profileID)
 	s.notifyLocked(profileID)
+	if !ok {
+		return EndNoSession
+	}
+	return EndDeleted
 }
 
 // SetQueue replaces the leader's queue for a profile. It bumps the

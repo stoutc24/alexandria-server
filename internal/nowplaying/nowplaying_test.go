@@ -739,3 +739,181 @@ func TestLeaderLeavingHandsOffOrEnds(t *testing.T) {
 		t.Fatal("stop-sharing left the session advertised")
 	}
 }
+
+// A follower launches on the anchor as it stands. A track's first
+// report is sent before the leader's own player has rolled, and the 2 s
+// keep-window then holds that anchor for the whole track — every
+// follower a constant few hundred ms ahead until a scrub on the phone
+// forced a fresh one. A join now asks for exactly that re-anchor.
+func TestAFollowerJoiningAsksTheLeaderForAFreshAnchor(t *testing.T) {
+	s := NewStore()
+	phone := ReportOpts{DeviceID: "tok-phone", DeviceLabel: "iPhone", BasedOnRevision: rev(0), HasPositionMs: true}
+
+	first, _ := s.Report("p1", State{ItemID: "t1", PositionMs: 10_000, IsPlaying: true}, phone)
+	if first.AnchorRevision != first.Revision {
+		t.Fatalf("a first report must stamp the anchor revision: %+v", first)
+	}
+	// The player rolled 300 ms after that report: every heartbeat now
+	// reads 300 ms behind the anchor — inside the window, so kept.
+	second, _ := s.Report("p1", State{ItemID: "t1", PositionMs: 9_700, IsPlaying: true}, phone)
+	if second.TrackStartedAtMs != first.TrackStartedAtMs || second.AnchorRevision != first.AnchorRevision {
+		t.Fatalf("a heartbeat inside the window moved the anchor: %+v vs %+v", first, second)
+	}
+
+	joinedAt := s.Join("p1", "tv-1", "Living Room TV", RoleFollower)
+	pending, _ := s.Get("p1")
+	if !pending.AnchorRefreshPending || joinedAt != pending.Revision || joinedAt <= second.Revision {
+		t.Fatalf("a follower's join did not ask for a fresh anchor: joinedAt=%d %+v", joinedAt, pending)
+	}
+	if pending.AnchorRevision != first.AnchorRevision {
+		t.Fatal("asking must not itself move the anchor")
+	}
+
+	// The leader's next report re-anchors from its settled position.
+	fresh, out := s.Report("p1", State{ItemID: "t1", PositionMs: 9_700, IsPlaying: true}, phone)
+	if out != OutcomeOK {
+		t.Fatalf("report after a join refused: %v", out)
+	}
+	moved := fresh.TrackStartedAtMs - first.TrackStartedAtMs
+	if moved < 250 || moved > 400 {
+		t.Fatalf("the re-anchor did not adopt the settled position (moved %d ms)", moved)
+	}
+	if fresh.AnchorRevision != fresh.Revision || fresh.AnchorRevision <= joinedAt || fresh.AnchorRefreshPending {
+		t.Fatalf("the re-anchor was not stamped past the join: joinedAt=%d %+v", joinedAt, fresh)
+	}
+
+	// Once. The next heartbeat is back inside the window.
+	again, _ := s.Report("p1", State{ItemID: "t1", PositionMs: 9_700, IsPlaying: true}, phone)
+	if again.AnchorRevision != fresh.AnchorRevision || again.TrackStartedAtMs != fresh.TrackStartedAtMs {
+		t.Fatalf("the refresh was not spent by the first report: %+v", again)
+	}
+
+	// A follower's heartbeat and a viewer's arrival ask for nothing.
+	s.Join("p1", "tv-1", "Living Room TV", RoleFollower)
+	s.Join("p1", "tv-2", "Bedroom TV", RoleViewer)
+	if st, _ := s.Get("p1"); st.AnchorRefreshPending {
+		t.Fatal("a heartbeat or a viewer asked for a re-anchor")
+	}
+
+	// An explicit request (a follower about to launch on a pulled track
+	// change) wakes the leader and names the revision it landed at.
+	before, _ := s.Get("p1")
+	asked := s.RequestAnchorRefresh("p1")
+	st, _ := s.Get("p1")
+	if !st.AnchorRefreshPending || asked <= before.Revision || asked != st.Revision {
+		t.Fatalf("an explicit refresh request did not register: asked=%d %+v", asked, st)
+	}
+	if s.RequestAnchorRefresh("nobody") != 0 {
+		t.Fatal("a refresh request without a session answered a revision")
+	}
+}
+
+// The leader stopping FOR EVERYONE: the record stays, paused and
+// marked ended, so every follower wakes to a state that says stop —
+// not to a 204 that reads "leader quiet, keep playing".
+func TestStopAllEndsThePartyForEveryDevice(t *testing.T) {
+	s := NewStore()
+	phone := ReportOpts{DeviceID: "tok-phone", DeviceLabel: "iPhone", BasedOnRevision: rev(0), HasPositionMs: true}
+	s.Report("p1", State{ItemID: "t1", PositionMs: 5_000, DurationSec: 300, IsPlaying: true}, phone)
+	s.SetQueue("p1", []QueueItem{{ItemID: "t1"}, {ItemID: "t2"}})
+	s.Join("p1", "tv-1", "Living Room TV", RoleFollower)
+	before, _ := s.Get("p1")
+
+	if out := s.EndBy("p1", "tok-phone", "iPhone", "stop-all"); out != EndAll {
+		t.Fatalf("stop-all from the leader was not ended-all: %v", out)
+	}
+	st, ok := s.Get("p1")
+	if !ok || !st.Ended || st.IsPlaying || st.EndedByLabel != "iPhone" || st.EndedAtMs == 0 {
+		t.Fatalf("no readable tombstone: ok=%v %+v", ok, st)
+	}
+	if st.Revision <= before.Revision {
+		t.Fatal("ending did not wake the parked polls")
+	}
+	if st.PositionMs < 5_000 || st.PositionMs > 6_000 {
+		t.Fatalf("the tombstone lost the position: %d", st.PositionMs)
+	}
+	if st.LeaderDormant != true {
+		t.Fatal("an ended party still reads as a live seat")
+	}
+	if _, has := s.Queue("p1"); has {
+		t.Fatal("an ended party still hands out its queue")
+	}
+	// Nothing can be done to it from a room.
+	if _, out := s.ApplyIntent("p1", "TV", IntentRequest{Type: IntentSetPlaying, Playing: true}); out != OutcomeNoSession {
+		t.Fatalf("an intent resurrected an ended party: %v", out)
+	}
+	// Ending it twice is idempotent.
+	if out := s.EndBy("p1", "tok-phone", "iPhone", "stop-all"); out != EndAll {
+		t.Fatalf("a second stop-all: %v", out)
+	}
+
+	// The phone playing again starts a fresh session over it.
+	next, out := s.Report("p1", State{ItemID: "t2", PositionMs: 0, IsPlaying: true}, phone)
+	if out != OutcomeOK || next.Ended || !next.IsPlaying || next.LeaderTokenID != "tok-phone" {
+		t.Fatalf("a report after stop-all did not start fresh: %v %+v", out, next)
+	}
+	if next.ItemRevision != next.Revision || next.AnchorRevision != next.Revision {
+		t.Fatalf("a fresh session kept the tombstone's bookkeeping: %+v", next)
+	}
+}
+
+func TestAnEndedPartyIsHandedToWhoeverPlaysNext(t *testing.T) {
+	s := NewStore()
+	s.Report("p1", State{ItemID: "t1", IsPlaying: true}, ReportOpts{DeviceID: "tok-phone", DeviceLabel: "iPhone", BasedOnRevision: rev(0)})
+	s.Join("p1", "tok-tv", "TV", RoleFollower)
+	s.EndBy("p1", "tok-phone", "iPhone", "stop-all")
+	// The TV starting its own album afterwards is not "seat held by the
+	// phone": the tombstone protects nobody.
+	st, out := s.Report("p1", State{ItemID: "t9", IsPlaying: true}, ReportOpts{DeviceID: "tok-tv", DeviceLabel: "TV", BasedOnRevision: rev(0)})
+	if out != OutcomeOK || st.LeaderTokenID != "tok-tv" || st.Ended {
+		t.Fatalf("the TV could not lead after a stop-all: %v %+v", out, st)
+	}
+}
+
+func TestStopAllFromAMemberIsJustLeaving(t *testing.T) {
+	s := NewStore()
+	s.Report("p1", State{ItemID: "t1", IsPlaying: true}, ReportOpts{DeviceID: "tok-phone", DeviceLabel: "iPhone", BasedOnRevision: rev(0)})
+	s.Join("p1", "tok-tv", "TV", RoleFollower)
+	if out := s.EndBy("p1", "tok-tv", "TV", "stop-all"); out != EndLeft {
+		t.Fatalf("a follower's stop-all was not a mere leave: %v", out)
+	}
+	st, ok := s.Get("p1")
+	if !ok || st.Ended || !st.IsPlaying || st.FollowerCount != 0 {
+		t.Fatalf("a follower's stop-all touched the party: ok=%v %+v", ok, st)
+	}
+	// And the outcomes of the older reasons are named too.
+	s.Join("p1", "tok-tv", "TV", RoleFollower)
+	if out := s.EndBy("p1", "tok-phone", "iPhone", "stopped"); out != EndVacated {
+		t.Fatalf("stopped with followers: %v", out)
+	}
+	if out := s.EndBy("p1", "tok-phone", "iPhone", "stop-sharing"); out != EndDeleted {
+		t.Fatalf("stop-sharing: %v", out)
+	}
+	if out := s.EndBy("p1", "tok-phone", "iPhone", ""); out != EndNoSession {
+		t.Fatalf("a DELETE with nothing playing: %v", out)
+	}
+}
+
+func TestAnEndedPartyExpires(t *testing.T) {
+	s := NewStore()
+	s.Report("p1", State{ItemID: "t1", IsPlaying: true}, ReportOpts{DeviceID: "tok-phone", DeviceLabel: "iPhone", BasedOnRevision: rev(0)})
+	s.Join("p1", "tok-tv", "TV", RoleFollower)
+	s.EndBy("p1", "tok-phone", "iPhone", "stop-all")
+	if _, ok := s.Get("p1"); !ok {
+		t.Fatal("a fresh tombstone is not readable")
+	}
+	s.mu.Lock()
+	st := s.m["p1"]
+	st.EndedAtMs = time.Now().Add(-time.Minute).UnixMilli()
+	s.m["p1"] = st
+	s.mu.Unlock()
+	if _, ok := s.Get("p1"); ok {
+		t.Fatal("a minute-old tombstone is still advertised")
+	}
+	s.mu.RLock()
+	_, still := s.m["p1"]
+	s.mu.RUnlock()
+	if still {
+		t.Fatal("the expired tombstone was hidden but not deleted")
+	}
+}

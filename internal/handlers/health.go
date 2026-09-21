@@ -62,6 +62,13 @@ var capabilities = []string{
 	"nowplaying.leader",
 	"nowplaying.intents",
 	"nowplaying.ms",
+	// A follower's join asks the leader for a settled anchor
+	// (anchorRevision / anchorRefreshPending on the state; POST /follow
+	// answers with the revision and takes refreshAnchor).
+	"nowplaying.anchor-refresh",
+	// DELETE ?reason=stop-all: the leader ends the party for every
+	// device; the record lingers marked `ended` so followers stop.
+	"nowplaying.stop-all",
 }
 
 // configuredName is the operator's chosen label, set at startup. Empty
@@ -89,7 +96,7 @@ func Health(c *fiber.Ctx) error {
 		Uptime:    time.Since(startTime).Round(time.Second).String(),
 		Database:  dbStatus,
 		GoVersion: runtime.Version(),
-		Version:   "0.2.0",
+		Version:   "0.2.1",
 
 		Capabilities: capabilities,
 	})
