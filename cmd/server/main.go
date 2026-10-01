@@ -217,7 +217,11 @@ func main() {
 	np.Get("/queue", nowPlayingHandler.GetQueue)
 	np.Post("/follow", nowPlayingHandler.Follow)
 	np.Post("/intent", nowPlayingHandler.Intent)
+	// The seat holder makes another device the leader.
+	np.Post("/handover", nowPlayingHandler.HandOver)
 	np.Delete("/", nowPlayingHandler.Clear)
+	// The party's clock, for the devices' offset measurement.
+	v1.Get("/time", requireProfile, handlers.Time)
 
 	stats := v1.Group("/stats", requireProfile)
 	stats.Post("/events", statsHandler.AppendEvents)

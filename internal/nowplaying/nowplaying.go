@@ -35,6 +35,14 @@ type Presence struct {
 	Label   string `json:"label"`
 	Role    string `json:"role"`
 	SinceMs int64  `json:"sinceMs"`
+	// DeviceKey is the follower's token id — what a handover names, and
+	// how a phone finds its own row on the dashboard.
+	DeviceKey string `json:"deviceKey,omitempty"`
+	// DriftMs is what the follower last measured: its audible position
+	// minus the leader's extrapolated one, after its own output offset.
+	// Positive = ahead. Nil until it has reported one.
+	DriftMs           *int64 `json:"driftMs,omitempty"`
+	DriftMeasuredAtMs int64  `json:"driftMeasuredAtMs,omitempty"`
 }
 
 // Intent is the last remote state change applied — kept so a device can
@@ -129,6 +137,24 @@ type State struct {
 	// and the leader's next accepted report re-anchors regardless of
 	// the 2 s keep-window. A leader that sees this reports at once.
 	AnchorRefreshPending bool `json:"anchorRefreshPending,omitempty"`
+	// A SCHEDULED START the leader announced: StartItemID (empty = the
+	// current item) begins at StartPositionMs when the server clock
+	// reads StartAtMs. Until then the position stands at
+	// StartPositionMs; from then on it advances from that instant, so
+	// every device that knows the server clock starts the same note at
+	// the same moment instead of starting when it can and settling. A
+	// StartItemID other than the current item is the NEXT track
+	// announced ahead (followers preload it); the current item is
+	// anchored as usual. Cleared by the next report that carries none
+	// and by any intent. Clients that predate it see position +
+	// isPlaying and settle as before, at worst a lead time early.
+	StartAtMs       int64  `json:"startAtMs,omitempty"`
+	StartPositionMs int64  `json:"startPositionMs,omitempty"`
+	StartItemID     string `json:"startItemId,omitempty"`
+	// HandedOverAtMs: the seat was passed by its holder to a follower
+	// (POST /handover) at this server time. The new holder's first
+	// report must be based on at least this revision.
+	HandedOverAtMs int64 `json:"handedOverAtMs,omitempty"`
 	// Ended: the leader stopped FOR EVERYONE (DELETE ?reason=stop-all).
 	// The record lingers for endedTTL, paused, so every parked poll
 	// wakes to a state that says so — a 204 reads as "leader quiet,
@@ -269,6 +295,10 @@ const (
 	OutcomeLegacyLeader
 	OutcomeLeaderAsleep
 	OutcomeNoQueue
+	// OutcomeNotLeader: only the seat holder may hand the seat over.
+	OutcomeNotLeader
+	// OutcomeNoSuchFollower: the named device is not a live follower.
+	OutcomeNoSuchFollower
 )
 
 // ReportOpts is who is reporting and what they had seen. Device identity
@@ -287,6 +317,11 @@ type ReportOpts struct {
 	// HasPositionMs: the body carried positionMs; otherwise positionSec
 	// is promoted.
 	HasPositionMs bool
+	// SampledAtMs: the SERVER instant at which the reporter measured
+	// its position (its own clock plus its measured offset). 0 when the
+	// reporter cannot say; then the arrival time stands in and the
+	// request's one-way latency lands in the anchor.
+	SampledAtMs int64
 }
 
 // IntentRequest is a proposed state change. Every type is absolute and
@@ -317,10 +352,12 @@ const (
 )
 
 type presenceEntry struct {
-	label string
-	role  string
-	since time.Time
-	last  time.Time
+	label   string
+	role    string
+	since   time.Time
+	last    time.Time
+	driftMs *int64
+	driftAt time.Time
 }
 
 // Store holds one state per profile.
@@ -483,7 +520,36 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 	// advances with the clock from this anchor" assumption. A resume
 	// used to be missed: the paused-era anchor survived when the resume
 	// landed inside the 2s window, and followers ran ahead all track.
-	implied := nowMs - int64(float64(posMs)/rate)
+	// The position was measured at sampledAt (server time, via the
+	// reporter's clock offset) when the reporter can say so; otherwise
+	// at arrival, which bakes the request's one-way latency into every
+	// anchor.
+	base := nowMs
+	if opts.SampledAtMs > 0 && abs64(nowMs-opts.SampledAtMs) < 5000 {
+		base = opts.SampledAtMs
+	}
+	implied := base - int64(float64(posMs)/rate)
+	// A scheduled start of the CURRENT item pins the anchor to the
+	// announced instant: the item's zero is StartAtMs minus the start
+	// position, whatever the reporter's position reads right now (it
+	// is holding at the start position until T). An announcement for
+	// another item (the next track) rides along untouched. A schedule
+	// more than 2 s in the past is spent: dropped, and the report
+	// anchors as an ordinary one.
+	scheduledCurrent := false
+	if st.StartAtMs > 0 {
+		forCurrent := st.StartItemID == "" || st.StartItemID == st.ItemID
+		switch {
+		case forCurrent && st.StartAtMs > nowMs-2000:
+			scheduledCurrent = true
+			if st.StartPositionMs < 0 {
+				st.StartPositionMs = 0
+			}
+			implied = st.StartAtMs - int64(float64(st.StartPositionMs)/rate)
+		case forCurrent:
+			st.StartAtMs, st.StartPositionMs, st.StartItemID = 0, 0, ""
+		}
+	}
 	ack := had && !legacy && prev.LeaderAckRevision < prev.LastIntentRevision
 	// A follower joined (or asked) since the last report: re-anchor
 	// from THIS report even inside the keep-window. The anchor a track
@@ -495,7 +561,7 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 	refresh := s.anchorRefresh[profileID]
 	reanchored := true
 	switch {
-	case !had, prev.ItemID != st.ItemID, !st.IsPlaying, !prev.IsPlaying && st.IsPlaying, ack, refresh:
+	case scheduledCurrent, !had, prev.ItemID != st.ItemID, !st.IsPlaying, !prev.IsPlaying && st.IsPlaying, ack, refresh:
 		s.anchor[profileID] = implied
 	default:
 		if existing, ok := s.anchor[profileID]; !ok ||
@@ -526,6 +592,9 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 		st.LastIntentRevision = prev.LastIntentRevision
 		st.LeaderAckRevision = prev.LeaderAckRevision
 		st.ItemRevision = prev.ItemRevision
+		if prev.ItemID == st.ItemID {
+			st.HandedOverAtMs = prev.HandedOverAtMs
+		}
 	}
 
 	rev := s.nextRevLocked(profileID)
@@ -575,6 +644,9 @@ func abs64(v int64) int64 {
 func (s *Store) extrapolatedLocked(profileID string, st State, nowMs int64) int64 {
 	if !st.IsPlaying {
 		return st.PositionMs
+	}
+	if st.StartAtMs > 0 && (st.StartItemID == "" || st.StartItemID == st.ItemID) && nowMs < st.StartAtMs {
+		return st.StartPositionMs
 	}
 	anchor, ok := s.anchor[profileID]
 	if !ok {
@@ -707,10 +779,55 @@ func (s *Store) ApplyIntent(profileID, byLabel string, in IntentRequest) (State,
 		st.AnchorRevision = rev
 		st.TrackStartedAtMs = s.anchor[profileID]
 		st.UpdatedAtMs = nowMs
+		// A press from the room overrides an announced start.
+		st.StartAtMs, st.StartPositionMs, st.StartItemID = 0, 0, ""
 		s.m[profileID] = st
 		s.lastActivity[profileID] = now
 		s.notifyLocked(profileID)
 	}
+	return s.readLocked(profileID, st, nowMs), OutcomeOK
+}
+
+// HandOver passes the seat from its holder to a live follower: the
+// explicit "make this device the leader". The position stays
+// continuous (the anchor is kept), the new holder's label goes on the
+// seat, and the revision moves so the new leader's first report must
+// be based on it — it reads the state before it leads. The old leader
+// is not a follower here; its client joins the party on its own.
+func (s *Store) HandOver(profileID, fromDeviceID, toDeviceKey string) (State, Outcome) {
+	now := time.Now()
+	nowMs := now.UnixMilli()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.m[profileID]
+	if !ok || st.Ended {
+		return State{}, OutcomeNoSession
+	}
+	if st.LeaderTokenID == "" || st.LeaderTokenID != fromDeviceID {
+		return s.readLocked(profileID, st, nowMs), OutcomeNotLeader
+	}
+	e, present := s.followers[profileID][toDeviceKey]
+	if !present || now.Sub(e.last) > followerTTL || e.role != RoleFollower {
+		return s.readLocked(profileID, st, nowMs), OutcomeNoSuchFollower
+	}
+	pos := s.extrapolatedLocked(profileID, st, nowMs)
+	st.PositionMs = pos
+	st.PositionSec = int(pos / 1000)
+	st.LeaderTokenID = toDeviceKey
+	st.LeaderLabel = e.label
+	st.DeviceLabel = e.label
+	st.LegacyLeader = false
+	st.LeaderReportedAtMs = nowMs
+	st.SeatVacantSinceMs = 0
+	st.HandedOverAtMs = nowMs
+	st.StartAtMs, st.StartPositionMs, st.StartItemID = 0, 0, ""
+	rev := s.nextRevLocked(profileID)
+	st.Revision = rev
+	st.LastIntentRevision = rev
+	st.UpdatedAtMs = nowMs
+	s.m[profileID] = st
+	s.lastActivity[profileID] = now
+	s.notifyLocked(profileID)
 	return s.readLocked(profileID, st, nowMs), OutcomeOK
 }
 
@@ -731,6 +848,15 @@ func (s *Store) Following(profileID, deviceKey string) {
 // Returns the profile's revision after the join (0 without a session),
 // so the joiner knows which anchor revisions postdate its arrival.
 func (s *Store) Join(profileID, deviceKey, label, role string) int64 {
+	return s.JoinWithDrift(profileID, deviceKey, label, role, nil, 0)
+}
+
+// JoinWithDrift is Join carrying the follower's latest drift reading
+// (its audible position minus the leader's, ms, positive = ahead),
+// measured at driftMeasuredAtMs server time. A heartbeat with a new
+// reading does not bump the revision — the dashboard reads it on its
+// next poll; waking every device for a number would be churn.
+func (s *Store) JoinWithDrift(profileID, deviceKey, label, role string, driftMs *int64, driftMeasuredAtMs int64) int64 {
 	if role != RoleViewer && role != RoleController {
 		role = RoleFollower
 	}
@@ -751,6 +877,15 @@ func (s *Store) Join(profileID, deviceKey, label, role string) int64 {
 	e.label = label
 	e.role = role
 	e.last = now
+	if driftMs != nil {
+		v := *driftMs
+		e.driftMs = &v
+		if driftMeasuredAtMs > 0 {
+			e.driftAt = time.UnixMilli(driftMeasuredAtMs)
+		} else {
+			e.driftAt = now
+		}
+	}
 	s.followers[profileID][deviceKey] = e
 	s.lastActivity[profileID] = now
 	st, has := s.m[profileID]
@@ -816,11 +951,18 @@ func (s *Store) presenceLocked(profileID string) (followers []Presence, viewers,
 			}
 			continue
 		}
-		followers = append(followers, Presence{
-			Label:   e.label,
-			Role:    e.role,
-			SinceMs: e.since.UnixMilli(),
-		})
+		p := Presence{
+			Label:     e.label,
+			Role:      e.role,
+			SinceMs:   e.since.UnixMilli(),
+			DeviceKey: key,
+		}
+		if e.driftMs != nil {
+			v := *e.driftMs
+			p.DriftMs = &v
+			p.DriftMeasuredAtMs = e.driftAt.UnixMilli()
+		}
+		followers = append(followers, p)
 	}
 	return followers, viewers, controllers
 }

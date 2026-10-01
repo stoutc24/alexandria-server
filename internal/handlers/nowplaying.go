@@ -84,6 +84,10 @@ func (h *NowPlayingHandler) Report(c *fiber.Ctx) error {
 		BasedOnRevision *int64                  `json:"basedOnRevision"`
 		ClaimSeat       bool                    `json:"claimSeat"`
 		TakeOver        bool                    `json:"takeOver"`
+		// SampledAtServerMs: when the position was measured, on the
+		// server's clock (the reporter's clock plus its offset from
+		// GET /time). Optional; without it arrival time stands in.
+		SampledAtServerMs *int64 `json:"sampledAtServerMs"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -111,6 +115,9 @@ func (h *NowPlayingHandler) Report(c *fiber.Ctx) error {
 	if req.PositionMs != nil {
 		st.PositionMs = *req.PositionMs
 		opts.HasPositionMs = true
+	}
+	if req.SampledAtServerMs != nil {
+		opts.SampledAtMs = *req.SampledAtServerMs
 	}
 
 	// Validate everything BEFORE touching the store, so a refused report
@@ -204,6 +211,12 @@ func (h *NowPlayingHandler) Follow(c *fiber.Ctx) error {
 		// pulled it to another track) asks for a settled anchor. A new
 		// follower gets one without asking.
 		RefreshAnchor bool `json:"refreshAnchor"`
+		// DriftMs: the follower's latest measurement, audible position
+		// minus the leader's, after its own output offset; positive =
+		// ahead. DriftMeasuredAtMs is server time. Shown per device on
+		// the dashboard; never acted on by the server.
+		DriftMs           *int64 `json:"driftMs"`
+		DriftMeasuredAtMs int64  `json:"driftMeasuredAtMs"`
 	}
 	_ = c.BodyParser(&body)
 	// Older TVs mint their own key; anything newer is keyed on its
@@ -223,7 +236,7 @@ func (h *NowPlayingHandler) Follow(c *fiber.Ctx) error {
 	}
 	// The revision the join (or the refresh request) landed at: an
 	// anchor revision past it was taken after this device arrived.
-	rev := h.store.Join(profileID, key, deviceLabel, body.Role)
+	rev := h.store.JoinWithDrift(profileID, key, deviceLabel, body.Role, body.DriftMs, body.DriftMeasuredAtMs)
 	if body.RefreshAnchor {
 		if r := h.store.RequestAnchorRefresh(profileID); r > rev {
 			rev = r
@@ -321,4 +334,47 @@ func (h *NowPlayingHandler) Clear(c *fiber.Ctx) error {
 	deviceID, deviceLabel := middleware.Device(c)
 	outcome := h.store.EndBy(profileID, deviceID, deviceLabel, c.Query("reason"))
 	return c.JSON(fiber.Map{"ok": true, "outcome": outcome.String()})
+}
+
+// HandOver: the seat holder names a follower as the new leader ("make
+// this device the leader"). The server moves the seat and bumps the
+// revision; the target sees leaderTokenId == its own on its next poll
+// and starts publishing from its own position, the old leader's next
+// report is refused seat-held and its client joins as a follower.
+func (h *NowPlayingHandler) HandOver(c *fiber.Ctx) error {
+	profileID := middleware.ProfileID(c)
+	if profileID == "" {
+		return unauthorizedProfile(c)
+	}
+	deviceID, _ := middleware.Device(c)
+	var body struct {
+		DeviceKey string `json:"deviceKey"`
+	}
+	if err := c.BodyParser(&body); err != nil || body.DeviceKey == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "deviceKey is required",
+		})
+	}
+	st, outcome := h.store.HandOver(profileID, deviceID, body.DeviceKey)
+	switch outcome {
+	case nowplaying.OutcomeNoSession:
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "nothing is playing",
+			"code":  "no-session",
+		})
+	case nowplaying.OutcomeNotLeader:
+		return refused(c, "not-leader", "only the device leading the party can hand the seat over", st)
+	case nowplaying.OutcomeNoSuchFollower:
+		return refused(c, "no-such-follower", "that device is not following right now", st)
+	}
+	return c.JSON(fiber.Map{"ok": true, "state": stamped(st)})
+}
+
+// Time is the party's clock: the same server instant every state
+// carries as serverNowMs, on its own, so a device can measure its
+// offset NTP-style (a few round trips, median of serverNowMs − (sent +
+// rtt/2)). A few hundred bytes; the apps ask a handful of times at a
+// party's start and once a minute after.
+func Time(c *fiber.Ctx) error {
+	return c.JSON(fiber.Map{"serverNowMs": time.Now().UnixMilli()})
 }

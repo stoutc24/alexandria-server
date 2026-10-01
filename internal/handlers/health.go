@@ -69,6 +69,16 @@ var capabilities = []string{
 	// DELETE ?reason=stop-all: the leader ends the party for every
 	// device; the record lingers marked `ended` so followers stop.
 	"nowplaying.stop-all",
+	// GET /time: the party's clock, for NTP-style offset measurement;
+	// reports may carry sampledAtServerMs for a latency-free anchor.
+	"time",
+	// startAtMs / startPositionMs / startItemId on the state: a start
+	// announced for a server instant, so every device begins together.
+	"nowplaying.scheduled-start",
+	// POST /nowplaying/handover: the seat holder names the next leader.
+	"nowplaying.handover",
+	// driftMs on POST /follow, listed per follower on the state.
+	"nowplaying.drift",
 }
 
 // configuredName is the operator's chosen label, set at startup. Empty
@@ -96,7 +106,7 @@ func Health(c *fiber.Ctx) error {
 		Uptime:    time.Since(startTime).Round(time.Second).String(),
 		Database:  dbStatus,
 		GoVersion: runtime.Version(),
-		Version:   "0.2.1",
+		Version:   "0.3.0",
 
 		Capabilities: capabilities,
 	})

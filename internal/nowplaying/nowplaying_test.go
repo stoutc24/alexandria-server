@@ -917,3 +917,164 @@ func TestAnEndedPartyExpires(t *testing.T) {
 		t.Fatal("the expired tombstone was hidden but not deleted")
 	}
 }
+
+// A start announced for a server instant: the anchor is that instant
+// (less the start position), the server holds the position there until
+// T, and runs from T afterwards. A spent announcement is dropped; one
+// for another item rides along without touching the current anchor.
+func TestScheduledStartPinsTheAnchorAndHoldsUntilT(t *testing.T) {
+	s := NewStore()
+	rev := int64(0)
+	now := time.Now().UnixMilli()
+	startAt := now + 1500
+	opts := ReportOpts{DeviceID: "phone", BasedOnRevision: &rev, HasPositionMs: true}
+
+	st, out := s.Report("p1", State{ItemID: "a", Title: "A", IsPlaying: true, PositionMs: 0,
+		StartAtMs: startAt, StartPositionMs: 0}, opts)
+	if out != OutcomeOK {
+		t.Fatalf("scheduled report refused: %v", out)
+	}
+	if st.TrackStartedAtMs != startAt || st.StartAtMs != startAt {
+		t.Fatalf("anchor %d / startAt %d, want both %d", st.TrackStartedAtMs, st.StartAtMs, startAt)
+	}
+	s.mu.Lock()
+	before := s.extrapolatedLocked("p1", st, now+500)
+	after := s.extrapolatedLocked("p1", st, startAt+2000)
+	s.mu.Unlock()
+	if before != 0 {
+		t.Fatalf("position before T = %d, want 0 (held at the start position)", before)
+	}
+	if after < 1900 || after > 2100 {
+		t.Fatalf("position 2 s after T = %d, want ~2000", after)
+	}
+
+	// A start position: the item's zero is T minus it.
+	st, _ = s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 30000,
+		StartAtMs: startAt, StartPositionMs: 30000}, opts)
+	if st.TrackStartedAtMs != startAt-30000 {
+		t.Fatalf("anchor with a start position: %d, want %d", st.TrackStartedAtMs, startAt-30000)
+	}
+
+	// Spent (more than 2 s old): dropped, ordinary anchoring.
+	st, _ = s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 5000,
+		StartAtMs: now - 5000, StartPositionMs: 0}, opts)
+	if st.StartAtMs != 0 || st.StartItemID != "" {
+		t.Fatalf("a spent schedule survived: %+v", st)
+	}
+
+	// The next track, announced ahead: kept on the state, current anchor as usual.
+	st, _ = s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 6000,
+		StartAtMs: now + 4000, StartPositionMs: 0, StartItemID: "b"}, opts)
+	if st.StartItemID != "b" || st.StartAtMs != now+4000 {
+		t.Fatalf("next-track announcement lost: %+v", st)
+	}
+	if abs64(st.TrackStartedAtMs-(now-6000)) > 3000 {
+		t.Fatalf("a next-track announcement moved the current anchor: %d vs now-6000=%d", st.TrackStartedAtMs, now-6000)
+	}
+	s.mu.Lock()
+	running := s.extrapolatedLocked("p1", st, now+1000)
+	s.mu.Unlock()
+	if running < 4000 {
+		t.Fatalf("a next-track announcement held the current item: %d", running)
+	}
+}
+
+// The reporter says WHEN it measured its position (server time, via
+// its clock offset): the anchor comes out without the request's
+// latency. A sample nowhere near now is clock nonsense and is ignored.
+func TestSampledAtServerMsAnchorsWithoutLatency(t *testing.T) {
+	s := NewStore()
+	rev := int64(0)
+	now := time.Now().UnixMilli()
+	sampled := now - 3000
+	st, out := s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 10000},
+		ReportOpts{DeviceID: "phone", BasedOnRevision: &rev, HasPositionMs: true, SampledAtMs: sampled})
+	if out != OutcomeOK {
+		t.Fatalf("refused: %v", out)
+	}
+	if abs64(st.TrackStartedAtMs-(sampled-10000)) > 50 {
+		t.Fatalf("anchor %d, want %d (sampledAt − position)", st.TrackStartedAtMs, sampled-10000)
+	}
+	st, _ = s.Report("p1", State{ItemID: "b", IsPlaying: true, PositionMs: 0},
+		ReportOpts{DeviceID: "phone", BasedOnRevision: &rev, HasPositionMs: true, SampledAtMs: now - 60000})
+	if abs64(st.TrackStartedAtMs-now) > 1000 {
+		t.Fatalf("a sample a minute off was believed: anchor %d vs now %d", st.TrackStartedAtMs, now)
+	}
+}
+
+// "Make this device the leader": only the seat holder may, only to a
+// live follower; afterwards the old leader is refused and the new one
+// must read the state before it leads.
+func TestHandOverMovesTheSeat(t *testing.T) {
+	s := NewStore()
+	rev := int64(0)
+	s.Report("p1", State{ItemID: "a", IsPlaying: true},
+		ReportOpts{DeviceID: "phone", DeviceLabel: "Phone", BasedOnRevision: &rev})
+	s.Join("p1", "tv1", "Living Room TV", RoleFollower)
+
+	if _, out := s.HandOver("p1", "tv1", "phone"); out != OutcomeNotLeader {
+		t.Fatalf("a follower handed the seat over: %v", out)
+	}
+	if _, out := s.HandOver("p1", "phone", "nobody"); out != OutcomeNoSuchFollower {
+		t.Fatalf("an unknown target was accepted: %v", out)
+	}
+	if _, out := s.HandOver("nobody", "x", "y"); out != OutcomeNoSession {
+		t.Fatalf("handover without a session: %v", out)
+	}
+
+	st, out := s.HandOver("p1", "phone", "tv1")
+	if out != OutcomeOK || st.LeaderTokenID != "tv1" || st.LeaderLabel != "Living Room TV" || st.HandedOverAtMs == 0 {
+		t.Fatalf("handover: %v %+v", out, st)
+	}
+	based := st.Revision
+	if _, out := s.Report("p1", State{ItemID: "a", IsPlaying: true},
+		ReportOpts{DeviceID: "phone", BasedOnRevision: &based}); out != OutcomeSeatHeld {
+		t.Fatalf("the old leader kept the seat: %v", out)
+	}
+	old := st.Revision - 1
+	if _, out := s.Report("p1", State{ItemID: "a", IsPlaying: true},
+		ReportOpts{DeviceID: "tv1", BasedOnRevision: &old}); out != OutcomeStale {
+		t.Fatalf("the new leader led without reading the handover: %v", out)
+	}
+	st2, out := s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 12000},
+		ReportOpts{DeviceID: "tv1", DeviceLabel: "Living Room TV", BasedOnRevision: &based, HasPositionMs: true})
+	if out != OutcomeOK || st2.LeaderTokenID != "tv1" || st2.HandedOverAtMs != st.HandedOverAtMs {
+		t.Fatalf("new leader's first report: %v %+v", out, st2)
+	}
+}
+
+// A follower's drift reading is listed per device, keyed by its token,
+// and a heartbeat carrying one does not wake the party.
+func TestFollowerDriftIsListedPerDevice(t *testing.T) {
+	s := NewStore()
+	rev := int64(0)
+	s.Report("p1", State{ItemID: "a", IsPlaying: true}, ReportOpts{DeviceID: "phone", BasedOnRevision: &rev})
+	d := int64(120)
+	s.JoinWithDrift("p1", "tv1", "Living Room TV", RoleFollower, &d, 0)
+	after := s.rev["p1"]
+	d2 := int64(-40)
+	s.JoinWithDrift("p1", "tv1", "Living Room TV", RoleFollower, &d2, 0)
+	if s.rev["p1"] != after {
+		t.Fatalf("a drift heartbeat bumped the revision: %d → %d", after, s.rev["p1"])
+	}
+	st, _ := s.Get("p1")
+	if len(st.Followers) != 1 || st.Followers[0].DeviceKey != "tv1" {
+		t.Fatalf("followers: %+v", st.Followers)
+	}
+	if st.Followers[0].DriftMs == nil || *st.Followers[0].DriftMs != -40 || st.Followers[0].DriftMeasuredAtMs == 0 {
+		t.Fatalf("drift not listed: %+v", st.Followers[0])
+	}
+}
+
+// A press from the room overrides an announced start.
+func TestAnIntentCancelsAScheduledStart(t *testing.T) {
+	s := NewStore()
+	rev := int64(0)
+	now := time.Now().UnixMilli()
+	st, _ := s.Report("p1", State{ItemID: "a", IsPlaying: true, StartAtMs: now + 1500},
+		ReportOpts{DeviceID: "phone", BasedOnRevision: &rev})
+	st2, out := s.ApplyIntent("p1", "TV", IntentRequest{Type: IntentSetPlaying, Playing: false, BasedOnRevision: st.Revision})
+	if out != OutcomeOK || st2.StartAtMs != 0 {
+		t.Fatalf("pause left the schedule standing: %v %+v", out, st2)
+	}
+}
