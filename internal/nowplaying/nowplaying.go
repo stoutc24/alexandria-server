@@ -827,6 +827,10 @@ func (s *Store) HandOver(profileID, fromDeviceID, toDeviceKey string) (State, Ou
 	st.SeatVacantSinceMs = 0
 	st.HandedOverAtMs = nowMs
 	st.StartAtMs, st.StartPositionMs, st.StartItemID = 0, 0, ""
+	// The new leader is nobody's follower: left in place, it would be
+	// counted among its own followers (and the party would look one
+	// device bigger than it is) until its heartbeat aged out.
+	delete(s.followers[profileID], toDeviceKey)
 	rev := s.nextRevLocked(profileID)
 	st.Revision = rev
 	st.LastIntentRevision = rev

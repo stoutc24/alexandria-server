@@ -1005,6 +1005,23 @@ func TestSampledAtServerMsAnchorsWithoutLatency(t *testing.T) {
 // "Make this device the leader": only the seat holder may, only to a
 // live follower; afterwards the old leader is refused and the new one
 // must read the state before it leads.
+func TestHandOverDropsTheNewLeaderFromTheFollowers(t *testing.T) {
+	s := NewStore()
+	s.Report("p", State{Source: "plex", ItemID: "plex:1", Title: "t", PositionMs: 1000, IsPlaying: true, Rate: 1},
+		ReportOpts{DeviceID: "phone", ClaimSeat: true})
+	s.Join("p", "tv", "Living Room TV", RoleFollower)
+	st, out := s.HandOver("p", "phone", "tv")
+	if out != OutcomeOK {
+		t.Fatalf("handover: %v", out)
+	}
+	if st.FollowerCount != 0 {
+		t.Fatalf("the new leader must not be listed among the followers: %+v", st.Followers)
+	}
+	if st.LeaderTokenID != "tv" {
+		t.Fatalf("seat should be the TV's, got %q", st.LeaderTokenID)
+	}
+}
+
 func TestHandOverMovesTheSeat(t *testing.T) {
 	s := NewStore()
 	rev := int64(0)
