@@ -44,8 +44,9 @@ func unauthorizedProfile(c *fiber.Ctx) error {
 // stamped returns the state with the read-time server clock, on EVERY
 // response that carries a state — a TV computes its launch target from
 // serverNowMs, and a response without it reintroduced seconds of lag.
-func stamped(st nowplaying.State) nowplaying.State {
+func stamped(c *fiber.Ctx, st nowplaying.State) nowplaying.State {
 	st.ServerNowMs = time.Now().UnixMilli()
+	st.YourDeviceKey, _ = middleware.Device(c)
 	return st
 }
 
@@ -58,7 +59,7 @@ func refused(c *fiber.Ctx, code, message string, st nowplaying.State) error {
 	return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 		"error": message,
 		"code":  code,
-		"state": stamped(st),
+		"state": stamped(c, st),
 	})
 }
 
@@ -130,7 +131,7 @@ func (h *NowPlayingHandler) Report(c *fiber.Ctx) error {
 	case nowplaying.OutcomeIgnored:
 		// A legacy publisher while another device leads: swallowed, so
 		// the old client's status line does not turn into a retry storm.
-		return c.JSON(fiber.Map{"ok": true, "ignored": true, "state": stamped(out)})
+		return c.JSON(fiber.Map{"ok": true, "ignored": true, "state": stamped(c, out)})
 	case nowplaying.OutcomeStale:
 		return refused(c, "stale", "the session changed since this report was based; apply the state and report again", out)
 	case nowplaying.OutcomeSeatHeld:
@@ -140,7 +141,7 @@ func (h *NowPlayingHandler) Report(c *fiber.Ctx) error {
 		}
 		return refused(c, "seat-held", label+" is leading this session", out)
 	}
-	return c.JSON(fiber.Map{"ok": true, "state": stamped(out)})
+	return c.JSON(fiber.Map{"ok": true, "state": stamped(c, out)})
 }
 
 // Get returns what this profile is playing, for a device that wants to
@@ -171,7 +172,7 @@ func (h *NowPlayingHandler) Get(c *fiber.Ctx) error {
 	if !ok {
 		return c.SendStatus(fiber.StatusNoContent)
 	}
-	return c.JSON(stamped(st))
+	return c.JSON(stamped(c, st))
 }
 
 // GetQueue hands a joiner the leader's queue, so it can keep playing
@@ -313,10 +314,10 @@ func (h *NowPlayingHandler) Intent(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 			"error": "no queue is published for this session",
 			"code":  "no-queue",
-			"state": stamped(st),
+			"state": stamped(c, st),
 		})
 	}
-	return c.JSON(fiber.Map{"ok": true, "state": stamped(st)})
+	return c.JSON(fiber.Map{"ok": true, "state": stamped(c, st)})
 }
 
 // Clear is the explicit stop. ?reason=stopped from a leader with
@@ -367,7 +368,7 @@ func (h *NowPlayingHandler) HandOver(c *fiber.Ctx) error {
 	case nowplaying.OutcomeNoSuchFollower:
 		return refused(c, "no-such-follower", "that device is not following right now", st)
 	}
-	return c.JSON(fiber.Map{"ok": true, "state": stamped(st)})
+	return c.JSON(fiber.Map{"ok": true, "state": stamped(c, st)})
 }
 
 // Time is the party's clock: the same server instant every state

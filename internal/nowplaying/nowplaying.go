@@ -226,6 +226,12 @@ type State struct {
 	// Windows server and an Apple TV became a few seconds of playback
 	// lag (device report).
 	ServerNowMs int64 `json:"serverNowMs,omitempty"`
+	// YourDeviceKey is the REQUESTER'S own token id, stamped by the
+	// handler on every state response and never stored: the key the seat
+	// (leaderTokenId) and the followers list use for this very device.
+	// It is how a device knows it leads, that a handover named it, and
+	// which follower row is its own.
+	YourDeviceKey string `json:"yourDeviceKey,omitempty"`
 }
 
 // QueueItem is one entry of the leader's play queue — METADATA ONLY.
