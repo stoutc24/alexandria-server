@@ -682,3 +682,85 @@ func (s *Show) Counts() (watched, total int) {
 	}
 	return
 }
+
+// Half is a view of the catalog holding every other film, show and artist
+// (which = 0 the even ones, 1 the odd), so the Plex and Jellyfin dialects
+// served from one catalog look like two different servers instead of the
+// same library twice on a Home that merges both. Books are shared: only
+// the Audiobookshelf dialect serves them. Collections and playlists are
+// copied with the members that fall in this half, and dropped when empty.
+func (c *Catalog) Half(which int) *Catalog {
+	v := *c
+	v.byID = make(map[string]any, len(c.byID))
+	for k, val := range c.byID {
+		v.byID[k] = val
+	}
+	v.Movies, v.Shows, v.Episodes, v.Artists, v.Albums, v.Tracks = nil, nil, nil, nil, nil, nil
+	keepMovie := map[*Movie]bool{}
+	for i, m := range c.Movies {
+		if i%2 == which {
+			v.Movies = append(v.Movies, m)
+			keepMovie[m] = true
+		}
+	}
+	keepShow := map[*Show]bool{}
+	for i, s := range c.Shows {
+		if i%2 == which {
+			v.Shows = append(v.Shows, s)
+			keepShow[s] = true
+			v.Episodes = append(v.Episodes, s.AllEpisodes()...)
+		}
+	}
+	keepTrack := map[*Track]bool{}
+	for i, a := range c.Artists {
+		if i%2 == which {
+			v.Artists = append(v.Artists, a)
+			for _, al := range a.Albums {
+				v.Albums = append(v.Albums, al)
+				for _, t := range al.Tracks {
+					v.Tracks = append(v.Tracks, t)
+					keepTrack[t] = true
+				}
+			}
+		}
+	}
+	v.Collections = nil
+	for _, co := range c.Collections {
+		nc := &Collection{ID: co.ID, Title: co.Title}
+		for _, m := range co.Movies {
+			if keepMovie[m] {
+				nc.Movies = append(nc.Movies, m)
+			}
+		}
+		for _, s := range co.Shows {
+			if keepShow[s] {
+				nc.Shows = append(nc.Shows, s)
+			}
+		}
+		if len(nc.Movies)+len(nc.Shows) == 0 {
+			continue
+		}
+		v.Collections = append(v.Collections, nc)
+		v.byID[nc.ID] = nc
+	}
+	v.Playlists = nil
+	for _, pl := range c.Playlists {
+		np := &Playlist{ID: pl.ID, Title: pl.Title, Kind: pl.Kind}
+		for _, t := range pl.Tracks {
+			if keepTrack[t] {
+				np.Tracks = append(np.Tracks, t)
+			}
+		}
+		for _, m := range pl.Movies {
+			if keepMovie[m] {
+				np.Movies = append(np.Movies, m)
+			}
+		}
+		if len(np.Tracks)+len(np.Movies) == 0 {
+			continue
+		}
+		v.Playlists = append(v.Playlists, np)
+		v.byID[np.ID] = np
+	}
+	return &v
+}

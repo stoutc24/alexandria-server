@@ -34,7 +34,11 @@ func main() {
 
 	ids := showcase.ClipIDs(*clips)
 	cat := showcase.Build(time.Now(), ids)
-	srv := showcase.New(cat, *clips)
+	// Plex and Jellyfin each get half the films, shows and artists, so a
+	// Home that merges both servers shows two libraries, not one twice.
+	absSrv := showcase.New(cat, *clips)
+	plexSrv := showcase.New(cat.Half(0), *clips)
+	jfSrv := showcase.New(cat.Half(1), *clips)
 	log.Printf("showcase: %d books, %d albums/%d tracks, %d films, %d shows/%d episodes, %d clips (%s)",
 		len(cat.Books), len(cat.Albums), len(cat.Tracks), len(cat.Movies), len(cat.Shows), len(cat.Episodes), len(ids), *clips)
 	if len(ids) == 0 {
@@ -50,9 +54,9 @@ func main() {
 			log.Fatalf("%s: %v", name, err)
 		}
 	}
-	go serve("abs", *absAddr, srv.ABSHandler())
-	go serve("jellyfin", *jfAddr, srv.JellyfinHandler())
-	serve("plex", *plexAddr, srv.PlexHandler())
+	go serve("abs", *absAddr, absSrv.ABSHandler())
+	go serve("jellyfin", *jfAddr, jfSrv.JellyfinHandler())
+	serve("plex", *plexAddr, plexSrv.PlexHandler())
 }
 
 func defaultClipsDir() string {
