@@ -212,9 +212,10 @@ func (h *NowPlayingHandler) Follow(c *fiber.Ctx) error {
 		// pulled it to another track) asks for a settled anchor. A new
 		// follower gets one without asking.
 		RefreshAnchor bool `json:"refreshAnchor"`
-		// DriftMs: the follower's latest measurement, audible position
-		// minus the leader's, after its own output offset; positive =
-		// ahead. DriftMeasuredAtMs is server time. Shown per device on
+		// DriftMs: the follower's latest CLOCK drift — the party
+		// clock's target position minus its own player position, with
+		// no route or output latency in it; positive = the follower is
+		// BEHIND. DriftMeasuredAtMs is server time. Shown per device on
 		// the dashboard; never acted on by the server.
 		DriftMs           *int64 `json:"driftMs"`
 		DriftMeasuredAtMs int64  `json:"driftMeasuredAtMs"`

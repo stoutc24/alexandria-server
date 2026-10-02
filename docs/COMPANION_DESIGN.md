@@ -327,6 +327,154 @@ devices reconcile to it. Nothing dispatches a command at a device.
 `/health` advertises `nowplaying.leader`, `nowplaying.intents` and
 `nowplaying.ms`, so a client on an older server degrades to v1.
 
+#### 0.3.0: the party clock
+
+Converging on a state within a poll is not the same as starting the
+same note at the same instant. 0.3.0 gives the party a clock and a way
+to name a moment on it. Everything here is additive: a state without
+the new fields reads exactly as it did before.
+
+- **`GET /time`** answers `{serverNowMs}` and nothing else, so a device
+  measures its offset NTP-style — a few round trips,
+  `offset = serverNowMs − (sent + rtt/2)`, the smallest-rtt samples
+  trusted most. Every state response is still stamped with
+  `serverNowMs` at the instant it is built.
+- **`sampledAtServerMs`** on a report: the server instant (the
+  reporter's clock plus its offset) at which `positionMs` was measured.
+  The anchor is then `sampledAt − positionMs/rate`, and the request's
+  one-way latency never lands in it. Believed only within 5 s of
+  arrival; absent, arrival time stands in as before.
+- **A scheduled start** — `startAtMs`, `startPositionMs`, `startItemId`
+  on the state. The leader announces that `startItemId` (empty = the
+  current item) begins at `startPositionMs` when the server clock reads
+  `startAtMs` (T). For the current item the server pins the anchor to T
+  (less the start position) and holds the extrapolated position at
+  `startPositionMs` until T, so every device that knows the clock
+  starts the same note at T instead of starting when it can and
+  settling. A press from the room (any intent) and a handover cancel
+  it. A manual skip on the phone announces T = now + 1.5 s. A
+  `startAtMs` of zero or below is no schedule.
+- **The NEXT-track pre-announce** (protocol v2). While the current item
+  A plays and the leader leads a live party with followers on a server
+  that schedules starts, it announces the boundary ahead instead of
+  holding at it. The contract:
+  - **Announce.** When A has 3 s or less of WALL time left (remaining ÷
+    rate), once per trajectory, the leader's report of A carries
+    `startItemId` = the next item B, `startAtMs` = T and
+    `startPositionMs` = 0, where T = the predicted boundary on the
+    server clock + the leader's measured time to audio for B's kind
+    (downloaded or streamed) + a 40 ms margin. It repeats the three
+    fields on EVERY report of A while armed, and reports at 1 Hz while
+    armed (stopping at the boundary), so a follower gets more than one
+    chance. A report carrying a new T for B replaces the old one.
+  - **Withdraw = omission.** A report of A that omits the fields
+    withdraws the announcement: the server carries nothing forward.
+    The leader withdraws — clears it and promptly sends a report
+    without the fields — on any pause (interruptions included), any
+    seek within A (a scrub, ±30 s, previous-to-restart), a rate
+    change, a repeat-mode change, a queue edit that changes the next
+    item, and stop / leave / handover. A load of any index other than
+    B withdraws through the skip's own scheduled report, which carries
+    only its own current-item schedule. A new trajectory that again
+    reaches 3 s announces afresh. A paused report never carries the
+    fields.
+  - **The server's defence in depth.** A correct leader never needs
+    these; they keep a stale announcement off the state when a leader
+    is not correct. A next-item schedule (`startItemId` ≠ `itemId`) is
+    zeroed:
+    - on any report with `isPlaying` false;
+    - when its T does not fit the trajectory the same report describes.
+      With `durationSec` > 0, boundary = the sampled instant
+      (`sampledAtServerMs`, else arrival) + (`durationSec`·1000 −
+      `positionMs`) ÷ rate, and the schedule is dropped unless
+      **−1000 ms ≤ T − boundary ≤ +4000 ms** (both ends included). A
+      real T sits 140–2040 ms past the true boundary (time to audio,
+      100–2000 ms, plus the margin), and a whole-second `durationSec`
+      puts the true boundary up to 1 s ÷ rate past the computed one;
+      the early side absorbs clock and sampling error. Without a
+      duration nothing is judged. A `durationSec` off from the file's
+      real length by more than about a second can fail the check; the
+      announcement is then dropped — fail-safe: followers take the
+      ordinary item-change path, as before the pre-announce;
+    - by any intent — and the server remembers the (item, T) an intent
+      cleared and refuses a re-send of that same pair until T + 2 s (a
+      different T for the item is a new announcement, judged on its
+      own);
+    - when the leader vacates the seat (`DELETE ?reason=stopped` with
+      followers present; a start of the CURRENT item stays, as
+      before), on a handover (which clears any schedule), and in the
+      stop-all tombstone.
+
+    A refused announcement is simply absent: the report itself applies
+    as an ordinary one. A `startAtMs` of zero or below is no schedule,
+    and its two siblings are dropped with it. The announcement bumps
+    `revision` (every parked poll wakes within one round trip) but not
+    `itemRevision` (pending intents stay valid); the current item's
+    anchor and extrapolation are untouched by it. None of this needs a
+    new capability: a server from before these checks already reads a
+    report that omits the fields as the withdrawal (it stores what the
+    report sends); it only lacks the checks.
+  - **The boundary and the truthful pin.** Between A's end of file and
+    the play of B the leader publishes no paused state. It opens B
+    paused and plays it so that its sound starts at T (at once, if it
+    cannot make T). Its first report(s) of B carry `startItemId` = B
+    and `startAtMs` = T until its clock rolls; its first ROLLING report
+    carries the measured audible zero Z = `sampledAtServerMs` − audible
+    position ÷ rate (sent while `sampledAtServerMs` − Z < 1800 ms), and
+    the pin is done only once the server accepts that report (with no
+    server time it gives up after 3 s; while a pin is outstanding it
+    reports at 1 Hz, for at most 3 s after the boundary). Within
+    2 s of the pinned instant — judged at `sampledAtServerMs` when
+    present, so a slow request does not forfeit it — the server
+    anchors B AT `startAtMs`, whatever `positionMs` the report carries;
+    `itemRevision` and `anchorRevision` move to that report's
+    revision, and the fields stay on the state for the readers. A
+    later one, or a report without the fields, anchors as an ordinary
+    report from its sampled position. A pending join refresh never
+    overrides the pin. If B is itself 3 s long or less, B's
+    outstanding pin goes out before B's own next-item announcement.
+  - **Followers** (phone and TV) latch B@T, prepare B and start it at
+    T. The latch owns the boundary only while each state agrees with
+    it. A state naming A keeps it when it repeats the announcement (T
+    within 50 ms; a different T for B re-arms at that T), or when it
+    carries no fields and A's anchor still puts A's end within 1.5 s
+    of the armed boundary (a restart or a scrub moves it further, and
+    disarms). A state naming B keeps it too: with its own `startAtMs`
+    within 250 ms of T it is the normal pin, without fields the
+    ordinary follow-up; one further off means the leader started B on
+    its own schedule — re-target to it, or correct once if B already
+    started. Between a follower's own boundary and the leader's first
+    report of B the state still names A (the server never promotes an
+    item on its own): that state is NOT a track change. A paused or
+    ended state disarms and is mirrored at once; any other item
+    disarms. Check `ended` first: an ended party's tombstone carries
+    no schedule, and nothing starts after it.
+  - **Nothing changes when the fields are absent:** an older leader or
+    server behaves exactly as before — no new clock sync, correction or
+    report cadence — and a next-item schedule never holds or moves the
+    current item.
+- **Handover** (`POST /nowplaying/handover {deviceKey}`): the seat
+  holder names a live follower the next leader. The position stays
+  continuous (the anchor is kept), any schedule is cleared, the new
+  leader is dropped from the followers list, and `handedOverAtMs` plus
+  the bumped revision make the new leader read the state before it
+  leads.
+- **Drift** (`driftMs`, `driftMeasuredAtMs` on `POST /follow`): a
+  follower's CLOCK drift as it last measured it — the party clock's
+  target position (the leader's, extrapolated from the anchor) minus
+  the follower's own PLAYER position, with no route or output latency
+  in it. **Positive = the follower is BEHIND.** Ear-level (route)
+  figures stay in the device's own status line. Listed per device on
+  `followers[]` for the dashboard. Informational: the server never
+  steers on it, and a heartbeat carrying one does not bump the
+  revision.
+
+`/health` advertises `time`, `nowplaying.scheduled-start`,
+`nowplaying.handover` and `nowplaying.drift` for these; the
+pre-announce rides `nowplaying.scheduled-start` (an older follower
+sees a `startItemId` it ignores). There is no per-device room-delay
+API: a room's output-chain delay is a knob on the device itself.
+
 ### The honest limit
 
 **Whoever runs this server owns the file the data sits in, and can open
