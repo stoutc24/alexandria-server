@@ -1095,3 +1095,864 @@ func TestAnIntentCancelsAScheduledStart(t *testing.T) {
 		t.Fatalf("pause left the schedule standing: %v %+v", out, st2)
 	}
 }
+
+// ---- the next-track pre-announce (protocol v2) --------------------------
+
+// leaderOpts is the phone leading under the conductor protocol, with
+// positions in ms sampled at sampledAtMs on the server clock (0 = the
+// arrival time stands in).
+func leaderOpts(sampledAtMs int64) ReportOpts {
+	return ReportOpts{DeviceID: "phone", DeviceLabel: "iPhone", BasedOnRevision: rev(0),
+		HasPositionMs: true, SampledAtMs: sampledAtMs}
+}
+
+// noSchedule: none of the three schedule fields is set.
+func noSchedule(st State) bool {
+	return st.StartAtMs == 0 && st.StartPositionMs == 0 && st.StartItemID == ""
+}
+
+// A next-track announcement stands while the leader repeats it: the
+// heartbeat's position moves on, the current anchor stands, the current
+// item is not held, and the announcement reads exactly as sent.
+func TestNextItemScheduleSurvivesAHeartbeatThatCarriesIt(t *testing.T) {
+	s := NewStore()
+	now := time.Now().UnixMilli()
+	T := now + 3000 + 540 // 3 s left, plus the next track's time to audio and the margin
+	first, out := s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177000,
+		StartAtMs: T, StartPositionMs: 0, StartItemID: "b"}, leaderOpts(now))
+	if out != OutcomeOK || first.StartItemID != "b" || first.StartAtMs != T {
+		t.Fatalf("announcement not stored: %v %+v", out, first)
+	}
+	st, out := s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 178000,
+		StartAtMs: T, StartPositionMs: 0, StartItemID: "b"}, leaderOpts(now+1000))
+	if out != OutcomeOK {
+		t.Fatalf("heartbeat refused: %v", out)
+	}
+	if st.StartItemID != "b" || st.StartAtMs != T || st.StartPositionMs != 0 {
+		t.Fatalf("announcement changed under a repeating heartbeat: %+v", st)
+	}
+	if st.TrackStartedAtMs != first.TrackStartedAtMs || st.AnchorRevision != first.AnchorRevision {
+		t.Fatalf("a repeated announcement moved the current anchor: %d → %d", first.TrackStartedAtMs, st.TrackStartedAtMs)
+	}
+	if st.ItemRevision != first.ItemRevision || st.Revision <= first.Revision {
+		t.Fatalf("revisions: item %d → %d, session %d → %d", first.ItemRevision, st.ItemRevision, first.Revision, st.Revision)
+	}
+	s.mu.Lock()
+	running := s.extrapolatedLocked("p1", st, now+2000)
+	s.mu.Unlock()
+	if running != 179000 {
+		t.Fatalf("a next-track announcement held the current item: %d, want 179000", running)
+	}
+}
+
+// Withdrawal is omission. The leader repeats the announcement on every
+// report of the current item, so a report of it that leaves the fields
+// out has withdrawn it — the queue edit that removed the next track, a
+// repeat-mode change — and nothing is carried forward from the stored
+// state (an earlier draft carried it across exactly these). The current
+// anchor does not move with it, a fresh announcement afterwards stands
+// again, and a schedule for the CURRENT item is cleared by omission as
+// it always was.
+func TestAReportThatOmitsTheFieldsWithdrawsANextItemSchedule(t *testing.T) {
+	s := NewStore()
+	now := time.Now().UnixMilli()
+	T := now + 3500
+	first, _ := s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177000,
+		StartAtMs: T, StartItemID: "b"}, leaderOpts(now))
+	if first.StartItemID != "b" || first.StartAtMs != T {
+		t.Fatalf("announcement not stored: %+v", first)
+	}
+	st, out := s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177300}, leaderOpts(now+300))
+	if out != OutcomeOK {
+		t.Fatalf("withdrawal refused: %v", out)
+	}
+	if !noSchedule(st) {
+		t.Fatalf("a report without the fields did not withdraw the announcement: %+v", st)
+	}
+	if got, _ := s.Get("p1"); !noSchedule(got) {
+		t.Fatalf("followers still read a withdrawn announcement: %+v", got)
+	}
+	if st.TrackStartedAtMs != first.TrackStartedAtMs || st.AnchorRevision != first.AnchorRevision {
+		t.Fatalf("the withdrawal moved the current anchor: %d → %d", first.TrackStartedAtMs, st.TrackStartedAtMs)
+	}
+	if st.ItemRevision != first.ItemRevision || st.Revision <= first.Revision {
+		t.Fatalf("a withdrawal is no track change but must wake the party: item %d → %d, session %d → %d",
+			first.ItemRevision, st.ItemRevision, first.Revision, st.Revision)
+	}
+
+	// A small scrub back the leader withdrew for: nothing comes back.
+	st, _ = s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 175700}, leaderOpts(now+400))
+	if !noSchedule(st) {
+		t.Fatalf("a withdrawn announcement returned: %+v", st)
+	}
+
+	// A new trajectory that reaches 3 s again announces afresh, and it
+	// stands: 2.3 s left at the sample, plus the time to audio.
+	T2 := now + 2400 + 2300 + 540
+	st, _ = s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177700,
+		StartAtMs: T2, StartItemID: "c"}, leaderOpts(now+2400))
+	if st.StartItemID != "c" || st.StartAtMs != T2 {
+		t.Fatalf("a fresh announcement after a withdrawal was not stored: %+v", st)
+	}
+
+	// A schedule for the CURRENT item is cleared by omission, as before.
+	s = NewStore()
+	s.Report("p1", State{ItemID: "d", IsPlaying: true, PositionMs: 0, StartAtMs: now + 1500, StartItemID: "d"}, leaderOpts(now))
+	st, _ = s.Report("p1", State{ItemID: "d", IsPlaying: true, PositionMs: 200}, leaderOpts(now+1700))
+	if !noSchedule(st) || st.TrackStartedAtMs != now+1500 {
+		t.Fatalf("a current-item schedule after a report without it: %+v", st)
+	}
+}
+
+// A paused report never carries a next-track announcement — a paused
+// leader reaches no boundary. Fields on one are refused (an earlier
+// draft stored them, and a resume carried them forward), the resume does
+// not bring them back, and the new trajectory after it announces afresh.
+func TestAPausedReportNeverCarriesANextItemSchedule(t *testing.T) {
+	s := NewStore()
+	now := time.Now().UnixMilli()
+	T := now + 3000
+	s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177500,
+		StartAtMs: T, StartItemID: "b"}, leaderOpts(now))
+	// The trajectory still fits (2.5 s left at the sample, T 500 ms past
+	// it): only the pause refuses it.
+	p, out := s.Report("p1", State{ItemID: "a", IsPlaying: false, DurationSec: 180, PositionMs: 177600,
+		StartAtMs: T, StartItemID: "b"}, leaderOpts(now+100))
+	if out != OutcomeOK || p.IsPlaying {
+		t.Fatalf("pause refused: %v %+v", out, p)
+	}
+	if !noSchedule(p) {
+		t.Fatalf("a paused report stored the announcement: %+v", p)
+	}
+	if got, _ := s.Get("p1"); !noSchedule(got) {
+		t.Fatalf("followers read an announcement on a paused state: %+v", got)
+	}
+	r, _ := s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177600}, leaderOpts(now+1100))
+	if !noSchedule(r) {
+		t.Fatalf("the resume brought the announcement back: %+v", r)
+	}
+	// Paused for a second: the boundary moved a second later, and so did T.
+	T2 := T + 1000
+	r, _ = s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177700,
+		StartAtMs: T2, StartItemID: "b"}, leaderOpts(now+1200))
+	if r.StartItemID != "b" || r.StartAtMs != T2 {
+		t.Fatalf("the announcement for the new trajectory was not stored: %+v", r)
+	}
+
+	// The rule is for the NEXT item only: a paused report that carries a
+	// start of the CURRENT item is taken exactly as before.
+	s = NewStore()
+	Tc := now + 1500
+	c, _ := s.Report("p1", State{ItemID: "c", IsPlaying: false, PositionMs: 30000, StartAtMs: Tc,
+		StartPositionMs: 30000, StartItemID: "c"}, leaderOpts(now))
+	if c.StartAtMs != Tc || c.StartItemID != "c" || c.StartPositionMs != 30000 || c.TrackStartedAtMs != Tc-30000 {
+		t.Fatalf("a paused report's start of the current item: %+v", c)
+	}
+}
+
+// The server's own check of a next-track T against the report that
+// carries it: boundary = sampled instant + (durationSec·1000 −
+// positionMs) ÷ rate, and T must sit within [−1000, +4000] ms of it,
+// both ends included. A restart or a scrub the leader did not withdraw
+// for moves the boundary away from T, and the announcement is dropped
+// while the report itself applies as usual.
+func TestANextItemScheduleOffItsOwnTrajectoryIsDropped(t *testing.T) {
+	now := time.Now().UnixMilli()
+	announce := func(st State, sampledAtMs int64) State {
+		t.Helper()
+		got, out := NewStore().Report("p1", st, leaderOpts(sampledAtMs))
+		if out != OutcomeOK {
+			t.Fatalf("refused: %v", out)
+		}
+		return got
+	}
+	at := func(posMs int64, rate float64, startAt int64) State {
+		return State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: posMs, Rate: rate,
+			StartAtMs: startAt, StartItemID: "b"}
+	}
+	for _, c := range []struct {
+		name     string
+		rate     float64
+		boundary int64 // now + (180 000 − 177 000) ÷ rate
+		off      int64
+		keep     bool
+	}{
+		{"1×, 1 s early: the earliest kept", 1, now + 3000, -1000, true},
+		{"1×, 1001 ms early", 1, now + 3000, -1001, false},
+		{"1×, on the boundary", 1, now + 3000, 0, true},
+		{"1×, a streamed open past it", 1, now + 3000, 740, true},
+		{"1×, 4 s late: the latest kept", 1, now + 3000, 4000, true},
+		{"1×, 4001 ms late", 1, now + 3000, 4001, false},
+		{"1.5×, 1 s early", 1.5, now + 2000, -1000, true},
+		{"1.5×, 1001 ms early", 1.5, now + 2000, -1001, false},
+		{"1.5×, 4 s late", 1.5, now + 2000, 4000, true},
+		{"1.5×, 4001 ms late", 1.5, now + 2000, 4001, false},
+	} {
+		st := announce(at(177000, c.rate, c.boundary+c.off), now)
+		kept := st.StartItemID == "b" && st.StartAtMs == c.boundary+c.off
+		if kept != c.keep {
+			t.Errorf("%s: kept=%v, want %v (%+v)", c.name, kept, c.keep, st)
+		}
+		if !kept && !noSchedule(st) {
+			t.Errorf("%s: a dropped announcement left fields behind: %+v", c.name, st)
+		}
+		if st.TrackStartedAtMs != now-int64(177000/c.rate) {
+			t.Errorf("%s: the report did not anchor as usual: %d", c.name, st.TrackStartedAtMs)
+		}
+	}
+
+	// Without sampledAtServerMs the arrival time is the sampled instant.
+	if st := announce(at(177000, 1, now+3000+500), 0); st.StartItemID != "b" {
+		t.Errorf("a fitting T judged at arrival was dropped: %+v", st)
+	}
+	if st := announce(at(177000, 1, now+3000+6000), 0); !noSchedule(st) {
+		t.Errorf("a T 6 s past the boundary judged at arrival was kept: %+v", st)
+	}
+
+	// Whole-second durations: the track is really 180.4 s and the leader
+	// sits at 180.2 s, past durationSec·1000. A T 200 ms + 540 ms past
+	// the true end still fits.
+	if st := announce(at(180200, 1, now+200+540), now); st.StartItemID != "b" {
+		t.Errorf("a T past a whole-second duration was dropped: %+v", st)
+	}
+
+	// No duration: there is no boundary to judge against.
+	if st := announce(State{ItemID: "a", IsPlaying: true, PositionMs: 0, StartAtMs: now + 60000, StartItemID: "b"}, now); st.StartItemID != "b" {
+		t.Errorf("an announcement without a duration was judged: %+v", st)
+	}
+
+	// ⏮ restarts the track and the old fields are sent again: T is
+	// three minutes early for the new trajectory.
+	s := NewStore()
+	T := now + 3000
+	if st, _ := s.Report("p1", at(177500, 1, T), leaderOpts(now)); st.StartItemID != "b" {
+		t.Fatalf("the announcement itself was refused: %+v", st)
+	}
+	st, out := s.Report("p1", at(0, 1, T), leaderOpts(now+500))
+	if out != OutcomeOK || !noSchedule(st) {
+		t.Fatalf("a restart kept the stale announcement: %v %+v", out, st)
+	}
+	if st.TrackStartedAtMs != now+500 || st.AnchorRevision != st.Revision {
+		t.Fatalf("the restart did not re-anchor: %+v", st)
+	}
+
+	// A scrub back of 3 s with the old fields: T is 2.5 s early.
+	s = NewStore()
+	s.Report("p1", at(177500, 1, T), leaderOpts(now))
+	if st, _ := s.Report("p1", at(174600, 1, T), leaderOpts(now+100)); !noSchedule(st) {
+		t.Fatalf("a scrub back kept the stale announcement: %+v", st)
+	}
+}
+
+// The trajectory window on its own, with no clock in it: inclusive at
+// both ends, scaled by rate, a missing rate read as 1×, and nothing
+// judged without a duration.
+func TestNextStartTrajectoryWindowIsInclusive(t *testing.T) {
+	const base = int64(1_000_000)
+	// 180 s track at 177 s: the boundary is base + 3000 at 1×, + 1500
+	// at 2×, + 6000 at 0.5×.
+	for _, c := range []struct {
+		rate     float64
+		startAt  int64
+		wantOff  int64
+		wantFits bool
+	}{
+		{1, base + 2000, -1000, true},
+		{1, base + 1999, -1001, false},
+		{1, base + 7000, 4000, true},
+		{1, base + 7001, 4001, false},
+		{2, base + 500, -1000, true},
+		{2, base + 499, -1001, false},
+		{2, base + 5500, 4000, true},
+		{2, base + 5501, 4001, false},
+		{0.5, base + 5000, -1000, true},
+		{0.5, base + 10000, 4000, true},
+		{0.5, base + 10001, 4001, false},
+	} {
+		if off := nextStartOffsetMs(180, 177000, c.rate, base, c.startAt); off != c.wantOff {
+			t.Errorf("rate %v, T base%+d: offset %d, want %d", c.rate, c.startAt-base, off, c.wantOff)
+		}
+		if fits := nextStartFitsTrajectory(180, 177000, c.rate, base, c.startAt); fits != c.wantFits {
+			t.Errorf("rate %v, T base%+d: fits=%v, want %v", c.rate, c.startAt-base, fits, c.wantFits)
+		}
+	}
+	if !nextStartFitsTrajectory(180, 177000, 0, base, base+7000) || nextStartFitsTrajectory(180, 177000, 0, base, base+7001) {
+		t.Error("a missing rate is not read as 1×")
+	}
+	if !nextStartFitsTrajectory(0, 177000, 1, base, base+999_999) {
+		t.Error("an announcement was judged without a duration")
+	}
+	// A position past durationSec·1000 puts the boundary before base.
+	if off := nextStartOffsetMs(180, 180400, 1, base, base+600); off != 1000 {
+		t.Errorf("past a whole-second duration: offset %d, want 1000", off)
+	}
+}
+
+// An intent from the room cancels a next-track announcement, and the
+// server remembers the (item, T) it cancelled: the leader's next report
+// — the acknowledging one, which still repeats the fields if the leader
+// has not withdrawn yet — cannot restore it, even though its
+// trajectory still fits. A NEW T for the item (the leader re-armed) is
+// judged on its own; the cancelled pair stays refused until T + 2 s and
+// is accepted again after. Cancelling a start of the CURRENT item
+// remembers nothing: a re-send of it is honoured, exactly as before.
+func TestAnIntentCancelledNextItemScheduleIsNotRestoredByAReSend(t *testing.T) {
+	now := time.Now().UnixMilli()
+	s := NewStore()
+	T := now + 2800
+	st, _ := s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177500,
+		StartAtMs: T, StartItemID: "b"}, leaderOpts(now))
+	if st.StartItemID != "b" {
+		t.Fatalf("announcement not stored: %+v", st)
+	}
+	// A half-second nudge from the TV: the old T would still fit the new
+	// trajectory, so only the memory can refuse it.
+	st2, out := s.ApplyIntent("p1", "Living Room TV", IntentRequest{Type: IntentSetPositionMs, PositionMs: 177000, BasedOnRevision: st.Revision})
+	if out != OutcomeOK || !noSchedule(st2) {
+		t.Fatalf("a seek intent left the announcement standing: %v %+v", out, st2)
+	}
+	based := func(sampledAtMs int64) ReportOpts {
+		o := leaderOpts(sampledAtMs)
+		o.BasedOnRevision = rev(st2.Revision)
+		return o
+	}
+	if !nextStartFitsTrajectory(180, 177100, 1, now+100, T) {
+		t.Fatal("setup: the re-sent T should fit the acknowledging report's trajectory")
+	}
+	st3, out := s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177100,
+		StartAtMs: T, StartItemID: "b"}, based(now+100))
+	if out != OutcomeOK || st3.LeaderAckRevision != st3.Revision {
+		t.Fatalf("the acknowledging report: %v %+v", out, st3)
+	}
+	if !noSchedule(st3) {
+		t.Fatalf("the acknowledging report restored the cancelled announcement: %+v", st3)
+	}
+
+	// The leader re-armed for the new trajectory: a new T stands.
+	T2 := now + 3500
+	st4, _ := s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177200,
+		StartAtMs: T2, StartItemID: "b"}, based(now+200))
+	if st4.StartItemID != "b" || st4.StartAtMs != T2 {
+		t.Fatalf("a re-armed announcement was refused: %+v", st4)
+	}
+	// The cancelled pair itself stays refused.
+	if st5, _ := s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177300,
+		StartAtMs: T, StartItemID: "b"}, based(now+300)); !noSchedule(st5) {
+		t.Fatalf("the cancelled (item, T) was accepted again before T + 2 s: %+v", st5)
+	}
+
+	// Until T + 2 s, then accepted. Without a duration there is no
+	// trajectory to judge, so only the memory speaks.
+	s = NewStore()
+	s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 100000}, leaderOpts(now))
+	s.mu.Lock()
+	s.withdrawn["p1"] = withdrawnStart{itemID: "b", atMs: now - 1500} // refused until now + 500
+	s.mu.Unlock()
+	if st6, _ := s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 100100,
+		StartAtMs: now - 1500, StartItemID: "b"}, leaderOpts(now+100)); !noSchedule(st6) {
+		t.Fatalf("a cancelled pair was accepted inside T + 2 s: %+v", st6)
+	}
+	s.mu.Lock()
+	s.withdrawn["p1"] = withdrawnStart{itemID: "b", atMs: now - 2001} // lapsed
+	s.mu.Unlock()
+	st7, _ := s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 100200,
+		StartAtMs: now - 2001, StartItemID: "b"}, leaderOpts(now+200))
+	if st7.StartItemID != "b" || st7.StartAtMs != now-2001 {
+		t.Fatalf("the refusal outlived T + 2 s: %+v", st7)
+	}
+	s.mu.Lock()
+	_, still := s.withdrawn["p1"]
+	s.mu.Unlock()
+	if still {
+		t.Fatal("a lapsed refusal was not forgotten")
+	}
+
+	// A start of the CURRENT item cancelled by an intent: no memory, and
+	// a re-send of it is honoured as it always was.
+	s = NewStore()
+	Tc := now + 1500
+	sc, _ := s.Report("p1", State{ItemID: "c", IsPlaying: true, PositionMs: 0, StartAtMs: Tc, StartItemID: "c"}, leaderOpts(now))
+	sc2, out := s.ApplyIntent("p1", "Living Room TV", IntentRequest{Type: IntentSetPlaying, Playing: false, BasedOnRevision: sc.Revision})
+	if out != OutcomeOK || !noSchedule(sc2) {
+		t.Fatalf("a pause intent left the start standing: %v %+v", out, sc2)
+	}
+	s.mu.Lock()
+	_, remembered := s.withdrawn["p1"]
+	s.mu.Unlock()
+	if remembered {
+		t.Fatal("a cancelled start of the current item was remembered")
+	}
+	o := leaderOpts(now + 50)
+	o.BasedOnRevision = rev(sc2.Revision)
+	if sc3, _ := s.Report("p1", State{ItemID: "c", IsPlaying: true, PositionMs: 0, StartAtMs: Tc, StartItemID: "c"}, o); sc3.StartAtMs != Tc || sc3.TrackStartedAtMs != Tc {
+		t.Fatalf("a re-sent start of the current item was not honoured: %+v", sc3)
+	}
+}
+
+// The intent-cancel memory on its own: exactly the cancelled item AND
+// instant, refused while now < T + 2 s.
+func TestAWithdrawnStartRefusesOnlyTheSamePairUntilTPlus2s(t *testing.T) {
+	w := withdrawnStart{itemID: "b", atMs: 10_000}
+	for _, c := range []struct {
+		item string
+		at   int64
+		now  int64
+		want bool
+	}{
+		{"b", 10_000, 9_000, true},
+		{"b", 10_000, 11_999, true},
+		{"b", 10_000, 12_000, false},
+		{"b", 10_001, 11_000, false},
+		{"b", 9_999, 11_000, false},
+		{"c", 10_000, 11_000, false},
+	} {
+		if got := w.refuses(c.item, c.at, c.now); got != c.want {
+			t.Errorf("refuses(%q, %d) at %d = %v, want %v", c.item, c.at, c.now, got, c.want)
+		}
+	}
+	if w.lapsed(11_999) || !w.lapsed(12_000) {
+		t.Errorf("lapsed: %v at 11 999, %v at 12 000", w.lapsed(11_999), w.lapsed(12_000))
+	}
+}
+
+// A next-track announcement never outlives its item or its leader: the
+// next track's first report WITHOUT the fields anchors as an ordinary
+// one (the leader must carry them for the pin), a device that takes the
+// seat over inherits nothing, and a handover clears it for good.
+func TestANextItemScheduleDoesNotOutliveItsItemOrItsLeader(t *testing.T) {
+	now := time.Now().UnixMilli()
+	announce := func() *Store {
+		t.Helper()
+		s := NewStore()
+		if st, out := s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177000,
+			StartAtMs: now + 3500, StartItemID: "b"}, leaderOpts(now)); out != OutcomeOK || st.StartItemID != "b" {
+			t.Fatalf("announce: %v %+v", out, st)
+		}
+		return s
+	}
+
+	// The item change without the fields: ordinary anchoring, nothing carried.
+	s := announce()
+	sampled := now + 3600
+	st, _ := s.Report("p1", State{ItemID: "b", IsPlaying: true, DurationSec: 200, PositionMs: 0}, leaderOpts(sampled))
+	if !noSchedule(st) || st.TrackStartedAtMs != sampled {
+		t.Fatalf("the next track's first report without the fields: %+v (want its sampled zero %d)", st, sampled)
+	}
+
+	// Another device takes the seat over, playing the same item.
+	s = announce()
+	st, out := s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177200},
+		ReportOpts{DeviceID: "tv", BasedOnRevision: rev(0), HasPositionMs: true, TakeOver: true, SampledAtMs: now + 200})
+	if out != OutcomeOK || st.LeaderTokenID != "tv" || !noSchedule(st) {
+		t.Fatalf("a takeover inherited the old leader's announcement: %v %+v", out, st)
+	}
+
+	// A handover clears it, and the new leader's first report does not
+	// bring it back.
+	s = announce()
+	s.Join("p1", "tv1", "Living Room TV", RoleFollower)
+	st, out = s.HandOver("p1", "phone", "tv1")
+	if out != OutcomeOK || !noSchedule(st) {
+		t.Fatalf("a handover left the announcement standing: %v %+v", out, st)
+	}
+	st, out = s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177500},
+		ReportOpts{DeviceID: "tv1", DeviceLabel: "Living Room TV", BasedOnRevision: rev(st.Revision), HasPositionMs: true, SampledAtMs: now + 500})
+	if out != OutcomeOK || !noSchedule(st) {
+		t.Fatalf("the new leader inherited the announcement: %v %+v", out, st)
+	}
+}
+
+// The leader leaving with followers vacates the seat. A next-track
+// announcement is that leader's word about its own boundary and goes
+// with the seat, so nobody arriving later arms on it; a start of the
+// CURRENT item stays on the state, as before.
+func TestALeaderVacatingTheSeatDropsANextItemSchedule(t *testing.T) {
+	now := time.Now().UnixMilli()
+	s := NewStore()
+	s.Report("p1", State{ItemID: "a", IsPlaying: true, DurationSec: 180, PositionMs: 177000,
+		StartAtMs: now + 3500, StartItemID: "b"}, leaderOpts(now))
+	s.Join("p1", "tv1", "Living Room TV", RoleFollower)
+	if out := s.EndBy("p1", "phone", "iPhone", "stopped"); out != EndVacated {
+		t.Fatalf("leave: %v", out)
+	}
+	st, ok := s.Get("p1")
+	if !ok || st.LeaderTokenID != "" || !st.EndedByLeader || !st.IsPlaying || st.ItemID != "a" {
+		t.Fatalf("the seat was not vacated cleanly: %v %+v", ok, st)
+	}
+	if !noSchedule(st) {
+		t.Fatalf("the vacated seat kept the leader's announcement: %+v", st)
+	}
+
+	s = NewStore()
+	T := now + 1500
+	s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 0, StartAtMs: T, StartItemID: "a"}, leaderOpts(now))
+	s.Join("p1", "tv1", "Living Room TV", RoleFollower)
+	s.EndBy("p1", "phone", "iPhone", "stopped")
+	st, _ = s.Get("p1")
+	if st.StartAtMs != T || st.StartItemID != "a" || st.TrackStartedAtMs != T {
+		t.Fatalf("a vacate dropped a start of the current item: %+v", st)
+	}
+}
+
+// startAtMs <= 0 is no schedule: a negative one is not stored verbatim,
+// and sibling fields left without an instant go with it. The report
+// itself anchors as an ordinary one.
+func TestANonPositiveStartAtMsIsNoSchedule(t *testing.T) {
+	now := time.Now().UnixMilli()
+	for i, c := range []State{
+		{ItemID: "a", IsPlaying: true, PositionMs: 1000, StartAtMs: -5, StartItemID: "b"},
+		{ItemID: "a", IsPlaying: true, PositionMs: 1000, StartAtMs: -5, StartPositionMs: 3000},
+		{ItemID: "a", IsPlaying: true, PositionMs: 1000, StartAtMs: 0, StartPositionMs: 3000, StartItemID: "b"},
+	} {
+		st, out := NewStore().Report("p1", c, leaderOpts(now))
+		if out != OutcomeOK {
+			t.Fatalf("%d: refused: %v", i, out)
+		}
+		if !noSchedule(st) {
+			t.Errorf("%d: a non-positive startAtMs left a schedule: %+v", i, st)
+		}
+		if st.TrackStartedAtMs != now-1000 {
+			t.Errorf("%d: anchor %d, want the sampled zero %d", i, st.TrackStartedAtMs, now-1000)
+		}
+	}
+}
+
+// The boundary itself: the leader's first report of the announced
+// track, carrying startItemId = that track and startAtMs = T up to
+// ~1.5 s in the past, is anchored AT T whatever position it reports —
+// judged at the instant it sampled its position, so a request that
+// arrives late does not forfeit the pin. Without a sampled instant the
+// arrival time judges, exactly as before.
+func TestFirstReportOfTheAnnouncedTrackIsAnchoredAtT(t *testing.T) {
+	s := NewStore()
+	rev := int64(0)
+	now := time.Now().UnixMilli()
+	opts := ReportOpts{DeviceID: "phone", BasedOnRevision: &rev, HasPositionMs: true, SampledAtMs: now - 3500}
+	T := now - 900
+	s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 177000,
+		StartAtMs: T, StartPositionMs: 0, StartItemID: "b"}, opts)
+
+	opts.SampledAtMs = now - 300 // measured before the request arrived
+	st, out := s.Report("p1", State{ItemID: "b", Title: "B", IsPlaying: true, PositionMs: 1200,
+		StartAtMs: T, StartPositionMs: 0, StartItemID: "b"}, opts)
+	if out != OutcomeOK {
+		t.Fatalf("refused: %v", out)
+	}
+	if st.TrackStartedAtMs != T {
+		t.Fatalf("the announced track anchored at %d, want T=%d", st.TrackStartedAtMs, T)
+	}
+	if st.StartAtMs != T || st.StartItemID != "b" {
+		t.Fatalf("the schedule did not stay on the state for the readers: %+v", st)
+	}
+	if st.ItemRevision != st.Revision || st.AnchorRevision != st.Revision {
+		t.Fatalf("item/anchor revisions %d/%d, want the report's %d", st.ItemRevision, st.AnchorRevision, st.Revision)
+	}
+	s.mu.Lock()
+	pos := s.extrapolatedLocked("p1", st, now)
+	s.mu.Unlock()
+	if pos < 850 || pos > 950 {
+		t.Fatalf("position at now = %d, want ~900 (now − T), not the reported 1200", pos)
+	}
+
+	// 2.5 s after T by arrival but 1.5 s by the sampled instant: pinned.
+	s = NewStore()
+	T = now - 2500
+	opts.SampledAtMs = now - 1000
+	st, _ = s.Report("p1", State{ItemID: "b", IsPlaying: true, PositionMs: 1500,
+		StartAtMs: T, StartPositionMs: 0, StartItemID: "b"}, opts)
+	if st.TrackStartedAtMs != T || st.StartAtMs != T {
+		t.Fatalf("a late-arriving first report lost its pin: anchor %d startAt %d, want %d", st.TrackStartedAtMs, st.StartAtMs, T)
+	}
+
+	// Without sampledAtServerMs arrival is the judge, as before: spent.
+	s = NewStore()
+	opts.SampledAtMs = 0
+	st, _ = s.Report("p1", State{ItemID: "b", IsPlaying: true, PositionMs: 1500,
+		StartAtMs: T, StartPositionMs: 0, StartItemID: "b"}, opts)
+	if st.StartAtMs != 0 || st.StartItemID != "" {
+		t.Fatalf("a schedule 2.5 s past T was honoured without a sampled instant: %+v", st)
+	}
+	if abs64(st.TrackStartedAtMs-(now-1500)) > 100 {
+		t.Fatalf("the fallback anchor %d, want ~arrival − 1500 = %d", st.TrackStartedAtMs, now-1500)
+	}
+}
+
+// A first report of the announced track sampled later than 2 s after T
+// (a slow open, a stall) falls back to its sampled position: the
+// schedule is dropped, not honoured, so followers measure the truth.
+func TestALateFirstReportOfTheAnnouncedTrackFallsBackToTheSampledAnchor(t *testing.T) {
+	s := NewStore()
+	rev := int64(0)
+	now := time.Now().UnixMilli()
+	T := now - 2500
+	sampled := now - 100
+	st, out := s.Report("p1", State{ItemID: "b", IsPlaying: true, PositionMs: 400,
+		StartAtMs: T, StartPositionMs: 0, StartItemID: "b"},
+		ReportOpts{DeviceID: "phone", BasedOnRevision: &rev, HasPositionMs: true, SampledAtMs: sampled})
+	if out != OutcomeOK {
+		t.Fatalf("refused: %v", out)
+	}
+	if st.StartAtMs != 0 || st.StartItemID != "" || st.StartPositionMs != 0 {
+		t.Fatalf("a spent schedule survived: %+v", st)
+	}
+	if st.TrackStartedAtMs != sampled-400 {
+		t.Fatalf("fallback anchor %d, want sampledAt − position = %d", st.TrackStartedAtMs, sampled-400)
+	}
+}
+
+// A follower that joined just before the boundary set anchorRefresh;
+// the leader's scheduled first report still pins at T — the pin and
+// the refresh share one case, so a disagreeing position cannot win —
+// and the refresh is consumed.
+func TestAPendingJoinRefreshDoesNotOverrideAScheduledAnchor(t *testing.T) {
+	s := NewStore()
+	rev := int64(0)
+	now := time.Now().UnixMilli()
+	opts := ReportOpts{DeviceID: "phone", BasedOnRevision: &rev, HasPositionMs: true}
+	s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 177000}, opts)
+	s.Join("p1", "tv1", "Living Room TV", RoleFollower)
+	if st, _ := s.Get("p1"); !st.AnchorRefreshPending {
+		t.Fatalf("a join did not ask for a refresh: %+v", st)
+	}
+	T := now - 700
+	st, out := s.Report("p1", State{ItemID: "b", IsPlaying: true, PositionMs: 2600,
+		StartAtMs: T, StartPositionMs: 0, StartItemID: "b"}, opts)
+	if out != OutcomeOK {
+		t.Fatalf("refused: %v", out)
+	}
+	if st.TrackStartedAtMs != T {
+		t.Fatalf("the refresh overrode the scheduled anchor: %d, want %d", st.TrackStartedAtMs, T)
+	}
+	if st.AnchorRefreshPending {
+		t.Fatal("the refresh was not consumed by the scheduled report")
+	}
+}
+
+// Announcing the next track is not a track change: the item revision
+// stands (pending intents stay valid) while the revision moves and
+// every parked poll wakes to see the announcement.
+func TestANextItemAnnouncementBumpsRevisionButNotItemRevision(t *testing.T) {
+	s := NewStore()
+	rev := int64(0)
+	now := time.Now().UnixMilli()
+	opts := ReportOpts{DeviceID: "phone", BasedOnRevision: &rev, HasPositionMs: true}
+	first, _ := s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 177000}, opts)
+
+	woke := make(chan struct{})
+	go func() {
+		s.WaitForChange(context.Background(), "p1", first.Revision, 5*time.Second)
+		close(woke)
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	st, out := s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 177100,
+		StartAtMs: now + 3000, StartPositionMs: 0, StartItemID: "b"}, opts)
+	if out != OutcomeOK {
+		t.Fatalf("refused: %v", out)
+	}
+	if st.ItemRevision != first.ItemRevision {
+		t.Fatalf("an announcement bumped the item revision: %d → %d", first.ItemRevision, st.ItemRevision)
+	}
+	if st.Revision <= first.Revision {
+		t.Fatalf("an announcement did not bump the revision: %d → %d", first.Revision, st.Revision)
+	}
+	select {
+	case <-woke:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a parked follower was not woken by the announcement")
+	}
+	// A seek chosen from the state before the announcement still lands.
+	if _, out := s.ApplyIntent("p1", "TV", IntentRequest{Type: IntentSetPositionMs, PositionMs: 100000, BasedOnRevision: first.Revision}); out != OutcomeOK {
+		t.Fatalf("an intent based on the revision before the announcement was refused: %v", out)
+	}
+}
+
+// Nothing starts after the party ended: the stop-all tombstone carries
+// no schedule, and a start still holding stops at its start position.
+func TestAStopAllTombstoneCarriesNoSchedule(t *testing.T) {
+	s := NewStore()
+	rev := int64(0)
+	now := time.Now().UnixMilli()
+	opts := ReportOpts{DeviceID: "phone", BasedOnRevision: &rev, HasPositionMs: true}
+
+	// A next-track announcement.
+	s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 177000,
+		StartAtMs: now + 3000, StartPositionMs: 0, StartItemID: "b"}, opts)
+	s.Join("p1", "tv1", "Living Room TV", RoleFollower)
+	if out := s.EndBy("p1", "phone", "iPhone", "stop-all"); out != EndAll {
+		t.Fatalf("stop-all: %v", out)
+	}
+	st, ok := s.Get("p1")
+	if !ok || !st.Ended {
+		t.Fatalf("no tombstone: %v %+v", ok, st)
+	}
+	if st.StartAtMs != 0 || st.StartPositionMs != 0 || st.StartItemID != "" {
+		t.Fatalf("the tombstone carries a schedule: %+v", st)
+	}
+
+	// A scheduled start of the current item, still holding.
+	s = NewStore()
+	s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 30000,
+		StartAtMs: now + 1500, StartPositionMs: 30000}, opts)
+	s.EndBy("p1", "phone", "iPhone", "stop-all")
+	st, _ = s.Get("p1")
+	if st.StartAtMs != 0 || st.StartItemID != "" || st.StartPositionMs != 0 {
+		t.Fatalf("the tombstone carries a schedule: %+v", st)
+	}
+	if st.PositionMs != 30000 || st.IsPlaying {
+		t.Fatalf("the tombstone did not stop at the held start position: %+v", st)
+	}
+}
+
+// The truthful pin: the leader's first report of the announced track
+// pins T before its clock rolls; its first ROLLING report pins its
+// measured audible zero Z = sampledAt − position ÷ rate instead. The
+// server takes Z — judged against the sampled instant, it is within 2 s
+// — even when T itself is more than 1.5 s gone (a leader whose open
+// overran by a second), and ordinary reports keep Z.
+func TestTheMeasuredPinReAnchorsTheAnnouncedTrack(t *testing.T) {
+	s := NewStore()
+	now := time.Now().UnixMilli()
+	T := now - 1600
+	s.Report("p1", State{ItemID: "a", IsPlaying: true, PositionMs: 177000}, leaderOpts(now-2000))
+	st, _ := s.Report("p1", State{ItemID: "b", IsPlaying: true, DurationSec: 200, PositionMs: 0,
+		StartAtMs: T, StartItemID: "b"}, leaderOpts(T+1005))
+	if st.TrackStartedAtMs != T || st.StartAtMs != T || st.ItemRevision != st.Revision {
+		t.Fatalf("the first report of the announced track did not pin T: %+v", st)
+	}
+	Z := T + 1060 // it played 1060 ms late
+	st, _ = s.Report("p1", State{ItemID: "b", IsPlaying: true, DurationSec: 200, PositionMs: 540,
+		StartAtMs: Z, StartItemID: "b"}, leaderOpts(now))
+	if st.TrackStartedAtMs != Z || st.StartAtMs != Z || st.AnchorRevision != st.Revision {
+		t.Fatalf("the measured zero was not taken: anchor %d startAt %d, want %d (%+v)", st.TrackStartedAtMs, st.StartAtMs, Z, st)
+	}
+	st, _ = s.Report("p1", State{ItemID: "b", IsPlaying: true, DurationSec: 200, PositionMs: 1540}, leaderOpts(now+1000))
+	if st.TrackStartedAtMs != Z || !noSchedule(st) {
+		t.Fatalf("an ordinary report after the pin: %+v (want the anchor kept at %d)", st, Z)
+	}
+}
+
+// Phone 1197 — the build in people's hands — never announces a next
+// track. It schedules only the item it is starting (startItemId ==
+// itemId; T = its sample + 1.5 s on a skip, + 0.7 s at a track's end),
+// once, and every other report carries no schedule at all. None of the
+// v2 rules may touch that: this walks a 1197 session — skip, the first
+// ordinary report, pause, resume, scrub, the natural end, a pause from
+// the room while the start is held and the leader's ack, a resume, a
+// skip and the leader leaving with a follower — and checks each state
+// against what the server produced for it before v2. (These same
+// expectations pass against that code, commit bfc332a, too.)
+func TestPhone1197StyleReportsBehaveExactlyAsAtHead(t *testing.T) {
+	now := time.Now().UnixMilli()
+	var s *Store
+	position := func(st State, at int64) int64 {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.extrapolatedLocked("p1", st, at)
+	}
+	basedOn := int64(0)
+	report := func(st State, sampledAtMs int64) State {
+		t.Helper()
+		o := leaderOpts(sampledAtMs)
+		o.BasedOnRevision = rev(basedOn)
+		got, out := s.Report("p1", st, o)
+		if out != OutcomeOK {
+			t.Fatalf("report refused: %v", out)
+		}
+		return got
+	}
+	plain := func(item string, playing bool, durSec int, posMs int64) State {
+		return State{Source: "plex", ItemID: item, Title: item, IsPlaying: playing, DurationSec: durSec,
+			PositionMs: posMs, Rate: 1}
+	}
+	scheduled := func(item string, durSec int, startAt int64) State {
+		st := plain(item, true, durSec, 0)
+		st.StartAtMs, st.StartPositionMs, st.StartItemID = startAt, 0, item
+		return st
+	}
+
+	s = NewStore()
+	// 1. a plays: an ordinary report.
+	r1 := report(plain("a", true, 180, 60000), now-4000)
+	if !noSchedule(r1) || r1.TrackStartedAtMs != now-64000 || r1.AnchorRevision != r1.Revision || r1.ItemRevision != r1.Revision {
+		t.Fatalf("1: %+v", r1)
+	}
+	// 2. A skip: b scheduled 1.5 s after its sample, held at 0:00 until T.
+	T := now + 1450
+	r2 := report(scheduled("b", 200, T), now-50)
+	if r2.StartAtMs != T || r2.StartItemID != "b" || r2.StartPositionMs != 0 || r2.TrackStartedAtMs != T ||
+		r2.ItemRevision != r2.Revision || r2.AnchorRevision != r2.Revision {
+		t.Fatalf("2: %+v", r2)
+	}
+	if p := position(r2, now); p != 0 {
+		t.Fatalf("2: position before T = %d, want 0", p)
+	}
+	if p := position(r2, T+2000); p != 2000 {
+		t.Fatalf("2: position 2 s after T = %d, want 2000", p)
+	}
+	// 3. b's first ordinary report, after T: the schedule clears, the
+	// anchor stays at T (inside the 2 s window).
+	r3 := report(plain("b", true, 200, 150), T+200)
+	if !noSchedule(r3) || r3.TrackStartedAtMs != T || r3.AnchorRevision != r2.AnchorRevision || r3.ItemRevision != r2.ItemRevision {
+		t.Fatalf("3: %+v", r3)
+	}
+	// 4. A pause re-anchors at the paused position; 5. the resume too.
+	r4 := report(plain("b", false, 200, 1000), T+1100)
+	if !noSchedule(r4) || r4.TrackStartedAtMs != T+100 || r4.AnchorRevision != r4.Revision || position(r4, T+5000) != 1000 {
+		t.Fatalf("4: %+v", r4)
+	}
+	r5 := report(plain("b", true, 200, 1000), T+2000)
+	if !noSchedule(r5) || r5.TrackStartedAtMs != T+1000 || r5.AnchorRevision != r5.Revision {
+		t.Fatalf("5: %+v", r5)
+	}
+	// 6. A scrub to 2:00.
+	r6 := report(plain("b", true, 200, 120000), T+2500)
+	if !noSchedule(r6) || r6.TrackStartedAtMs != T+2500-120000 || r6.AnchorRevision != r6.Revision {
+		t.Fatalf("6: %+v", r6)
+	}
+
+	s = NewStore()
+	basedOn = 0
+	// 7. The natural end of a: 'advance' schedules c 0.7 s after its
+	// sample. (The samples run a second ahead of the wall clock here, so
+	// the pause below surely lands while c is still held for T.)
+	report(plain("a", true, 180, 179000), now)
+	T = now + 1000 + 700
+	r7 := report(scheduled("c", 240, T), now+1000)
+	if r7.StartAtMs != T || r7.StartItemID != "c" || r7.TrackStartedAtMs != T || r7.ItemRevision != r7.Revision {
+		t.Fatalf("7: %+v", r7)
+	}
+	// 8. A pause from the room while c is held for T: the start is
+	// cancelled and the position stays at the start position.
+	r8, out := s.ApplyIntent("p1", "Living Room TV", IntentRequest{Type: IntentSetPlaying, Playing: false, BasedOnRevision: r7.Revision})
+	if out != OutcomeOK || r8.IsPlaying || !noSchedule(r8) || r8.PositionMs != 0 || r8.LastIntentRevision != r8.Revision {
+		t.Fatalf("8: %v %+v", out, r8)
+	}
+	// 9. The leader's acknowledging report: paused at 0:00, no schedule.
+	basedOn = r8.Revision
+	r9 := report(plain("c", false, 240, 0), now+1030)
+	if !noSchedule(r9) || r9.TrackStartedAtMs != now+1030 || r9.LeaderAckRevision != r9.Revision || r9.AnchorRevision != r9.Revision {
+		t.Fatalf("9: %+v", r9)
+	}
+	// 10. Play on the phone: an ordinary resume.
+	r10 := report(plain("c", true, 240, 0), now+1500)
+	if !noSchedule(r10) || r10.TrackStartedAtMs != now+1500 || r10.AnchorRevision != r10.Revision {
+		t.Fatalf("10: %+v", r10)
+	}
+	// 11. A skip to d with a follower present, and the leader leaves
+	// before T: the seat empties and the start of the current item stays.
+	T = now + 1600 + 1500
+	r11 := report(scheduled("d", 300, T), now+1600)
+	if r11.StartAtMs != T || r11.StartItemID != "d" || r11.TrackStartedAtMs != T {
+		t.Fatalf("11: %+v", r11)
+	}
+	s.Join("p1", "tv1", "Living Room TV", RoleFollower)
+	if out := s.EndBy("p1", "phone", "iPhone", "stopped"); out != EndVacated {
+		t.Fatalf("11: leave: %v", out)
+	}
+	r12, ok := s.Get("p1")
+	if !ok || r12.LeaderTokenID != "" || !r12.IsPlaying || r12.StartAtMs != T || r12.StartItemID != "d" ||
+		r12.StartPositionMs != 0 || r12.TrackStartedAtMs != T {
+		t.Fatalf("12: %v %+v", ok, r12)
+	}
+}

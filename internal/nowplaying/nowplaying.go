@@ -38,9 +38,12 @@ type Presence struct {
 	// DeviceKey is the follower's token id — what a handover names, and
 	// how a phone finds its own row on the dashboard.
 	DeviceKey string `json:"deviceKey,omitempty"`
-	// DriftMs is what the follower last measured: its audible position
-	// minus the leader's extrapolated one, after its own output offset.
-	// Positive = ahead. Nil until it has reported one.
+	// DriftMs is the follower's CLOCK drift as it last measured it: the
+	// party clock's target (the leader's position, extrapolated from the
+	// anchor) minus the follower's own PLAYER position. No route or
+	// output latency is in it — ear-level figures stay in the device's
+	// own status line. Positive = the follower is BEHIND. Nil until it
+	// has reported one. Informational: the server never acts on it.
 	DriftMs           *int64 `json:"driftMs,omitempty"`
 	DriftMeasuredAtMs int64  `json:"driftMeasuredAtMs,omitempty"`
 }
@@ -142,12 +145,30 @@ type State struct {
 	// reads StartAtMs. Until then the position stands at
 	// StartPositionMs; from then on it advances from that instant, so
 	// every device that knows the server clock starts the same note at
-	// the same moment instead of starting when it can and settling. A
-	// StartItemID other than the current item is the NEXT track
-	// announced ahead (followers preload it); the current item is
-	// anchored as usual. Cleared by the next report that carries none
-	// and by any intent. Clients that predate it see position +
-	// isPlaying and settle as before, at worst a lead time early.
+	// the same moment instead of starting when it can and settling.
+	//
+	// A StartItemID other than the current item is the NEXT track
+	// announced ahead (followers prepare it and start it at T); the
+	// current item is anchored as usual and is never held by it. The
+	// leader announces with 3 s or less of the current item left (T =
+	// its predicted boundary + its time to audio + 40 ms) and repeats
+	// the three fields on EVERY report of the current item while the
+	// announcement stands. A report that omits them WITHDRAWS it:
+	// nothing is carried forward. The server also refuses one on its
+	// own (defence in depth — a correct leader never needs it): on a
+	// paused report; when T does not fit the trajectory the report
+	// itself describes (see nextStartFitsTrajectory); on a re-send of
+	// the (item, T) an intent cancelled, until T + 2 s; and it zeroes
+	// one on any intent, a handover, a seat vacated by the leader's
+	// DELETE and a stop-all. The leader's first report(s) of the
+	// announced item carry StartItemID = that item and StartAtMs = T,
+	// and its first ROLLING report the measured audible zero instead;
+	// within 2 s of that instant (judged at the instant the position
+	// was sampled) the item is anchored AT StartAtMs, whatever position
+	// the report carries. A schedule for the current item is cleared by
+	// a report that carries none, as before. StartAtMs <= 0 is no
+	// schedule. Clients that predate it see position + isPlaying and
+	// settle as before, at worst a lead time early.
 	StartAtMs       int64  `json:"startAtMs,omitempty"`
 	StartPositionMs int64  `json:"startPositionMs,omitempty"`
 	StartItemID     string `json:"startItemId,omitempty"`
@@ -366,6 +387,30 @@ type presenceEntry struct {
 	driftAt time.Time
 }
 
+// withdrawnStart is a next-track announcement (StartItemID, StartAtMs)
+// that an intent cancelled.
+type withdrawnStart struct {
+	itemID string
+	atMs   int64
+}
+
+// withdrawnRefuseMs: how long past its T a cancelled announcement is
+// refused when a leader sends it again. A next-track T is spent by
+// then, and every follower has long moved on from it.
+const withdrawnRefuseMs = 2000
+
+// lapsed: the refusal window (until T + 2 s) is over.
+func (w withdrawnStart) lapsed(nowMs int64) bool {
+	return nowMs >= w.atMs+withdrawnRefuseMs
+}
+
+// refuses: a report re-sends exactly the cancelled (item, T) while the
+// refusal stands. A different T for the same item is a NEW announcement
+// (the leader re-armed after the change) and is judged on its own.
+func (w withdrawnStart) refuses(itemID string, atMs, nowMs int64) bool {
+	return !w.lapsed(nowMs) && itemID == w.itemID && atMs == w.atMs
+}
+
 // Store holds one state per profile.
 type Store struct {
 	mu   sync.RWMutex
@@ -383,6 +428,11 @@ type Store struct {
 	// anchorRefresh[profile] = a follower joined (or asked) since the
 	// leader last reported: that report re-anchors unconditionally.
 	anchorRefresh map[string]bool
+	// withdrawn[profile] = the next-track announcement an intent from
+	// the room cancelled. A leader that has not withdrawn it yet would
+	// otherwise restore it with its very next report (it repeats the
+	// fields on every one); the same (item, T) is refused until T + 2 s.
+	withdrawn map[string]withdrawnStart
 	// followers[profile][deviceKey] = presence, for the active/inactive
 	// party distinction and the who-is-listening list.
 	followers map[string]map[string]presenceEntry
@@ -418,6 +468,7 @@ func NewStore() *Store {
 		qrev:          make(map[string]int64),
 		anchor:        make(map[string]int64),
 		anchorRefresh: make(map[string]bool),
+		withdrawn:     make(map[string]withdrawnStart),
 		followers:     make(map[string]map[string]presenceEntry),
 		lastActivity:  make(map[string]time.Time),
 		waiters:       make(map[string]chan struct{}),
@@ -535,18 +586,52 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 		base = opts.SampledAtMs
 	}
 	implied := base - int64(float64(posMs)/rate)
+	// A schedule needs an instant: a startAtMs of zero or below is no
+	// schedule, and its two sibling fields go with it.
+	if st.StartAtMs <= 0 {
+		st.StartAtMs, st.StartPositionMs, st.StartItemID = 0, 0, ""
+	}
+	// A NEXT-track announcement stands exactly as this report sends it.
+	// The leader repeats it on every report of the current item, so a
+	// report that omits it has WITHDRAWN it: nothing is carried forward
+	// from the stored state. One that is sent is still refused here —
+	// defence in depth; the leader withdraws on every one of these
+	// itself — when the report says paused (a paused leader reaches no
+	// boundary), when its T does not fit the trajectory this very
+	// report describes (a restart, a scrub, a rate change it did not
+	// withdraw for), or when it re-sends the (item, T) an intent from
+	// the room cancelled, until T + 2 s. Refused, it is simply absent:
+	// the report itself is applied as an ordinary one.
+	if w, ok := s.withdrawn[profileID]; ok && w.lapsed(nowMs) {
+		delete(s.withdrawn, profileID)
+	}
+	if isNextItemSchedule(st) {
+		w, cancelled := s.withdrawn[profileID]
+		if !st.IsPlaying ||
+			(cancelled && w.refuses(st.StartItemID, st.StartAtMs, nowMs)) ||
+			!nextStartFitsTrajectory(st.DurationSec, posMs, rate, base, st.StartAtMs) {
+			st.StartAtMs, st.StartPositionMs, st.StartItemID = 0, 0, ""
+		}
+	}
 	// A scheduled start of the CURRENT item pins the anchor to the
 	// announced instant: the item's zero is StartAtMs minus the start
 	// position, whatever the reporter's position reads right now (it
-	// is holding at the start position until T). An announcement for
-	// another item (the next track) rides along untouched. A schedule
-	// more than 2 s in the past is spent: dropped, and the report
-	// anchors as an ordinary one.
+	// is holding at the start position until T; or — the first report
+	// of a track announced ahead — has just started at T; or, its
+	// first rolling report, carries its measured audible zero). A
+	// next-track announcement (above) leaves the current anchor alone.
+	// A schedule more than 2 s in the past is spent: dropped, and the
+	// report anchors as an ordinary one. "In the past" is judged at
+	// base — the instant the reporter sampled its position when it can
+	// say so, else arrival — so a slow first PUT of the announced track
+	// still pins its anchor at T instead of forfeiting it to transit.
+	// Without sampledAtServerMs base is the arrival time and nothing
+	// differs.
 	scheduledCurrent := false
 	if st.StartAtMs > 0 {
 		forCurrent := st.StartItemID == "" || st.StartItemID == st.ItemID
 		switch {
-		case forCurrent && st.StartAtMs > nowMs-2000:
+		case forCurrent && st.StartAtMs > base-2000:
 			scheduledCurrent = true
 			if st.StartPositionMs < 0 {
 				st.StartPositionMs = 0
@@ -646,6 +731,48 @@ func abs64(v int64) int64 {
 	return v
 }
 
+// isNextItemSchedule: the state names ANOTHER item to start at
+// StartAtMs — the next track, announced ahead of the boundary.
+func isNextItemSchedule(st State) bool {
+	return st.StartAtMs > 0 && st.StartItemID != "" && st.StartItemID != st.ItemID
+}
+
+// The window a next-track T must fall in, measured from the boundary
+// the announcing report itself implies. A legitimate T sits 140–2040 ms
+// past the true boundary (the leader's time to audio, clamped to
+// 100–2000 ms, plus a 40 ms margin), and the true boundary sits up to a
+// second (÷ rate) past the one computed from a whole-second durationSec.
+// The early side allows for clock and sampling error. Outside it, the
+// trajectory the T was predicted from is not the one being played.
+const (
+	nextStartEarliestMs = -1000
+	nextStartLatestMs   = 4000
+)
+
+// nextStartOffsetMs is how far T sits past the end of the current item
+// as the report describes it: the position sampled at base (server
+// time) and the whole-second duration, at rate. Negative = T comes
+// before that end.
+func nextStartOffsetMs(durationSec int, posMs int64, rate float64, base, startAtMs int64) int64 {
+	boundary := base + int64(float64(int64(durationSec)*1000-posMs)/rate)
+	return startAtMs - boundary
+}
+
+// nextStartFitsTrajectory: a next-track T is consistent with the report
+// that carries it — nextStartEarliestMs <= T − boundary <=
+// nextStartLatestMs, both ends included. Without a duration there is no
+// boundary to judge against, and the announcement stands.
+func nextStartFitsTrajectory(durationSec int, posMs int64, rate float64, base, startAtMs int64) bool {
+	if durationSec <= 0 {
+		return true
+	}
+	if rate <= 0 {
+		rate = 1
+	}
+	off := nextStartOffsetMs(durationSec, posMs, rate, base, startAtMs)
+	return off >= nextStartEarliestMs && off <= nextStartLatestMs
+}
+
 // extrapolatedLocked is where the leader is NOW according to the anchor.
 func (s *Store) extrapolatedLocked(profileID string, st State, nowMs int64) int64 {
 	if !st.IsPlaying {
@@ -688,6 +815,10 @@ func (s *Store) ApplyIntent(profileID, byLabel string, in IntentRequest) (State,
 	if seatLive && st.LegacyLeader {
 		return s.readLocked(profileID, st, nowMs), OutcomeLegacyLeader
 	}
+	// Taken before the switch moves the item: the next-track
+	// announcement standing when the intent lands, if any.
+	hadNext := isNextItemSchedule(st)
+	cancelled := withdrawnStart{itemID: st.StartItemID, atMs: st.StartAtMs}
 
 	changed := false
 	switch in.Type {
@@ -785,8 +916,15 @@ func (s *Store) ApplyIntent(profileID, byLabel string, in IntentRequest) (State,
 		st.AnchorRevision = rev
 		st.TrackStartedAtMs = s.anchor[profileID]
 		st.UpdatedAtMs = nowMs
-		// A press from the room overrides an announced start.
+		// A press from the room overrides an announced start. A
+		// next-track announcement it cancels is remembered: the leader
+		// repeats the fields on every report until it withdraws, so its
+		// acknowledging report could otherwise restore the very (item,
+		// T) the room just cancelled. That pair is refused until T + 2 s.
 		st.StartAtMs, st.StartPositionMs, st.StartItemID = 0, 0, ""
+		if hadNext {
+			s.withdrawn[profileID] = cancelled
+		}
 		s.m[profileID] = st
 		s.lastActivity[profileID] = now
 		s.notifyLocked(profileID)
@@ -862,10 +1000,11 @@ func (s *Store) Join(profileID, deviceKey, label, role string) int64 {
 }
 
 // JoinWithDrift is Join carrying the follower's latest drift reading
-// (its audible position minus the leader's, ms, positive = ahead),
-// measured at driftMeasuredAtMs server time. A heartbeat with a new
-// reading does not bump the revision — the dashboard reads it on its
-// next poll; waking every device for a number would be churn.
+// (its clock drift: the party clock's target position minus its own
+// player position, ms, no route latency; positive = the follower is
+// BEHIND), measured at driftMeasuredAtMs server time. A heartbeat with
+// a new reading does not bump the revision — the dashboard reads it on
+// its next poll; waking every device for a number would be churn.
 func (s *Store) JoinWithDrift(profileID, deviceKey, label, role string, driftMs *int64, driftMeasuredAtMs int64) int64 {
 	if role != RoleViewer && role != RoleController {
 		role = RoleFollower
@@ -1090,6 +1229,7 @@ func (s *Store) Get(profileID string) (State, bool) {
 		delete(s.m, profileID)
 		delete(s.q, profileID)
 		delete(s.anchorRefresh, profileID)
+		delete(s.withdrawn, profileID)
 		return State{}, false
 	}
 	if st.Ended {
@@ -1099,6 +1239,7 @@ func (s *Store) Get(profileID string) (State, bool) {
 			delete(s.m, profileID)
 			delete(s.q, profileID)
 			delete(s.lastActivity, profileID)
+			delete(s.withdrawn, profileID)
 			return State{}, false
 		}
 		return s.readLocked(profileID, st, nowMs), true
@@ -1207,6 +1348,11 @@ func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcom
 		st.IsPlaying = false
 		st.PositionMs = pos
 		st.PositionSec = int(pos / 1000)
+		// Nothing starts after the party ended: a follower that reads
+		// startAtMs before ended must not find a schedule to act on.
+		// (The position above was taken first, so a start still holding
+		// at its start position stops there.)
+		st.StartAtMs, st.StartPositionMs, st.StartItemID = 0, 0, ""
 		st.Ended = true
 		st.EndedByLabel = deviceLabel
 		if st.EndedByLabel == "" {
@@ -1218,6 +1364,7 @@ func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcom
 		s.m[profileID] = st
 		delete(s.q, profileID)
 		delete(s.anchorRefresh, profileID)
+		delete(s.withdrawn, profileID)
 		s.lastActivity[profileID] = now
 		s.notifyLocked(profileID)
 		return EndAll
@@ -1227,6 +1374,13 @@ func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcom
 		st.LeaderLabel = ""
 		st.SeatVacantSinceMs = now.UnixMilli()
 		st.EndedByLeader = true
+		// A next-track announcement is the leaving leader's word about
+		// its own boundary: it goes with the seat, so nobody arriving
+		// from here on arms on it (a follower that already armed keeps
+		// its own latch). A start of the CURRENT item stays, as before.
+		if isNextItemSchedule(st) {
+			st.StartAtMs, st.StartPositionMs, st.StartItemID = 0, 0, ""
+		}
 		st.Revision = s.nextRevLocked(profileID)
 		s.m[profileID] = st
 		s.lastActivity[profileID] = now
@@ -1237,6 +1391,7 @@ func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcom
 	delete(s.q, profileID)
 	delete(s.lastActivity, profileID)
 	delete(s.anchorRefresh, profileID)
+	delete(s.withdrawn, profileID)
 	// Revisions deliberately SURVIVE a clear: a follower that reconnects
 	// must never see a revision go backwards, which it would read as
 	// "nothing changed" and sit on stale playback.
