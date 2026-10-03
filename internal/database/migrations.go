@@ -214,6 +214,46 @@ func RunMigrations() error {
 					ON admin_sessions(expires_at);
 			`,
 		},
+		{
+			// Admin device tokens: a phone's admin sign-in.
+			//
+			// A separate credential from the browser's session cookie,
+			// and accepted ONLY by RequireAdmin — never by RequireProfile
+			// or RequireAnyToken — so a phone signed in to manage the
+			// server still cannot read anyone's stats or the party line.
+			// Only the SHA-256 of each token is stored
+			// (adminauth.HashToken), as with sessions.
+			//
+			// persistent = 1 is "stay signed in": expires_at slides to
+			// 180 days after the last use and there is no absolute cap.
+			// persistent = 0 is a 12-hour session that use never renews.
+			// scheme_basis records how HTTPS was established when the
+			// token was issued (tls, proxy, forwarded, cloudflare,
+			// config or client; '' for no evidence of HTTPS — a header
+			// said http, or none named a scheme and the sign-in did not
+			// ask to stay). There is no revoked_at: revoking DELETES the row,
+			// as with profile tokens and sessions.
+			//
+			// Times are INTEGER unix seconds, for the reason given for
+			// occurred_at_unix below: a text date depends on the exact
+			// string the driver happened to write.
+			name: "create_admin_device_tokens_table",
+			sql: `
+				CREATE TABLE IF NOT EXISTS admin_device_tokens (
+					id TEXT PRIMARY KEY,
+					token_hash TEXT NOT NULL UNIQUE,
+					label TEXT NOT NULL DEFAULT '',
+					persistent INTEGER NOT NULL DEFAULT 0,
+					created_via TEXT NOT NULL DEFAULT 'totp',
+					scheme_basis TEXT NOT NULL DEFAULT '',
+					created_at INTEGER NOT NULL,
+					last_used_at INTEGER NOT NULL,
+					expires_at INTEGER NOT NULL
+				);
+				CREATE INDEX IF NOT EXISTS idx_admin_device_expiry
+					ON admin_device_tokens(expires_at);
+			`,
+		},
 	}
 
 	for _, m := range migrations {

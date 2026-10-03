@@ -79,6 +79,18 @@ then:
 docker compose up -d
 ```
 
+If the server is reached from outside through an HTTPS reverse proxy,
+also set `ALEXANDRIA_PUBLIC_URL` to that address
+(`-e ALEXANDRIA_PUBLIC_URL=https://alexandria.example.com`, or in
+`.env`). The server then tells the app about it, so a phone linked over
+your LAN can switch to the https address. It also vouches for a phone
+that stays signed in when your proxy names no scheme (sends no
+`X-Forwarded-Proto`): the admin page shows that phone as "HTTPS declared
+by ALEXANDRIA_PUBLIC_URL". A proxy header that says http still wins, and
+shows as plain HTTP. It must be a plain https address: no user name,
+query or fragment. Anything else is ignored, with a warning in the log
+(`docker logs alexandria-server`), and the app is not told about it.
+
 ### 3. Check it came up
 
 ```bash
@@ -96,13 +108,18 @@ Nobody types a long token into a phone. Instead:
 1. On the phone, open **Settings → Account → Companion Server**, enter
    the server address (`192.168.1.50:4000`), and tap **Get a link code**.
 2. The app shows a six-character code, like `NMS82B`.
-3. Open `http://your-server:4000/admin` in a browser, paste your admin
-   token, and you will see that device waiting.
+3. Open `http://your-server:4000/admin` in a browser and sign in with
+   your admin password and the current code from your authenticator app
+   (the first time, the page sets that login up with your admin token).
+   You will see that device waiting. A phone already linked to this
+   server can do the same from **Manage server** on its Companion Server
+   screen; each approval from a phone asks for a fresh code from your
+   authenticator.
 4. Type who it is and click **Approve**.
 5. The phone connects on its own within a couple of seconds.
 
 **The code is safe to read out loud.** On its own it does nothing:
-approving it requires your admin token, and collecting the result
+approving it requires your admin login, and collecting the result
 requires a secret that never leaves the phone. Codes expire after ten
 minutes and work once.
 
@@ -124,8 +141,9 @@ At `/admin`. It shows:
 - How many sessions and hours each person has
 - The library index: distinct titles, duplicates, servers
 
-You can approve a device, revoke a device, remove a person entirely, and
-download a backup.
+You can approve a device, revoke a device, remove a person entirely,
+download a backup, and sign out any phone that is signed in to manage
+the server.
 
 **It does not show what anyone listened to.** The management API returns
 counts and timestamps only, and the page can render nothing more.
@@ -151,6 +169,11 @@ The whole server is one SQLite file. Either:
 - Click **Download backup** on the admin page, or
 - `docker cp alexandria-server:/data/alexandria.db ./backup.db`
 
+A backup taken from a phone (**Manage server → Back up**) asks for a
+fresh code from your authenticator and leaves the admin login out of the
+file, so restoring it means setting the login up again with your admin
+token.
+
 The index rebuilds itself from your media servers, so the only thing
 genuinely worth backing up is people's stats.
 
@@ -169,18 +192,39 @@ Your data lives in the `alexandria-data` volume and survives.
 ## Security
 
 - **Put it behind HTTPS if it leaves your LAN.** A reverse proxy
-  (Caddy, nginx, Traefik) is the usual way. The admin token is sent as a
-  bearer header — over plain HTTP on a hostile network, that is
-  readable.
-- The admin token is the keys to the whole thing. Treat it like a
-  password.
-- Device tokens are stored only as hashes, so a stolen database yields
-  nothing that can be replayed.
+  (Caddy, nginx, Traefik) is the usual way. The admin token, your admin
+  password and codes, and every device's token travel in the request —
+  over plain HTTP on a hostile network, they are readable. Then set
+  `ALEXANDRIA_PUBLIC_URL` to the https address (see step 2 above).
+- The admin token is the keys to the whole thing. Once the admin login
+  is set up it no longer opens the admin page, but it can always set the
+  login up again — that is how you recover a lost authenticator. Treat
+  it like a password.
+- **A phone can stay signed in to manage the server** (approve devices,
+  manage people, back up) only when it reaches the server through an
+  `https://` address. Over plain http it signs in for that session only,
+  twelve hours at most. Signing in always takes your password and a
+  fresh code, and so does each backup from a phone and each device a
+  phone approves, for someone new or someone already here (a linked
+  device gets that person's history).
+  A phone that stays signed in is signed out after 180 days unused, and
+  you can sign out any phone, or all of them, on the admin page. Setting
+  the login up again signs out every browser and phone.
+- Device tokens, admin sessions and phones' admin sign-ins are stored
+  only as hashes, so none of them can be replayed from a stolen
+  database. **The admin login is another matter:** its TOTP secret is
+  stored as it is (the server needs it to check your codes), next to a
+  slow hash of your password. A copy of the database lets someone
+  generate your codes and guess at the password offline, so guard
+  backups and the data volume as you would the password, and set the
+  login up again (which issues a new secret) if a copy leaks. A backup
+  taken from the phone leaves the admin login out entirely; restoring
+  one means setting the login up again with your admin token.
 - Three routes are reachable without a token, by necessity:
   - `/health` — reports capabilities, never library contents, so the app
     can find a companion before it has been given anything.
   - `/admin` — the management page itself. It is inert markup containing
-    no secrets; it does nothing until you paste your token into it.
+    no secrets; it does nothing until you sign in.
   - `/api/v1/link/request` and `/api/v1/link/claim` — a device being
     linked has no token yet, which is the problem they solve. Both are
     rate limited to 30 requests a minute, a link code is useless without

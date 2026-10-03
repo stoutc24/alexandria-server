@@ -36,6 +36,12 @@ type HealthResponse struct {
 	// or tier field here would let anyone unlock paid features by
 	// running their own server — see docs/COMPANION_DESIGN.md.
 	Capabilities []string `json:"capabilities"`
+
+	// PublicURL is ALEXANDRIA_PUBLIC_URL, when the operator set one: the
+	// address this server is reached at from outside. A phone linked
+	// through a LAN http:// address can offer to switch to it — over
+	// https, its admin sign-in can stay signed in.
+	PublicURL string `json:"publicUrl,omitempty"`
 }
 
 // capabilities is the advertised feature set. Add a string here only
@@ -55,6 +61,10 @@ var capabilities = []string{
 	"devices.provision",
 	// PATCH /devices/me: a device changes the name the party shows for it.
 	"devices.rename",
+	// GET /devices/me: a device asks who it is — {deviceKey (its token
+	// id), label, profileId, profileName} — whether or not anything is
+	// playing. A link token only.
+	"devices.me",
 	"nowplaying",
 	// The conductor protocol: device identity from the token, absolute
 	// intents, millisecond anchors. Clients branch on these, never on a
@@ -79,6 +89,16 @@ var capabilities = []string{
 	"nowplaying.handover",
 	// driftMs on POST /follow, listed per follower on the state.
 	"nowplaying.drift",
+	// Managing the server from a phone, all of it live together:
+	// POST /admin/auth/device-token (a phone's admin sign-in, "Bearer
+	// alxa_…", accepted by every requireAdmin route); GET and DELETE
+	// /admin/admin-devices[/:id]; GET /admin/catalog/summary and
+	// /admin/catalog/duplicates; POST /admin/backup (a fresh code, sign-in
+	// secrets left out); GET /admin/backup answering 403 to a phone; and
+	// POST /admin/links/approve answering 404 profile-not-found, and
+	// asking a phone for a fresh code ("totpCode" or "recoveryCode")
+	// with every approval, someone new included.
+	"admin.device-token",
 }
 
 // configuredName is the operator's chosen label, set at startup. Empty
@@ -88,6 +108,13 @@ var configuredName string
 
 // SetServerName pins the discovery label. Called once from main.
 func SetServerName(name string) { configuredName = name }
+
+// configuredPublicURL is ALEXANDRIA_PUBLIC_URL, validated by config.
+var configuredPublicURL string
+
+// SetPublicURL sets the address /health publishes. Called once from
+// main.
+func SetPublicURL(u string) { configuredPublicURL = u }
 
 func Health(c *fiber.Ctx) error {
 	dbStatus := "connected"
@@ -109,5 +136,6 @@ func Health(c *fiber.Ctx) error {
 		Version:   "0.3.0",
 
 		Capabilities: capabilities,
+		PublicURL:    configuredPublicURL,
 	})
 }

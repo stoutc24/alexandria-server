@@ -96,6 +96,7 @@
     font-size: 13px;
   }
   .empty { color: var(--muted); font-size: 14px; padding: 6px 0; }
+  .admin-device { min-width: 0; overflow-wrap: anywhere; }
   .toast {
     position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
     background: var(--text); color: var(--bg); padding: 11px 18px;
@@ -146,7 +147,7 @@
     <p class="hint">Setting up a login takes the place of the admin token:
       once you finish, that token no longer opens this page and is kept only
       for recovery. Doing this again replaces the existing password and
-      authenticator, and signs out every browser.</p>
+      authenticator, and signs out every browser and phone.</p>
     <div class="row">
       <input class="grow" type="password" id="enroll-token"
              placeholder="ALEXANDRIA_API_TOKEN from your server's .env"
@@ -181,6 +182,17 @@
       <div id="catalog" class="stat"></div>
       <div class="note">The index is shared: it describes your servers, not any
         person. Everyone connected reads the same one.</div>
+    </section>
+
+    <section>
+      <h2>Signed-in phones</h2>
+      <p class="hint">Phones that can manage this server without signing in each time.
+        Revoke one you have lost or no longer use. This does not disconnect it from
+        Party Play or stats.</p>
+      <div id="admin-devices"></div>
+      <div class="row" style="margin-top:11px">
+        <button class="danger" id="revoke-all-phones">Sign out all phones</button>
+      </div>
     </section>
 
     <section>
@@ -226,7 +238,9 @@
       }
       if (!res.ok) {
         return res.json().catch(function () { return {}; }).then(function (b) {
-          throw new Error(b.error || ("Request failed (" + res.status + ")"));
+          var err = new Error(b.error || ("Request failed (" + res.status + ")"));
+          err.status = res.status;
+          throw err;
         });
       }
       return res.status === 204 ? null : res.json();
@@ -396,16 +410,152 @@
       '<div><span>' + sources + '</span><small>servers</small></div>';
   }
 
+  // ---- signed-in phones ----------------------------------------------
+  //
+  // Phones signed in to manage this server from the Alexandria app (POST
+  // /admin/auth/device-token). A phone that reached the server over
+  // https:// stays signed in: every use renews it, and it ends after
+  // ADMIN_IDLE_DAYS unused. Anything else is a 12-hour session.
+  // schemeBasis records how the server knew the sign-in came over HTTPS
+  // (handlers/schemebasis.go). "" is no evidence of HTTPS: a header said
+  // http, which outranks ALEXANDRIA_PUBLIC_URL and the phone's own word,
+  // or, for a session-only sign-in, nothing named a scheme at all — the
+  // phone on an http:// address, or on an https:// one where it could
+  // not keep a sign-in (no passcode), which the server cannot tell apart.
+  // A phone that stays signed in can only have "" the first way.
+  // It is shown so the owner can audit it; it is not a gate. The page
+  // ships inside the server binary, so these words and that list always
+  // match.
+  var ADMIN_IDLE_DAYS = 180; // repository.AdminDeviceIdleLimit
+  var SCHEME_WORDS = {
+    tls: "HTTPS, direct to this server",
+    proxy: "HTTPS via proxy",
+    forwarded: "HTTPS via proxy (Forwarded header)",
+    cloudflare: "HTTPS via Cloudflare",
+    config: "HTTPS declared by ALEXANDRIA_PUBLIC_URL",
+    client: "HTTPS declared by the phone"
+  };
+  var adminDevicesHTML = null;
+
+  function until(iso) {
+    var secs = (new Date(iso).getTime() - Date.now()) / 1000;
+    if (isNaN(secs)) return "soon";
+    if (secs < 90) return "in a moment";
+    if (secs < 3600) return "in " + Math.round(secs / 60) + " min";
+    if (secs < 172800) return "in " + Math.round(secs / 3600) + " hr";
+    return "in " + Math.round(secs / 86400) + " days";
+  }
+
+  function day(iso) {
+    var t = new Date(iso);
+    return isNaN(t.getTime()) ? "" : t.toLocaleDateString(undefined,
+      { day: "numeric", month: "short", year: "numeric" });
+  }
+
+  function stamp(iso) {
+    var t = new Date(iso);
+    return isNaN(t.getTime()) ? "unknown" : t.toLocaleString();
+  }
+
+  // Plain text, escaped by the caller like every other server string.
+  function schemeWords(d) {
+    var b = d.schemeBasis;
+    if (!b) return d.persistent ? "Proxy reported plain HTTP"
+                                : "No HTTPS evidence";
+    return Object.prototype.hasOwnProperty.call(SCHEME_WORDS, b)
+      ? SCHEME_WORDS[b] : "HTTPS (" + b + ")";
+  }
+
+  function adminDeviceLines(d) {
+    var first = "signed in " + ago(d.createdAt) +
+                " \u00b7 last used " + ago(d.lastUsedAt);
+    if (d.createdVia === "recovery") first += " \u00b7 via a recovery code";
+    var second = [schemeWords(d)];
+    if (d.persistent) {
+      var end = day(d.expiresAt);
+      second.push("stays signed in \u00b7 ends after " + ADMIN_IDLE_DAYS +
+        " days unused" + (end ? " (" + end + " if not used again)" : ""));
+    } else {
+      second.push("12-hour session");
+      second.push("ends " + until(d.expiresAt));
+    }
+    return { first: first, second: second.join(" \u00b7 "),
+             title: "Signed in " + stamp(d.createdAt) +
+                    "\nLast used " + stamp(d.lastUsedAt) +
+                    "\nExpires " + stamp(d.expiresAt) +
+                    (d.persistent ? " unless used before then" : "") };
+  }
+
+  function renderAdminDevices(list) {
+    var html;
+    if (!list.length) {
+      html = '<p class="empty">No phones are signed in.</p>';
+    } else {
+      html = list.map(function (d) {
+        var l = adminDeviceLines(d);
+        return '<div class="device">' +
+          '<div class="admin-device" title="' + esc(l.title) + '">' +
+            esc(d.label || "phone") +
+            ' <span class="meta">\u00b7 ' + esc(l.first) + '</span>' +
+            '<div class="meta">' + esc(l.second) + '</div>' +
+          '</div>' +
+          '<button class="danger" data-revoke-admin="' + esc(d.id) + '" ' +
+            'data-adlabel="' + esc(d.label || "this phone") + '">Revoke</button>' +
+        '</div>';
+      }).join("");
+    }
+    $("revoke-all-phones").disabled = !list.length;
+    // Rebuilt only when the text changed (the ages tick over about once
+    // a minute), so a keyboard user's focus on a Revoke button is not
+    // thrown away by every 5 s poll.
+    if (html === adminDevicesHTML) return;
+    adminDevicesHTML = html;
+    $("admin-devices").innerHTML = html;
+  }
+
+  function revokeAdminDevice(id, label) {
+    if (!confirm('Sign out "' + label + '"?\n\nThat phone loses admin access ' +
+                 'right away. Its link to this server (stats, Party Play) ' +
+                 'is untouched.')) return;
+    api("/admin/admin-devices/" + encodeURIComponent(id), { method: "DELETE" })
+      .then(function () { toast("Phone signed out."); load(); })
+      .catch(function (e) {
+        // Gone between the poll and the click: it signed itself out,
+        // lapsed, or was revoked in another tab. Same end state.
+        if (e.status === 404) {
+          toast("That phone was already signed out.");
+          load();
+          return;
+        }
+        toast(e.message, true);
+      });
+  }
+
+  function revokeAllPhones() {
+    if (!confirm("Sign out every phone?\n\nEach one has to sign in again " +
+                 "with your password and a code.")) return;
+    api("/admin/admin-devices", { method: "DELETE" })
+      .then(function (r) {
+        var n = (r && r.revoked) || 0;
+        toast(n === 0 ? "No phones were signed in." :
+              "Signed out " + n + (n === 1 ? " phone." : " phones."));
+        load();
+      })
+      .catch(function (e) { toast(e.message, true); });
+  }
+
   // ---- load / auth ---------------------------------------------------
   function load() {
     return Promise.all([
       api("/admin/links"),
       api("/admin/profiles"),
-      api("/catalog/summary")
+      api("/catalog/summary"),
+      api("/admin/admin-devices")
     ]).then(function (r) {
       renderPending(r[0].pending || []);
       renderProfiles(r[1].profiles || []);
       renderCatalog(r[2] || {});
+      renderAdminDevices((r[3] || {}).devices || []);
     }).catch(function (e) { toast(e.message, true); });
   }
 
@@ -528,6 +678,9 @@
     if (t.dataset.approve) approve(t.dataset.approve);
     else if (t.dataset.revoke) revoke(t.dataset.revoke, t.dataset.devlabel);
     else if (t.dataset.delete) removeProfile(t.dataset.delete, t.dataset.pname);
+    else if (t.dataset.revokeAdmin) {
+      revokeAdminDevice(t.dataset.revokeAdmin, t.dataset.adlabel);
+    }
   });
 
   $("signin").addEventListener("click", signIn);
@@ -560,6 +713,7 @@
   });
   $("signout").addEventListener("click", signOut);
   $("backup").addEventListener("click", backup);
+  $("revoke-all-phones").addEventListener("click", revokeAllPhones);
 
   // Which screen to draw: set-up if nobody has enrolled, the app if the
   // cookie is still good, otherwise the login.

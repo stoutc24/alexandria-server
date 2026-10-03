@@ -183,25 +183,66 @@ No password, no email, no registration. The admin creates the profile
 and hands the token over; the token *is* the identity. Its only job is
 keeping one person's stats out of another person's totals.
 
-### Three ways in
+### Ways in
 
 | Token | Can | Cannot |
 |---|---|---|
-| **Admin** (env, `ALEXANDRIA_API_TOKEN`) | Sync the catalog, create/rotate/delete profiles, back up the database | **Read anyone's stats** |
+| **Admin** (env, `ALEXANDRIA_API_TOKEN`) | Sync the catalog, create/rotate/delete profiles, back up the database — until an admin login is set up. After that, only set the login up again (the break-glass path for a lost authenticator) | **Read anyone's stats** |
+| **Admin login** (password + TOTP at `/admin`; a 12-hour browser session) | Everything the admin token could | **Read anyone's stats** |
+| **Admin device** (`alxa_…`, one per phone) | The `/admin/*` routes — approve devices, manage people, the library index through `/admin/catalog/*`, sign phones out. With a fresh code every time: a backup with the sign-in secrets left out, and approving a device, for someone new or someone already here | **Read anyone's stats** or the party line on its own, use any profile or catalog route, set the login up, mint another token |
 | **Device** (`alxp_…`, one per device) | Read the catalog, write and read its profile's stats, erase them | Sync the catalog, manage profiles |
 | None | `/health` | Everything else |
+
+No admin credential has a route that returns anyone's stats. Approving
+a link is the one road from admin to a person's history, and it is
+described under *What the admin can and cannot see*.
+
+An admin device token is how a phone manages the server. It costs what
+the web sign-in costs — the password and a fresh code, at
+`POST /admin/auth/device-token`, inside the sign-in rate limit — and
+`RequireAdmin` is the only guard that accepts it: `RequireProfile` and
+`RequireAnyToken` never do. The two admin acts that do lead into
+people's history, the backup and approving a link (every approval,
+someone new included), each ask the phone for a fresh code as well, so
+the token alone — a lost phone, say — is not a way into anyone's
+history. The phone
+decides whether it stays signed in: only over a certificate-validated
+`https://` address. The server, which behind a TLS-terminating proxy
+sees plain HTTP, honours that and records how HTTPS was established
+(`tls`, `proxy`, `forwarded`, `cloudflare`, `config` from
+`ALEXANDRIA_PUBLIC_URL`, or the phone's own word, `client`). A header
+that says http is recorded as plain HTTP whatever was declared, and the
+two declarations, `config` and `client`, are recorded only for a
+sign-in that stays and whose headers name no scheme. A sign-in that
+stays lapses after 180 days unused, every use renewing it; one that does
+not lasts 12 hours. Signing out, revoking on the web page and setting
+the login up again end it at once. Like every other token here it is
+stored only as a hash.
 
 The server refuses to boot when the admin token is unset, left at the
 placeholder, or under 16 characters — an accidentally exposed companion
 with no token is worse than one that failed to start. Comparison is
-constant-time. Profile tokens are stored only as SHA-256 hashes, so a
-stolen database yields nothing replayable. (Plain SHA-256 is correct
-here: tokens are 32 bytes from `crypto/rand`, and the slow hashes exist
-for low-entropy human passwords.)
+constant-time. Profile tokens, admin sessions and admin device tokens
+are stored only as SHA-256 hashes, so none of them can be replayed from
+a stolen database. (Plain SHA-256 is correct here: tokens are 32 bytes
+from `crypto/rand`, and the slow hashes exist for low-entropy human
+passwords.) The admin login is the exception: its TOTP secret is stored
+as it is, because checking a code needs it, so a stolen database can
+generate codes and attack the argon2id password hash offline. A backup
+taken from a phone leaves the whole admin login out for that reason.
 
 `/health` stays open so the app can discover whether a companion exists,
 and what it can do, before it has been handed a token. It reveals
-capabilities, never library contents.
+capabilities, never library contents. When the operator sets
+`ALEXANDRIA_PUBLIC_URL`, it also publishes `publicUrl`, so a phone
+linked over a LAN `http://` address can offer to move to the https one.
+Only a plain https address is published — https, a host, no user name,
+query or fragment, no percent-encoding, nothing outside printable ASCII:
+the phone's own rule — rebuilt as `https://host[:port][/path]`. Anything
+else is ignored at startup with a warning that does not repeat the value
+(a password written into it would land in the log), so a typo, or an
+address that reads as one place and goes to another
+(`https://alexandria.example.com@evil.example`), never reaches a phone.
 
 ### Linking a device
 
@@ -239,6 +280,17 @@ That matters for revocation: a lost phone is unlinked on its own and her
 watch keeps working. A single per-person token would have forced
 "reset everything she owns" for one lost device.
 
+A device can always ask who it is: `GET /api/v1/devices/me`
+(capability `devices.me`) answers
+`{"deviceKey", "label", "profileId", "profileName"}`. `deviceKey` is
+the token id — the id the admin's person list shows for that device,
+the one `DELETE /admin/devices/:tokenId` revokes, and the party line's
+`yourDeviceKey`. The party line names a device only while something is
+playing; this route answers whenever the token is good, which is how a
+phone managing the server marks itself in a person's device list and
+warns before revoking its own link. It sits behind the profile guard
+like everything a device does, so no admin credential gets an answer.
+
 ### What the admin can and cannot see
 
 The admin runs the household, so they can see **who exists, when they
@@ -250,10 +302,33 @@ with ONE deliberate exception: `/admin/backup` streams the whole
 database, stats rows included, because backups are the point of the
 data being here. It is the single admin route that carries history, and
 a leaked admin token therefore reaches everything a stolen disk would.
+A phone's admin device token alone does not reach it: the phone's
+backup (`POST`) asks for a fresh code every time, and its copy leaves
+the admin login out; `GET` refuses the phone's token.
 Every other admin route yields counts.
 `RequireProfile` rejects the admin token outright, and the stats
 repository offers no "read another profile" method for a future route to
 reach for. The absence is the boundary — keep it absent.
+
+There is one indirect road, and it is the admin's job itself: approving
+a link. A device linked to someone IS that person's device — it reads
+their stats and joins their party line — so whoever approves links can
+see what someone's devices see by linking a device of their own to
+them. It is never silent: the device appears under that person on the
+admin page, where it can be revoked. From a phone every approval costs
+a fresh code (`POST /admin/links/approve` answers `403
+step-up-required` without one, and `401 step-up-failed` for a wrong,
+spent or raced one, leaving the link waiting and creating nobody), spent
+through the same atomic claim as a sign-in, and a phone's approvals
+share the sign-in rate limit, so its codes cannot be ground there.
+Someone new is no exception. A new profile has no history yet, but
+approving by name reuses a person: a phone that could create "Mike"
+without a code could link its own device to him before he is here, and
+read his history from the day his devices are approved into that name.
+So a phone's admin device token alone reaches no one's history by this
+road either. The browser's session approves without a code, as it
+always has: it was signed in with the password and a code, and lasts
+12 hours.
 
 ### Now playing — the party line
 

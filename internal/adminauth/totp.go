@@ -98,6 +98,20 @@ func codeAt(secret string, step int64) (string, error) {
 	return fmt.Sprintf("%0*d", totpDigits, value%mod), nil
 }
 
+// CodeAt is the code for one time step. Exported for tests, which need
+// a valid code without an authenticator app; nothing in the server
+// itself mints codes.
+func CodeAt(secret string, step int64) (string, error) {
+	return codeAt(secret, step)
+}
+
+// StepCeiling is the newest time step Verify can accept at now. A stored
+// last-used step beyond it cannot have been spent honestly (see the
+// reset in Verify), so a claim of a genuine step may overwrite it.
+func StepCeiling(now int64) int64 {
+	return now/totpPeriod + totpSkewSteps
+}
+
 // Verify checks a submitted code and returns the time step it matched.
 //
 // The caller MUST persist that step and refuse anything less than or

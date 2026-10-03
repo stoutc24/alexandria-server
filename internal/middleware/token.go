@@ -2,7 +2,9 @@ package middleware
 
 import (
 	"crypto/subtle"
+	"log"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stoutsolutions/alexandria-server/internal/adminauth"
@@ -18,7 +20,10 @@ import (
 // person may buy or unlock — that is settled on the device against
 // RevenueCat. See docs/COMPANION_DESIGN.md.
 
-const profileLocalsKey = "profileID"
+const (
+	profileLocalsKey     = "profileID"
+	profileNameLocalsKey = "profileName"
+)
 
 func bearerToken(c *fiber.Ctx) (string, bool) {
 	authHeader := c.Get("Authorization")
@@ -48,14 +53,15 @@ const AdminSessionCookie = "alx_admin"
 // RequireAdmin gates routes that manage the server: creating and
 // deleting profiles, revoking devices, backups.
 //
-// Two ways in, and which ones are open depends on whether a login has
-// been enrolled:
+// Which ways in are open depends on whether a login has been enrolled:
 //
 //   - BEFORE enrolment, the environment token works. It has to: it is
 //     the only credential that exists, and it is what authorises
 //     enrolment itself.
-//   - AFTER enrolment, the environment token STOPS WORKING HERE. Only a
-//     session cookie from a password + TOTP login is accepted.
+//   - AFTER enrolment, the environment token STOPS WORKING HERE. Only
+//     credentials earned with the password + TOTP login are accepted:
+//     the browser's session cookie, or a phone's admin device token
+//     ("Bearer alxa_…", see requireAdminDevice).
 //
 // That second rule is the entire point. Leaving the static token valid
 // alongside the login would make the login decoration: an attacker with
@@ -87,6 +93,10 @@ func RequireAdmin(
 					return c.Next()
 				}
 			}
+			if tok, ok := bearerToken(c); ok &&
+				strings.HasPrefix(tok, adminauth.DeviceTokenPrefix) {
+				return requireAdminDevice(c, auth, tok)
+			}
 			return unauthorized(c, "admin session required — sign in at /admin")
 		}
 
@@ -98,6 +108,87 @@ func RequireAdmin(
 			return unauthorized(c, "admin token required")
 		}
 		return c.Next()
+	}
+}
+
+const (
+	adminDeviceLocalsKey      = "adminDeviceID"
+	adminDeviceLabelLocalsKey = "adminDeviceLabel"
+)
+
+// requireAdminDevice admits a phone's admin sign-in, an admin device
+// token issued by POST /admin/auth/device-token for a fresh password and
+// code. It is accepted HERE ONLY: RequireProfile and RequireAnyToken
+// never look at it, so a phone that manages the server still cannot read
+// anyone's stats or the party line, nor use the shared catalog routes
+// (it reads the index through the /admin/catalog mirrors), and
+// RequireAdminToken never takes it, so it cannot re-enrol. The two admin
+// acts that DO lead into people's history — the backup, and approving a
+// link (every approval, someone new included) — each ask it for a fresh
+// code as well (handlers.RequireFreshCode, handlers.LinkHandler.ApproveLink).
+//
+// The lookup is by the token's SHA-256, never by the token itself, so how
+// long the database takes to answer says nothing about the token's bytes
+// — the same reason sessions and profile tokens are found by hash.
+//
+// The two refusals carry a reason, which is how the phone tells "you
+// were signed out" (revoked on the web page, or the login re-enrolled)
+// from "your sign-in lapsed". A lapsed row is deleted by the lookup.
+func requireAdminDevice(
+	c *fiber.Ctx,
+	auth *repository.AdminAuthRepository,
+	token string,
+) error {
+	now := time.Now()
+	dev, state, err := auth.LookupDeviceToken(adminauth.HashToken(token), now)
+	switch {
+	case err != nil:
+		return c.Status(fiber.StatusInternalServerError).
+			JSON(fiber.Map{"error": "could not read admin credentials"})
+	case state == repository.DeviceTokenValid:
+		auth.TouchDeviceToken(dev, now)
+		c.Locals(adminDeviceLocalsKey, dev.ID)
+		c.Locals(adminDeviceLabelLocalsKey, dev.Label)
+		return c.Next()
+	case state == repository.DeviceTokenExpired:
+		log.Printf("admin device sign-in expired: %q (%s)", dev.Label, dev.ID)
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error":  "this phone's sign-in expired",
+			"reason": "device-token-expired",
+		})
+	default:
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error":  "this phone is no longer signed in",
+			"reason": "device-token-invalid",
+		})
+	}
+}
+
+// AdminDevice returns the id of the admin device token that
+// authenticated this request, or "" when it was the browser's session
+// cookie or the environment token.
+func AdminDevice(c *fiber.Ctx) string {
+	id, _ := c.Locals(adminDeviceLocalsKey).(string)
+	return id
+}
+
+// AdminDeviceLabel is that phone's label, for log lines; "" otherwise.
+func AdminDeviceLabel(c *fiber.Ctx) string {
+	label, _ := c.Locals(adminDeviceLabelLocalsKey).(string)
+	return label
+}
+
+// ForAdminDevices runs h only for a request a phone's admin sign-in
+// authenticated; the browser's session cookie and the environment token
+// pass straight on. It goes after RequireAdmin, which is what marks the
+// phone. It is how a route that can ask a phone for a fresh code puts
+// the sign-in rate limiter in front of phones alone.
+func ForAdminDevices(h fiber.Handler) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if AdminDevice(c) == "" {
+			return c.Next()
+		}
+		return h(c)
 	}
 }
 
@@ -138,7 +229,7 @@ func RequireProfile(profiles *repository.ProfileRepository) fiber.Handler {
 
 		profiles.TouchLastSeen(caller.TokenID)
 		c.Locals(profileLocalsKey, caller.ProfileID)
-		c.Locals("profileName", caller.ProfileName)
+		c.Locals(profileNameLocalsKey, caller.ProfileName)
 		c.Locals(deviceIDLocalsKey, caller.TokenID)
 		c.Locals(deviceLabelLocalsKey, caller.TokenLabel)
 		return c.Next()
@@ -210,4 +301,11 @@ func ProfileID(c *fiber.Ctx) string {
 		return v
 	}
 	return ""
+}
+
+// ProfileName returns the calling profile's name, as RequireProfile
+// found it; "" anywhere else.
+func ProfileName(c *fiber.Ctx) string {
+	name, _ := c.Locals(profileNameLocalsKey).(string)
+	return name
 }

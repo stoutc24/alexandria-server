@@ -1,0 +1,251 @@
+package main
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"
+
+	"github.com/stoutsolutions/alexandria-server/internal/adminui"
+	"github.com/stoutsolutions/alexandria-server/internal/config"
+	"github.com/stoutsolutions/alexandria-server/internal/handlers"
+	"github.com/stoutsolutions/alexandria-server/internal/middleware"
+	"github.com/stoutsolutions/alexandria-server/internal/nowplaying"
+	"github.com/stoutsolutions/alexandria-server/internal/repository"
+)
+
+// buildApp wires every route onto a fresh Fiber app. It holds no
+// process state of its own beyond the app (the rate limiters live in
+// it), so main serves one and the HTTP tests build a new one per test
+// against the real routes. The database must already be connected and
+// migrated.
+func buildApp(cfg *config.Config) *fiber.App {
+	app := fiber.New(fiber.Config{
+		AppName:      "Alexandria Server v0.2.0",
+		ErrorHandler: customErrorHandler,
+
+		// Catalogue chunks are the largest thing this accepts. 8 MB is
+		// double what a full chunk needs, so a slightly chatty client
+		// still fits, while a runaway request is still refused rather
+		// than buffered.
+		BodyLimit: 8 * 1024 * 1024,
+
+		// Trim the idle footprint: fewer, smaller buffers held per
+		// connection between requests on a box that is mostly quiet.
+		// Concurrency is a ceiling on open connections, not a
+		// pre-allocation, so a high one costs nothing while idle — and
+		// a low one is what let a few hundred slow sockets close the
+		// door on the household (SECURITY_AUDIT_2026-09 #15).
+		ReadBufferSize:    4096,
+		Concurrency:       4096,
+		ReduceMemoryUsage: true,
+
+		// No request may sit half-sent forever. Read covers the whole
+		// request incl. an 8 MB catalog chunk on a slow uplink; Write
+		// must outlast the 15 s now-playing long poll plus the reply;
+		// Idle is the keep-alive gap between requests. Without these,
+		// fasthttp waited without limit on every one of them.
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  90 * time.Second,
+	})
+
+	app.Use(recover.New())
+	app.Use(logger.New(logger.Config{
+		Format: "${time} | ${status} | ${latency} | ${method} ${path}\n",
+	}))
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowMethods: "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+	}))
+
+	catalogRepo := repository.NewCatalogRepository()
+	profileRepo := repository.NewProfileRepository()
+	statsRepo := repository.NewStatsRepository()
+	linkRepo := repository.NewLinkRepository()
+	adminAuthRepo := repository.NewAdminAuthRepository()
+
+	catalogHandler := handlers.NewCatalogHandler(catalogRepo)
+	nowPlayingHandler := handlers.NewNowPlayingHandler(nowplaying.NewStore())
+	adminHandler := handlers.NewAdminHandler(profileRepo, cfg.DBPath)
+	statsHandler := handlers.NewStatsHandler(statsRepo)
+	adminAuthHandler := handlers.NewAdminAuthHandler(adminAuthRepo, cfg.PublicURL)
+	linkHandler := handlers.NewLinkHandler(linkRepo, profileRepo, adminAuthHandler.FreshCode)
+	adminDevicesHandler := handlers.NewAdminDevicesHandler(adminAuthRepo)
+
+	// Unauthenticated on purpose: the app needs to know whether a
+	// companion exists and what it can do before it has been given a
+	// token. It reveals capabilities, never library contents.
+	// Discovery label: pinned by ALEXANDRIA_SERVER_NAME, else hostname.
+	handlers.SetServerName(cfg.ServerName)
+	handlers.SetPublicURL(cfg.PublicURL)
+	app.Get("/health", handlers.Health)
+
+	// The management page. Inert markup until someone signs in through
+	// it, so it needs no auth of its own — every call it makes goes to
+	// /api/v1/admin/*, which does.
+	app.Get("/admin", adminui.Handler)
+
+	api := app.Group("/api")
+	v1 := api.Group("/v1")
+
+	// Three ways in, and the difference between them is the whole
+	// access model. There are no accounts here: an admin token belongs
+	// to whoever runs the box, and a profile token exists only to keep
+	// one person's stats out of another person's totals. Neither is
+	// ever an entitlement.
+	requireAdmin := middleware.RequireAdmin(cfg, adminAuthRepo)
+	requireProfile := middleware.RequireProfile(profileRepo)
+	requireAnyToken := middleware.RequireAnyToken(cfg, profileRepo, adminAuthRepo)
+
+	// Household management: who exists, and how much space they use.
+	// Nothing here returns anyone's history — see handlers/admin.go.
+	// The admin login. Rate limited hard: this is the one place on the
+	// server where guessing is the attack, and 10/min makes grinding a
+	// 6-digit code hopeless while never inconveniencing a person who
+	// mistypes it twice.
+	authLimiter := limiter.New(limiter.Config{
+		Max:        10,
+		Expiration: time.Minute,
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": "too many sign-in attempts; wait a minute",
+			})
+		},
+	})
+	adminAuth := v1.Group("/admin/auth", authLimiter)
+	adminAuth.Get("/status", adminAuthHandler.Status)
+	adminAuth.Post("/login", adminAuthHandler.Login)
+	adminAuth.Post("/logout", adminAuthHandler.Logout)
+	// A phone's admin sign-in: the password and a fresh code, exactly as
+	// /login asks, answered with an admin device token instead of a
+	// cookie. It MUST stay in this group and above the requireAdmin
+	// group below: Fiber matches group middleware by path prefix in
+	// registration order, so registered after it, requireAdmin would
+	// answer every sign-in with a 401 before the handler ran — and here
+	// it shares the 10-a-minute budget with /login.
+	adminAuth.Post("/device-token", adminAuthHandler.IssueDeviceToken)
+	// Enrolment is the ONE route that still trusts the environment token
+	// outright. It is the break-glass path: whoever holds the .env can
+	// always set up a new login, which is what recovers a companion
+	// whose authenticator went into a lake.
+	adminAuth.Post("/enroll",
+		middleware.RequireAdminToken(cfg), adminAuthHandler.Enroll)
+
+	admin := v1.Group("/admin", requireAdmin)
+	admin.Post("/profiles", adminHandler.CreateProfile)
+	admin.Get("/profiles", adminHandler.ListProfiles)
+	admin.Delete("/profiles/:id", adminHandler.DeleteProfile)
+	admin.Delete("/devices/:tokenId", adminHandler.RevokeDevice)
+	admin.Get("/backup", adminHandler.Backup)
+
+	// Device linking, admin half: see who is waiting and say who they
+	// are. Approving is what turns a spoken code into access, which is
+	// why the code itself is harmless.
+	admin.Get("/links", linkHandler.ListPendingLinks)
+	// Every approval from a phone adds a fresh code (see
+	// handlers.ApproveLink), so a phone's approvals go through the SAME
+	// authLimiter instance as /admin/auth: its code guesses share the
+	// one 10-a-minute budget. The browser's approvals carry no code and
+	// stay unlimited.
+	admin.Post("/links/approve",
+		middleware.ForAdminDevices(authLimiter), linkHandler.ApproveLink)
+
+	// Phones' admin sign-ins: the web page's "Signed-in phones" list and
+	// its Revoke buttons, and a phone signing itself out (DELETE with its
+	// own id). Not rate limited — the page polls the list.
+	admin.Get("/admin-devices", adminDevicesHandler.List)
+	admin.Delete("/admin-devices", adminDevicesHandler.RevokeAll)
+	admin.Delete("/admin-devices/:id", adminDevicesHandler.Revoke)
+
+	// The library index again, for a phone managing the server: its
+	// admin token is accepted only behind requireAdmin, never by
+	// requireAnyToken, so the phone reads the same handlers here.
+	admin.Get("/catalog/summary", catalogHandler.GetSummary)
+	admin.Get("/catalog/duplicates", catalogHandler.GetDuplicates)
+
+	// A phone's backup: a fresh code on top of its sign-in, the copy
+	// without the admin login in it (see handlers.BackupForDevice). The
+	// SAME authLimiter instance as /admin/auth, so code guesses here and
+	// at the sign-in share one 10-a-minute budget.
+	admin.Post("/backup", authLimiter,
+		adminAuthHandler.RequireFreshCode, adminHandler.BackupForDevice)
+
+	// Device linking, device half. Unauthenticated by necessity — the
+	// device has no token yet, which is the problem being solved. Rate
+	// limited so it cannot be used to churn codes or grind claim
+	// secrets.
+	linkLimiter := limiter.New(limiter.Config{
+		Max:        30,
+		Expiration: time.Minute,
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": "too many link attempts; wait a minute",
+			})
+		},
+	})
+	link := v1.Group("/link", linkLimiter)
+	link.Post("/request", linkHandler.RequestLink)
+	link.Post("/claim", linkHandler.Claim)
+
+	// The library index describes the household's SERVERS, not any
+	// person, so anyone with a valid token may read it — and write it.
+	//
+	// Sync is NOT admin-only, deliberately. The index is populated by
+	// the app, from what it can already see on the servers it is signed
+	// in to; gating it behind the admin token would leave it empty
+	// unless somebody ran curl by hand. The worst a household member can
+	// do is refresh it with their own view, which degrades an index, not
+	// security — and anyone can refresh it back.
+	//
+	// The trade-off to know about: sync REPLACES a source wholesale, so
+	// if two people see different subsets of the same server, the last
+	// to sync wins. Fine when everyone shares the same libraries, which
+	// is the case this is built for.
+	catalogGroup := v1.Group("/catalog")
+	catalogGroup.Post("/sync", requireAnyToken, catalogHandler.SyncSource)
+	catalogGroup.Get("/items", requireAnyToken, catalogHandler.GetItems)
+	catalogGroup.Get("/duplicates", requireAnyToken, catalogHandler.GetDuplicates)
+	catalogGroup.Get("/summary", requireAnyToken, catalogHandler.GetSummary)
+
+	// A person's own numbers. requireProfile REJECTS the admin token on
+	// purpose: managing the household must not be a way to read what
+	// someone listened to.
+	// A device pairing another device it already owns: the phone hands a
+	// token to the watch, no code typed on a tiny screen.
+	v1.Post("/devices", requireProfile, linkHandler.ProvisionDevice)
+	// A device renaming itself: the party name every other screen shows
+	// for it. The label used to be fixed at link time.
+	v1.Patch("/devices/me", requireProfile, linkHandler.RenameSelf)
+	// A device asking who it is: its device key, label and person. It
+	// answers whether or not anything is playing, which the party line's
+	// yourDeviceKey does not. A link token only, like everything here.
+	v1.Get("/devices/me", requireProfile, linkHandler.Self)
+
+	// The party line: a profile's own devices report and read what is
+	// playing RIGHT NOW, so a TV can join mid-stream. Behind
+	// requireProfile — the admin token is rejected, same boundary as
+	// stats. In memory only; nothing here ever touches the database.
+	np := v1.Group("/nowplaying", requireProfile)
+	np.Put("/", nowPlayingHandler.Report)
+	np.Get("/", nowPlayingHandler.Get)
+	np.Get("/queue", nowPlayingHandler.GetQueue)
+	np.Post("/follow", nowPlayingHandler.Follow)
+	np.Post("/intent", nowPlayingHandler.Intent)
+	// The seat holder makes another device the leader.
+	np.Post("/handover", nowPlayingHandler.HandOver)
+	np.Delete("/", nowPlayingHandler.Clear)
+	// The party's clock, for the devices' offset measurement.
+	v1.Get("/time", requireProfile, handlers.Time)
+
+	stats := v1.Group("/stats", requireProfile)
+	stats.Post("/events", statsHandler.AppendEvents)
+	stats.Get("/summary", statsHandler.GetSummary)
+	stats.Delete("/", statsHandler.DeleteOwnStats)
+
+	return app
+}

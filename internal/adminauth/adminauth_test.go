@@ -197,3 +197,62 @@ func TestASpentStepIsStillRefused(t *testing.T) {
 		t.Fatal("a code was accepted twice in its own window")
 	}
 }
+
+// CodeAt is the exported face of codeAt; tests elsewhere rely on it
+// producing exactly what Verify accepts.
+func TestCodeAtMatchesWhatVerifyAccepts(t *testing.T) {
+	secret, err := NewSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := int64(1_700_000_000)
+	step := now / totpPeriod
+	code, err := CodeAt(secret, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if internal, _ := codeAt(secret, step); internal != code {
+		t.Fatalf("CodeAt %q != codeAt %q", code, internal)
+	}
+	if got, ok := Verify(secret, code, now, 0); !ok || got != step {
+		t.Fatalf("Verify(CodeAt) = %d, %v; want %d, true", got, ok, step)
+	}
+}
+
+// The ceiling is the last step Verify would still accept: one step of
+// skew ahead of now, never two.
+func TestStepCeilingIsTheNewestAcceptableStep(t *testing.T) {
+	secret, _ := NewSecret()
+	now := int64(1_700_000_000)
+	ceiling := StepCeiling(now)
+	if ceiling != now/totpPeriod+1 {
+		t.Fatalf("ceiling %d, want %d", ceiling, now/totpPeriod+1)
+	}
+	atCeiling, _ := CodeAt(secret, ceiling)
+	if _, ok := Verify(secret, atCeiling, now, 0); !ok {
+		t.Fatal("the code at the ceiling was refused")
+	}
+	beyond, _ := CodeAt(secret, ceiling+1)
+	if _, ok := Verify(secret, beyond, now, 0); ok {
+		t.Fatal("a code beyond the ceiling was accepted")
+	}
+}
+
+func TestDeviceTokensArePrefixedAndFullEntropy(t *testing.T) {
+	a, err := NewDeviceToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := NewDeviceToken()
+	if a == b {
+		t.Fatal("two device tokens were identical")
+	}
+	if !strings.HasPrefix(a, DeviceTokenPrefix) || len(a) != len(DeviceTokenPrefix)+64 {
+		t.Fatalf("device token %q is not alxa_ + 64 hex", a)
+	}
+	for _, r := range strings.TrimPrefix(a, DeviceTokenPrefix) {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			t.Fatalf("device token %q is not lowercase hex", a)
+		}
+	}
+}

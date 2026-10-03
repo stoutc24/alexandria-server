@@ -1,13 +1,16 @@
 package handlers
 
 import (
+	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stoutsolutions/alexandria-server/internal/database"
+	"github.com/stoutsolutions/alexandria-server/internal/middleware"
 	"github.com/stoutsolutions/alexandria-server/internal/repository"
 )
 
@@ -136,33 +139,124 @@ func (h *AdminHandler) DeleteProfile(c *fiber.Ctx) error {
 // hands the operator the same bytes sitting on their own disk. What it
 // changes is reach: a LEAKED admin token turns this into remote
 // exfiltration, where every other admin route yields only counts. Treat
-// the admin token accordingly, and keep this the only such route.
+// the admin token accordingly, and keep /admin/backup (GET for the
+// browser, POST for a phone) the only route that does this.
+//
+// A phone signed in with an admin device token is refused here (403
+// step-up-required): it takes BackupForDevice instead, which asks for a
+// fresh code and leaves the sign-in secrets out. The browser's copy is
+// unchanged — the whole database — because restoring it must bring the
+// admin login back with it.
 func (h *AdminHandler) Backup(c *fiber.Ctx) error {
-	tmpDir, err := os.MkdirTemp("", "alexandria-backup")
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to prepare backup",
+	if middleware.AdminDevice(c) != "" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error":  "backing up from a phone needs a fresh code",
+			"reason": "step-up-required",
 		})
 	}
-	defer os.RemoveAll(tmpDir)
-
-	snapshot := filepath.Join(tmpDir, "alexandria-backup.db")
-	if _, err := database.DB.Exec(`VACUUM INTO ?`, snapshot); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to create backup snapshot",
-		})
+	data, fail := h.snapshot(false)
+	if fail != nil {
+		return serverError(c, fail.msg, fail.err)
 	}
+	return sendBackup(c, data)
+}
 
-	data, err := os.ReadFile(snapshot)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to read backup snapshot",
-		})
+// BackupForDevice is the phone's backup: POST /admin/backup, behind
+// RequireAdmin, the sign-in rate limiter and RequireFreshCode.
+//
+// The copy leaves the admin login out — the password hash, the TOTP
+// seed (stored in plaintext), recovery-code hashes, browser sessions and
+// every phone's sign-in — so a file that travels through a share sheet
+// carries no way back in. Restoring it means setting the admin login up
+// again with the environment token. Everyone's history is still in it;
+// that is what a backup is for.
+func (h *AdminHandler) BackupForDevice(c *fiber.Ctx) error {
+	data, fail := h.snapshot(true)
+	if fail != nil {
+		return serverError(c, fail.msg, fail.err)
 	}
+	log.Printf("admin backup (sign-in secrets removed) sent%s", callerForLog(c))
+	return sendBackup(c, data)
+}
 
+func sendBackup(c *fiber.Ctx, data []byte) error {
 	name := fmt.Sprintf("alexandria-%s.db",
 		time.Now().UTC().Format("2006-01-02-150405"))
 	c.Set("Content-Type", "application/octet-stream")
 	c.Set("Content-Disposition", `attachment; filename="`+name+`"`)
 	return c.Send(data)
+}
+
+// backupFailure is a snapshot step that failed: msg answers the caller,
+// err goes to the log.
+type backupFailure struct {
+	msg string
+	err error
+}
+
+// snapshot copies the database with VACUUM INTO, optionally scrubs the
+// copy, and returns its bytes. The temporary copy never outlives the
+// call.
+func (h *AdminHandler) snapshot(scrub bool) ([]byte, *backupFailure) {
+	tmpDir, err := os.MkdirTemp("", "alexandria-backup")
+	if err != nil {
+		return nil, &backupFailure{"failed to prepare backup", err}
+	}
+	defer os.RemoveAll(tmpDir)
+
+	path := filepath.Join(tmpDir, "alexandria-backup.db")
+	if _, err := database.DB.Exec(`VACUUM INTO ?`, path); err != nil {
+		return nil, &backupFailure{"failed to create backup snapshot", err}
+	}
+	if scrub {
+		if err := scrubSignInSecrets(path); err != nil {
+			return nil, &backupFailure{
+				"failed to remove sign-in secrets from the backup", err}
+		}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, &backupFailure{"failed to read backup snapshot", err}
+	}
+	return data, nil
+}
+
+// signInTables hold the admin login. They are emptied in a phone's
+// backup copy.
+var signInTables = []string{
+	"admin_credentials",
+	"admin_recovery_codes",
+	"admin_sessions",
+	"admin_device_tokens",
+}
+
+// scrubSignInSecrets empties the sign-in tables of a snapshot file so
+// that nothing of them survives anywhere in its bytes: deleted with
+// secure_delete (freed content zeroed), then VACUUM rebuilds the file so
+// no free page is left at all. A rollback journal, not WAL, so the file
+// is complete on its own once the connection closes.
+func scrubSignInSecrets(path string) error {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	// PRAGMAs belong to a connection: keep every statement on one.
+	db.SetMaxOpenConns(1)
+
+	stmts := []string{
+		`PRAGMA journal_mode = DELETE`,
+		`PRAGMA secure_delete = ON`,
+	}
+	for _, t := range signInTables {
+		stmts = append(stmts, `DELETE FROM `+t)
+	}
+	stmts = append(stmts, `VACUUM`)
+	for _, q := range stmts {
+		if _, err := db.Exec(q); err != nil {
+			return fmt.Errorf("%s: %w", q, err)
+		}
+	}
+	return db.Close()
 }

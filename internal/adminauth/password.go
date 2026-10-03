@@ -112,6 +112,22 @@ func NewToken() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
+// DeviceTokenPrefix marks an admin device token — a phone's admin
+// sign-in — as "alxp_" marks a profile token, so RequireAdmin can tell
+// it from every other bearer without a lookup, and a person can tell
+// what they are looking at.
+const DeviceTokenPrefix = "alxa_"
+
+// NewDeviceToken returns a fresh admin device token: the prefix and 32
+// bytes from crypto/rand, hex encoded. Store only HashToken of it.
+func NewDeviceToken() (string, error) {
+	t, err := NewToken()
+	if err != nil {
+		return "", err
+	}
+	return DeviceTokenPrefix + t, nil
+}
+
 // HashToken is the storage form of a session token or recovery code.
 func HashToken(token string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))

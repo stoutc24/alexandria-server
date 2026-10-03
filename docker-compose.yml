@@ -42,6 +42,10 @@ services:
       # changes on every recreate and makes this look like a new machine.
       - ALEXANDRIA_SERVER_NAME=${ALEXANDRIA_SERVER_NAME:-Alexandria Companion}
 
+      # Optional: the https address the server is reached at from outside
+      # (behind a reverse proxy). Empty means unset.
+      - ALEXANDRIA_PUBLIC_URL=${ALEXANDRIA_PUBLIC_URL:-}
+
       # Timezone
       - TZ=${TZ:-UTC}
 

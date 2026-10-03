@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -19,13 +20,19 @@ import (
 type LinkHandler struct {
 	links    *repository.LinkRepository
 	profiles *repository.ProfileRepository
+	// stepUp checks the fresh code a phone's admin sign-in must add to
+	// every approval (see ApproveLink).
+	stepUp StepUp
 }
 
+// NewLinkHandler takes the admin login's fresh-code check
+// (AdminAuthHandler.FreshCode) for approvals from a phone.
 func NewLinkHandler(
 	links *repository.LinkRepository,
 	profiles *repository.ProfileRepository,
+	stepUp StepUp,
 ) *LinkHandler {
-	return &LinkHandler{links: links, profiles: profiles}
+	return &LinkHandler{links: links, profiles: profiles, stepUp: stepUp}
 }
 
 type LinkRequestBody struct {
@@ -152,6 +159,11 @@ type ApproveLinkBody struct {
 	// decides who this is.
 	ProfileID string `json:"profileId"`
 	Name      string `json:"name"`
+	// A fresh second factor: a 6-digit code or a recovery code. Asked
+	// of every approval a phone's admin sign-in makes, and of nothing
+	// else (see ApproveLink). Not "code": that is the link code.
+	TOTPCode     string `json:"totpCode"`
+	RecoveryCode string `json:"recoveryCode"`
 }
 
 // ListPendingLinks shows the admin which devices are waiting.
@@ -167,6 +179,29 @@ func (h *LinkHandler) ListPendingLinks(c *fiber.Ctx) error {
 
 // ApproveLink binds a waiting code to a person. Admin only — this is
 // what makes the spoken code harmless.
+//
+// Linking a device to someone hands that device their history and their
+// party line: it reads their stats and joins what they are playing like
+// any device of theirs. So a phone's admin sign-in alone cannot approve
+// anything. Without a fresh code, a phone that is lost, or whose token
+// is copied, could approve a code it requested itself into anyone's
+// profile and claim it, and the backup's step-up would guard nothing.
+// Someone NEW is no exception: a name is reused by every later approval
+// (the web page approves by name), so a phone could create "Mike" before
+// Mike is here, link its own device to him, and read his history from
+// the day his devices are approved into that name. A phone sends a
+// fresh code with every approval, as it does for the backup:
+//
+//   - none: 403 step-up-required, and nothing changes;
+//   - a wrong, spent or raced one: 401 step-up-failed (the phone stays
+//     signed in), the link is still waiting, and nobody is created.
+//
+// The code is spent through the same atomic claim as a sign-in, after
+// every other check, so a stale link code or a missing person spends
+// nothing. The browser's session asks for no code, as before: it was
+// signed in with the password and a code, and lasts 12 hours. A phone's
+// approvals share the sign-in rate limit (see buildApp), so its codes
+// cannot be ground here.
 func (h *LinkHandler) ApproveLink(c *fiber.Ctx) error {
 	var body ApproveLinkBody
 	if err := c.BodyParser(&body); err != nil {
@@ -187,9 +222,28 @@ func (h *LinkHandler) ApproveLink(c *fiber.Ctx) error {
 		return linkError(c, err)
 	}
 
-	profileID := body.ProfileID
-	if profileID == "" {
-		name := strings.TrimSpace(body.Name)
+	// Resolve who this is: someone already here (by id, or by a name
+	// that matches), or a name to create.
+	var existing *repository.Profile
+	name := ""
+	if body.ProfileID != "" {
+		// An id picked from a list can be gone by the time it is used —
+		// the person removed on the web page meanwhile. Say so, rather
+		// than letting the foreign key fail the approval as a 500.
+		profile, err := h.profiles.GetByID(body.ProfileID)
+		if err == repository.ErrProfileNotFound {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error":  "profile not found",
+				"reason": "profile-not-found",
+			})
+		} else if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "failed to resolve profile",
+			})
+		}
+		existing = profile
+	} else {
+		name = strings.TrimSpace(body.Name)
 		if name == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"error": "provide either profileId or name",
@@ -198,9 +252,49 @@ func (h *LinkHandler) ApproveLink(c *fiber.Ctx) error {
 		// Reuse the person if they already exist — linking a second
 		// device must not create "Sarah (2)".
 		profile, err := h.profiles.GetByName(name)
-		if err == repository.ErrProfileNotFound {
-			profile, err = h.profiles.Create(name)
+		switch err {
+		case nil:
+			existing = profile
+		case repository.ErrProfileNotFound:
+			// Someone new: created below, after every refusal above.
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "failed to resolve profile",
+			})
 		}
+	}
+
+	// Every approval from a phone: a fresh code.
+	byPhone := middleware.AdminDevice(c) != ""
+	if byPhone {
+		// Blank is no code. Trimmed, a blank recovery code sent beside a
+		// 6-digit code cannot take its place: a non-empty recovery code
+		// wins, as at sign-in.
+		totp := strings.TrimSpace(body.TOTPCode)
+		recovery := strings.TrimSpace(body.RecoveryCode)
+		if totp == "" && recovery == "" {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"error":  "approving a device from a phone needs a fresh code",
+				"reason": "step-up-required",
+			})
+		}
+		if h.stepUp == nil {
+			// Wiring error: refuse rather than approve unchecked.
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "could not check the code",
+			})
+		}
+		ok, err := h.stepUp(c, totp, recovery, "link approval")
+		if !ok {
+			return err
+		}
+	}
+
+	profileID := ""
+	if existing != nil {
+		profileID = existing.ID
+	} else {
+		profile, err := h.profiles.Create(name)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "failed to resolve profile",
@@ -213,6 +307,16 @@ func (h *LinkHandler) ApproveLink(c *fiber.Ctx) error {
 		return linkError(c, err)
 	}
 
+	if byPhone {
+		// The audit line for the admin act that reaches a person's
+		// history: who, and which phone did it.
+		who, whether := name, "someone new"
+		if existing != nil {
+			who, whether = existing.Name, "already here"
+		}
+		log.Printf("link approved for %q (%s, %s)%s",
+			who, profileID, whether, callerForLog(c))
+	}
 	return c.JSON(fiber.Map{"approved": true, "profileId": profileID})
 }
 
@@ -241,6 +345,37 @@ func linkError(c *fiber.Ctx, err error) error {
 
 type ProvisionDeviceBody struct {
 	Label string `json:"label"`
+}
+
+// Self tells the calling device who it is: GET /api/v1/devices/me,
+// advertised as "devices.me".
+//
+//	{"deviceKey": "<token id>", "label": "…", "profileId": "…", "profileName": "…"}
+//
+// deviceKey is the token id: the id the admin's person list shows for
+// this device, the id DELETE /admin/devices/:tokenId revokes, and the
+// party line's yourDeviceKey. The party line names a device only while
+// something is playing; this answers whenever the token is good, so a
+// phone that manages the server can always tell which listed device is
+// itself — to mark it, and to warn before revoking its own link. label
+// is "" for a device linked without one.
+//
+// Behind requireProfile: a link token only. No admin credential is a
+// device, so none gets an answer.
+func (h *LinkHandler) Self(c *fiber.Ctx) error {
+	deviceID, label := middleware.Device(c)
+	profileID := middleware.ProfileID(c)
+	if deviceID == "" || profileID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "a device token is required",
+		})
+	}
+	return c.JSON(fiber.Map{
+		"deviceKey":   deviceID,
+		"label":       label,
+		"profileId":   profileID,
+		"profileName": middleware.ProfileName(c),
+	})
 }
 
 // RenameSelfBody is what a device sends to change its own party name.
