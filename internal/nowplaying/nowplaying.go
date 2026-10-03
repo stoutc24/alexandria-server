@@ -151,9 +151,9 @@ type State struct {
 	// announced ahead (followers prepare it and start it at T); the
 	// current item is anchored as usual and is never held by it. The
 	// leader announces with 3 s or less of the current item left (T =
-	// its predicted boundary + its time to audio + 40 ms) and repeats
-	// the three fields on EVERY report of the current item while the
-	// announcement stands. A report that omits them WITHDRAWS it:
+	// its predicted boundary + max(its time to audio + 40 ms, 700 ms))
+	// and repeats the three fields on EVERY report of the current item
+	// while it stands. A report that omits them WITHDRAWS it:
 	// nothing is carried forward. The server also refuses one on its
 	// own (defence in depth — a correct leader never needs it): on a
 	// paused report; when T does not fit the trajectory the report
@@ -738,10 +738,11 @@ func isNextItemSchedule(st State) bool {
 }
 
 // The window a next-track T must fall in, measured from the boundary
-// the announcing report itself implies. A legitimate T sits 140–2040 ms
+// the announcing report itself implies. A legitimate T sits 700–2040 ms
 // past the true boundary (the leader's time to audio, clamped to
-// 100–2000 ms, plus a 40 ms margin), and the true boundary sits up to a
-// second (÷ rate) past the one computed from a whole-second durationSec.
+// 100–2000 ms, plus a 40 ms margin, never under a 700 ms floor), and the
+// true boundary sits up to a second (÷ rate) past the one computed from
+// a whole-second durationSec.
 // The early side allows for clock and sampling error. Outside it, the
 // trajectory the T was predicted from is not the one being played.
 const (
