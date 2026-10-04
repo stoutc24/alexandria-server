@@ -1,5 +1,7 @@
 package showcase
 
+import "fmt"
+
 // Everything in this file is invented for the showcase: people, titles,
 // blurbs. None of it is anyone's work, and the combinations were chosen
 // to avoid known titles. The hero entries (the ones that lead a shelf or
@@ -143,6 +145,14 @@ var albums = []albumSeed{
 	{"Second Pressing", 2, 2020, []string{"B-Side Boogie", "Spare Change", "Loose Ends", "Count It Twice", "Fine Print"}, 0, 450},
 }
 
+// castMember is one credited performer: the actor and the part played
+// ("Self" in a documentary). Names are short on purpose: the TV's cast
+// cards are 170 pt wide and truncate a name past ~11 characters.
+type castMember struct {
+	Name string
+	Role string
+}
+
 type movieSeed struct {
 	Title    string
 	Year     int
@@ -152,7 +162,7 @@ type movieSeed struct {
 	Tagline  string
 	Summary  string
 	Director string
-	Cast     []string
+	Cast     []castMember
 	Score    float64
 	Progress float64 // 0 unstarted, 1 watched, else partial
 	Added    int     // days ago
@@ -160,30 +170,30 @@ type movieSeed struct {
 }
 
 var movies = []movieSeed{
-	{"The Cartographer's Daughter", 2023, 118, "PG-13", []string{"Adventure", "Drama"}, "The blank parts are not blank.", "When Ines inherits her father's unfinished atlas, the missing coastline turns out to be missing on purpose.", "Halle Brennan", []string{"Ines Okonjo", "Teodor Vasquez", "Mira Lindqvist"}, 7.8, 0.42, 20, true},
-	{"Night Ferry", 2022, 104, "R", []string{"Thriller"}, "Last crossing. No return.", "Six passengers, one ferry, and a storm that closes the harbor behind them.", "Rowan Pike", []string{"Callum Reid", "Amara Bellweather"}, 7.1, 1, 200, false},
-	{"Harbor Bell", 2021, 96, "PG", []string{"Family", "Comedy"}, "A town, a bell, and a very small thief.", "The harbor bell goes missing the week before the regatta. Nine-year-old Pip has a plan and a wagon.", "Juno Marsh", []string{"Pip Castellane", "Delphine Arquette"}, 6.9, 0, 400, false},
-	{"Zenith Station", 2024, 127, "PG-13", []string{"Thriller", "Science Fiction"}, "A night with no stars.", "At an observatory at the end of the only road, the night sky goes dark and the door is locked from the outside.", "Petra Halloway", []string{"Marcus Oyelaran", "Greta Lindqvist", "Jonah Pike"}, 8.2, 0.15, 8, true},
-	{"The Weir Keepers", 2020, 141, "PG-13", []string{"Drama", "Historical"}, "Who gets warned.", "A mill town, a flood, and the family that decides who hears first.", "Imani Okafor-Lind", []string{"Priya Ramaswamy", "Hollis Grey"}, 7.6, 1, 600, false},
-	{"Reply All", 2024, 92, "PG-13", []string{"Comedy"}, "One email. Four hundred recipients.", "An office comedy about the message that could not be unsent.", "Yusuf Adebayo", []string{"Teodor Vasquez", "Amara Bellweather"}, 7.0, 0, 3, false},
-	{"Still Water", 2023, 109, "R", []string{"Horror"}, "Every room has a view of the same boat.", "A lakeside hotel reopens for one season. The guests keep seeing the same rowboat.", "Hollis Grey", []string{"Greta Lindqvist", "Callum Reid"}, 6.8, 0, 60, true},
-	{"Copperline", 2022, 88, "PG", []string{"Documentary", "Music"}, "Four friends, two boats, one record.", "A year with The Harbor Lights as they record an album in a barn by the water.", "Lena Marchetti", []string{"The Harbor Lights"}, 7.9, 0.7, 45, false},
-	{"The Ledger of Thornwall", 2021, 152, "PG-13", []string{"Fantasy", "Adventure"}, "A kingdom with excellent accountants.", "A dragon problem that is also a receipts problem, and the clerk who has to solve both.", "Soren Blackwood", []string{"Jonah Pike", "Priya Ramaswamy", "Marcus Oyelaran"}, 7.4, 0, 150, true},
-	{"Four Kitchens", 2019, 133, "PG-13", []string{"Drama"}, "One recipe. A hundred years.", "Lagos, Lisbon, Louisville, Lund: a family follows a recipe across four kitchens and a century.", "Rosalind Achebe-Finch", []string{"Amara Bellweather", "Delphine Arquette"}, 8.0, 1, 700, false},
-	{"Low Pressure", 2023, 101, "PG-13", []string{"Romance", "Drama"}, "Rain on the line.", "A weather forecaster and a lighthouse keeper argue about the same storm from opposite ends of a phone call.", "Marlowe Finch", []string{"Callum Reid", "Mira Lindqvist"}, 7.2, 0.3, 30, false},
-	{"Back Roads", 2022, 97, "PG", []string{"Comedy", "Drama"}, "Two towns over.", "A road trip between two small towns that takes all summer.", "Rafferty June", []string{"Teodor Vasquez", "Pip Castellane"}, 6.7, 0, 250, false},
-	{"Signal Hill", 2020, 112, "PG", []string{"Drama", "Music"}, "Seven players, one hill.", "A brass band faces its last Sunday.", "Juno Marsh", []string{"Hollis Grey", "Greta Lindqvist"}, 7.3, 0, 500, false},
-	{"The Quiet Belt", 2024, 124, "PG-13", []string{"Science Fiction"}, "A ring of silent satellites.", "One operator notices the silence and cannot make anyone else hear it.", "Caius Mendel", []string{"Marcus Oyelaran", "Priya Ramaswamy"}, 7.7, 0, 12, true},
-	{"Please Remain Seated", 2021, 99, "PG-13", []string{"Comedy"}, "A seating plan is an act of war.", "A wedding, a will, and a table arrangement nobody survives.", "Yusuf Adebayo", []string{"Delphine Arquette", "Jonah Pike"}, 6.9, 1, 350, false},
-	{"Greenhouse", 2023, 84, "G", []string{"Documentary"}, "Recorded among the ferns.", "A musician builds an album inside a greenhouse over one growing season.", "Lena Marchetti", []string{"Elowen Sky"}, 7.5, 0, 80, false},
-	{"Thirteen Bells", 2019, 106, "R", []string{"Thriller", "Mystery"}, "One ringer short.", "A cathedral town, a missing bell-ringer, and a peal that should not be possible.", "Petra Halloway", []string{"Callum Reid", "Amara Bellweather"}, 7.0, 0, 800, false},
-	{"Lantern Hours", 2022, 95, "PG-13", []string{"Drama"}, "One shift at a time.", "A night porter's year in a grand old hotel.", "Ezra Quill", []string{"Teodor Vasquez"}, 7.1, 0.55, 90, false},
-	{"Idle Hands", 2024, 110, "PG-13", []string{"Science Fiction", "Anthology"}, "Work that no longer needs doing.", "Four stories about the first morning after the machines finished everything.", "Caius Mendel", []string{"Greta Lindqvist", "Marcus Oyelaran", "Pip Castellane"}, 7.3, 0, 25, true},
-	{"The Sunday Table", 2021, 121, "PG", []string{"Drama", "Family"}, "When the cook stops cooking.", "A family learns the recipes it never wrote down.", "Rosalind Achebe-Finch", []string{"Delphine Arquette", "Hollis Grey"}, 7.6, 0, 420, false},
-	{"Good Neighbours", 2020, 93, "PG-13", []string{"Comedy"}, "Planned by committee.", "A street party with an agenda nobody survives.", "Yusuf Adebayo", []string{"Amara Bellweather", "Jonah Pike"}, 6.6, 0, 650, false},
-	{"Winter Drift", 2024, 102, "PG", []string{"Drama"}, "First frost to thaw.", "One valley, one winter, four households that stop speaking and start again.", "Wren Halliday", []string{"Mira Lindqvist", "Callum Reid"}, 7.4, 0, 2, true},
-	{"The Hollow Mile", 2023, 79, "G", []string{"Documentary", "Nature"}, "One mile. One year.", "A naturalist walks the same hedgerow every week for a year.", "Odette Marsh", []string{"Odette Marsh"}, 7.8, 0, 110, false},
-	{"Bridgework", 2018, 138, "PG-13", []string{"Drama", "Historical"}, "Only one of them finishes it.", "Three generations build the same bridge.", "Tobias Renshaw", []string{"Hollis Grey", "Priya Ramaswamy"}, 7.5, 1, 900, false},
+	{"The Cartographer's Daughter", 2023, 118, "PG-13", []string{"Adventure", "Drama"}, "The blank parts are not blank.", "When Ines inherits her father's unfinished atlas, the missing coastline turns out to be missing on purpose.", "Halle Brennan", []castMember{{"Ines Okoro", "Ines"}, {"Teo Varga", "Aurel"}, {"Mira Solen", "Tove"}}, 7.8, 0.42, 20, true},
+	{"Night Ferry", 2022, 104, "R", []string{"Thriller"}, "Last crossing. No return.", "Six passengers, one ferry, and a storm that closes the harbor behind them.", "Rowan Pike", []castMember{{"Cal Reid", "The Captain"}, {"Amara Bell", "Ruth"}}, 7.1, 1, 200, false},
+	{"Harbor Bell", 2021, 96, "PG", []string{"Family", "Comedy"}, "A town, a bell, and a very small thief.", "The harbor bell goes missing the week before the regatta. Nine-year-old Pip has a plan and a wagon.", "Juno Marsh", []castMember{{"Pip Dorsey", "Pip"}, {"Nell Fane", "Harbormaster"}, {"Bram Ives", "Grandpa Ike"}}, 6.9, 0, 400, false},
+	{"Zenith Station", 2024, 127, "PG-13", []string{"Thriller", "Science Fiction"}, "A night with no stars.", "At an observatory at the end of the only road, the night sky goes dark and the door is locked from the outside.", "Petra Halloway", []castMember{{"Kofi Adair", "Dr. Osei"}, {"Greta Lune", "Lena"}, {"Jonah Pike", "Night Tech"}}, 8.2, 0.15, 8, true},
+	{"The Weir Keepers", 2020, 141, "PG-13", []string{"Drama", "Historical"}, "Who gets warned.", "A mill town, a flood, and the family that decides who hears first.", "Imani Okafor-Lind", []castMember{{"Priya Sen", "Agnes Weir"}, {"Otto Grey", "Thomas Weir"}}, 7.6, 1, 600, false},
+	{"Reply All", 2024, 92, "PG-13", []string{"Comedy"}, "One email. Four hundred recipients.", "An office comedy about the message that could not be unsent.", "Yusuf Adebayo", []castMember{{"Teo Varga", "Dev"}, {"Amara Bell", "Marnie"}}, 7.0, 0, 3, false},
+	{"Still Water", 2023, 109, "R", []string{"Horror"}, "Every room has a view of the same boat.", "A lakeside hotel reopens for one season. The guests keep seeing the same rowboat.", "Hollis Grey", []castMember{{"Greta Lune", "Hester"}, {"Cal Reid", "Night Clerk"}}, 6.8, 0, 60, true},
+	{"Copperline", 2022, 88, "PG", []string{"Documentary", "Music"}, "Four friends, two boats, one record.", "A year with The Harbor Lights as they record an album in a barn by the water.", "Lena Marchetti", []castMember{{"Ada Lowe", "Self"}, {"Finn Rook", "Self"}}, 7.9, 0.7, 45, false},
+	{"The Ledger of Thornwall", 2021, 152, "PG-13", []string{"Fantasy", "Adventure"}, "A kingdom with excellent accountants.", "A dragon problem that is also a receipts problem, and the clerk who has to solve both.", "Soren Blackwood", []castMember{{"Jonah Pike", "Aldous"}, {"Priya Sen", "Queen Maren"}, {"Kofi Adair", "The Dragon"}}, 7.4, 0, 150, true},
+	{"Four Kitchens", 2019, 133, "PG-13", []string{"Drama"}, "One recipe. A hundred years.", "Lagos, Lisbon, Louisville, Lund: a family follows a recipe across four kitchens and a century.", "Rosalind Achebe-Finch", []castMember{{"Amara Bell", "Folake"}, {"Nell Fane", "Leonor"}}, 8.0, 1, 700, false},
+	{"Low Pressure", 2023, 101, "PG-13", []string{"Romance", "Drama"}, "Rain on the line.", "A weather forecaster and a lighthouse keeper argue about the same storm from opposite ends of a phone call.", "Marlowe Finch", []castMember{{"Cal Reid", "Rowan"}, {"Mira Solen", "Isla"}}, 7.2, 0.3, 30, false},
+	{"Back Roads", 2022, 97, "PG", []string{"Comedy", "Drama"}, "Two towns over.", "A road trip between two small towns that takes all summer.", "Rafferty June", []castMember{{"Teo Varga", "Hank"}, {"Pip Dorsey", "Dot"}}, 6.7, 0, 250, false},
+	{"Signal Hill", 2020, 112, "PG", []string{"Drama", "Music"}, "Seven players, one hill.", "A brass band faces its last Sunday.", "Juno Marsh", []castMember{{"Otto Grey", "Bandmaster"}, {"Greta Lune", "Win"}}, 7.3, 0, 500, false},
+	{"The Quiet Belt", 2024, 124, "PG-13", []string{"Science Fiction"}, "A ring of silent satellites.", "One operator notices the silence and cannot make anyone else hear it.", "Caius Mendel", []castMember{{"Kofi Adair", "Operator Vos"}, {"Priya Sen", "Dr. Imre"}}, 7.7, 0, 12, true},
+	{"Please Remain Seated", 2021, 99, "PG-13", []string{"Comedy"}, "A seating plan is an act of war.", "A wedding, a will, and a table arrangement nobody survives.", "Yusuf Adebayo", []castMember{{"Lise Hart", "Clem"}, {"Jonah Pike", "Uncle Ned"}}, 6.9, 1, 350, false},
+	{"Greenhouse", 2023, 84, "G", []string{"Documentary"}, "Recorded among the ferns.", "A musician builds an album inside a greenhouse over one growing season.", "Lena Marchetti", []castMember{{"Elowen Sky", "Self"}}, 7.5, 0, 80, false},
+	{"Thirteen Bells", 2019, 106, "R", []string{"Thriller", "Mystery"}, "One ringer short.", "A cathedral town, a missing bell-ringer, and a peal that should not be possible.", "Petra Halloway", []castMember{{"Cal Reid", "Canon Hale"}, {"Amara Bell", "Bea Thorne"}}, 7.0, 0, 800, false},
+	{"Lantern Hours", 2022, 95, "PG-13", []string{"Drama"}, "One shift at a time.", "A night porter's year in a grand old hotel.", "Ezra Quill", []castMember{{"Teo Varga", "Night Porter"}}, 7.1, 0.55, 90, false},
+	{"Idle Hands", 2024, 110, "PG-13", []string{"Science Fiction", "Anthology"}, "Work that no longer needs doing.", "Four stories about the first morning after the machines finished everything.", "Caius Mendel", []castMember{{"Greta Lune", "Mae"}, {"Kofi Adair", "Foreman"}, {"Pip Dorsey", "The Boy"}}, 7.3, 0, 25, true},
+	{"The Sunday Table", 2021, 121, "PG", []string{"Drama", "Family"}, "When the cook stops cooking.", "A family learns the recipes it never wrote down.", "Rosalind Achebe-Finch", []castMember{{"Nell Fane", "Gran"}, {"Otto Grey", "Walt"}}, 7.6, 0, 420, false},
+	{"Good Neighbours", 2020, 93, "PG-13", []string{"Comedy"}, "Planned by committee.", "A street party with an agenda nobody survives.", "Yusuf Adebayo", []castMember{{"Amara Bell", "Hazel"}, {"Jonah Pike", "Mr. Pruitt"}}, 6.6, 0, 650, false},
+	{"Winter Drift", 2024, 102, "PG", []string{"Drama"}, "First frost to thaw.", "One valley, one winter, four households that stop speaking and start again.", "Wren Halliday", []castMember{{"Mira Solen", "Ingrid"}, {"Cal Reid", "Aksel"}}, 7.4, 0, 2, true},
+	{"The Hollow Mile", 2023, 79, "G", []string{"Documentary", "Nature"}, "One mile. One year.", "A naturalist walks the same hedgerow every week for a year.", "Odette Marsh", []castMember{{"Bram Ives", "Narrator"}}, 7.8, 0, 110, false},
+	{"Bridgework", 2018, 138, "PG-13", []string{"Drama", "Historical"}, "Only one of them finishes it.", "Three generations build the same bridge.", "Tobias Renshaw", []castMember{{"Otto Grey", "Elias"}, {"Priya Sen", "Mags"}}, 7.5, 1, 900, false},
 }
 
 type showSeed struct {
@@ -229,6 +239,156 @@ var shows = []showSeed{
 		{"Clouds", "Wind", "Rain", "Frost", "Fog", "Rainbows", "Thunder", "Sunsets"},
 		{"Snow", "Hail", "Dew", "Mist", "Breeze", "Heatwave", "Stars", "Seasons"},
 	}, 12, 1, 6, 220},
+}
+
+// showCast: the credited leads of each series (Plex Role, Jellyfin People).
+var showCast = map[string][]castMember{
+	"Low Tide at Ferris Cove":   {{"Lise Hart", "Harbormaster"}, {"Ravi Cole", "Journalist"}},
+	"The Committee of Tuesdays": {{"June Tam", "Chair"}, {"Bram Ives", "Secretary"}},
+	"Zenith":                    {{"Mira Solen", "Dr. Hale"}, {"Otto Grey", "Night Tech"}},
+	"Four Kitchens":             {{"Amara Bell", "Folake"}, {"Nell Fane", "Leonor"}},
+	"Back Roads":                {{"Teo Varga", "Host"}},
+	"Signals":                   {{"Priya Sen", "Host"}},
+	"The Gilded Hour":           {{"Ines Okoro", "Clara"}, {"Jonah Pike", "Felix"}},
+	"Weather for Beginners":     {{"June Tam", "Host"}},
+}
+
+// episodeSummaries: one line per episode, season by season, in the order
+// of showSeed.Seasons.
+var episodeSummaries = map[string][][]string{
+	"Low Tide at Ferris Cove": {
+		{
+			"The Mary Dunn drifts into harbor at dawn with the engine warm and nobody aboard.",
+			"The harbormaster times the tides and finds the boat could not have drifted in on its own.",
+			"An old logbook entry puts a second vessel in the cove on the night the crew vanished.",
+			"The highest tide in years uncovers a mooring nobody admits to owning.",
+			"The journalist finds that the cannery's books balance perfectly, which is the problem.",
+			"A torn net, a missing knife, and a fisherman who suddenly wants to talk.",
+			"Someone takes a boat out in the fog, and the whole town pretends not to hear the engine.",
+			"At the lowest tide of the year, the cove gives back something it has been keeping.",
+		},
+		{
+			"A year on, a storm surge floods the harbor and a second boat breaks its moorings.",
+			"The new wreck carries a name the harbormaster has not heard spoken in thirty years.",
+			"Three days of fog close the cove, and the town turns on the journalist.",
+			"The inquest reopens, and everyone's account of that night changes slightly.",
+			"A length of rope, tied with a knot only one family in Ferris Cove still uses.",
+			"Repairs to the breakwater stop after an anonymous letter and a very large donation.",
+			"The ferry makes its last run of the season with every suspect aboard.",
+			"The harbormaster, the journalist and the town finally say out loud what happened.",
+		},
+	},
+	"The Committee of Tuesdays": {{
+		"A new member asks why the agenda has carried the same item for six years.",
+		"The committee debates a bench. The bench has already been ordered. Nobody knows by whom.",
+		"The minutes from 1987 go missing, and the town's entire parking policy rests on them.",
+		"Five members are needed to vote. Four turn up. The fifth is a matter of interpretation.",
+		"A procedural dispute about biscuits escalates into a constitutional crisis.",
+		"The motion passes. Now somebody has to tell the mayor.",
+		"The committee postpones a decision so well that it postpones itself.",
+		"Forty years of Tuesdays end with one last vote, and it is not unanimous.",
+	}},
+	"Zenith": {{
+		"A new night technician arrives at the observatory and finds tonight's log already filled in.",
+		"Every star in the eastern sky goes out for eleven minutes. Only one camera was recording.",
+		"Two telescopes on the same mountain disagree about where the moon is.",
+		"Something passes in front of a distant star, then passes again exactly an hour later.",
+		"The road down the mountain closes for the night, and a car comes up it anyway.",
+		"The crew points every instrument straight up and waits for whatever is waiting for them.",
+	}},
+	"Four Kitchens": {
+		{
+			"Lagos, 1921: a young cook writes down her mother's stew for the first time, almost right.",
+			"Her daughter carries the recipe to Lisbon, where the market has never heard of half of it.",
+			"A Louisville diner kitchen in 1958 adds the ingredient the family will argue about for decades.",
+			"Winter in Lund. A grandson cooks the stew for strangers and finally understands it.",
+			"Four handwritten versions of the same recipe turn up in one shoebox.",
+			"The whole family gathers for the first time, and everyone brings their own version.",
+		},
+		{
+			"A cookbook deal arrives, and so does the question of whose name goes on the cover.",
+			"A letter from 1934 explains the missing ingredient and starts a new argument.",
+			"Two cousins visit the same market decades apart and buy the same tomatoes.",
+			"A bad batch, a famous critic and a very honest review.",
+			"The restaurant kitchen catches fire on the busiest night of the year.",
+			"They rebuild the kitchen around the one table that refused to burn.",
+		},
+		{
+			"The youngest goes back to Lagos to find the kitchen where it all started.",
+			"The book is finished. The family reads it and recognises nobody.",
+			"Four kitchens, four doors, and a knock at each in the same week.",
+			"For the first time in a century, everyone cooks in the same room.",
+			"A long dinner, a short speech, and the stew served exactly as written.",
+			"Nobody ever wrote down the dessert, so they make it up together.",
+		},
+	},
+	"Back Roads": {
+		{
+			"The trip starts at a mile marker nobody has repainted since 1970.",
+			"A diner that has opened every day for sixty years, and the pie that keeps it open.",
+			"Three generations bring the hay in before the weather turns.",
+			"Two hundred miles without pavement, and the people who like it that way.",
+			"A county fair, a prize pumpkin and a judge who has seen it all.",
+			"A town mends the same fence every Sunday. Nobody remembers why.",
+			"A radio station run from a pickup truck, broadcasting to eleven farms.",
+			"The road loops back, and the first town looks different the second time.",
+		},
+		{
+			"A second summer, a longer route and a map drawn by a ten-year-old.",
+			"Two towns face each other across a river, joined by one small ferry.",
+			"Following a highway that was taken off the maps in 1962.",
+			"A cattle crossing that stops traffic for an hour every day, on purpose.",
+			"The back roads after dark: owls, porch lights and a bait shop that never closes.",
+			"The finale drives every road of the series in a single day.",
+		},
+	},
+	"Signals": {{
+		"How a town keeps time, from the church tower to the atomic clock in a basement.",
+		"The tide tables harbors still print by hand, and why they are always right.",
+		"Bell ringers, bell founders and the physics of a perfect peal.",
+		"Hundreds of satellites pass overhead tonight. A backyard antenna can hear them.",
+		"The shortwave operators who still talk across oceans every night.",
+		"River gauges, flood sirens and the quiet network that warns a valley.",
+	}},
+	"The Gilded Hour": {{
+		"Three musicians, one borrowed van and a tour booked by someone who has never toured.",
+		"The night before the first show, the harmony falls apart.",
+		"Forty people in a bookshop, and the best show they will ever play.",
+		"The van breaks down between two cities, and so does the friendship.",
+		"A song written in a laundromat becomes the one everyone asks for.",
+		"The last night of the tour, back where it started.",
+	}},
+	"Weather for Beginners": {
+		{
+			"What clouds are made of, and how to tell a rain cloud from a fluffy one.",
+			"Where wind comes from, with a kite, a windsock and a very windy hill.",
+			"Why it rains, and how to build a rain gauge from a jar.",
+			"Ice patterns on windows, and how frost forms overnight.",
+			"A cloud that comes down to visit: what fog is and why it disappears.",
+			"Sunlight, raindrops and a garden hose make a rainbow on purpose.",
+			"Count the seconds between the flash and the boom to find the storm.",
+			"Why the evening sky turns orange, and red on some nights.",
+		},
+		{
+			"Every snowflake has six sides. Catching them on a dark mitten.",
+			"How ice grows inside a storm cloud, and how big a hailstone can get.",
+			"Morning drops on spiderwebs, and where they come from.",
+			"The difference between mist and fog, measured with a flashlight.",
+			"Why a sea breeze blows in the afternoon and turns around at night.",
+			"How to stay cool on the hottest days, with a thermometer and plenty of shade.",
+			"Clear skies, the first stars of the evening and the weather that hides them.",
+			"Why summer is warm and winter is cold, explained with a lamp and an orange.",
+		},
+	},
+}
+
+// episodeSummary is the synopsis for season si, episode ei (zero-based) of
+// a show; an episode the table does not cover gets a line from its title.
+func episodeSummary(show string, si, ei int, title string) string {
+	if seasons, ok := episodeSummaries[show]; ok && si < len(seasons) && ei < len(seasons[si]) {
+		return seasons[si][ei]
+	}
+	return fmt.Sprintf("%s: an episode of %s.", title, show)
 }
 
 type collectionSeed struct {

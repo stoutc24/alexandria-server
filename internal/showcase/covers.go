@@ -60,6 +60,10 @@ type CoverSpec struct {
 	Kind     string // "book", "album", "film", "show", "podcast"
 	Width    int
 	Height   int
+	// Bare leaves the type off (title, second line, kind mark): backdrops,
+	// which the apps show behind their own title and buttons. Same colours
+	// and figure as the titled art for the same title.
+	Bare bool
 }
 
 var (
@@ -106,6 +110,9 @@ func Cover(spec CoverSpec) ([]byte, error) {
 		a := float64(y-h*55/100) / float64(h-h*55/100)
 		shade(img, y, 0.55*a)
 	}
+	if spec.Bare {
+		return encodeJPEG(img)
+	}
 	// Type scales with the SHORT edge, so a 16:9 backdrop and a square
 	// sleeve set their titles as sensibly as a 2:3 poster does.
 	unit := math.Min(float64(w), float64(h))
@@ -138,11 +145,125 @@ func Cover(spec CoverSpec) ([]byte, error) {
 		drawText(img, regularFace, subSize, spec.Subtitle, margin, bottom, color.NRGBA{255, 255, 255, 215})
 	}
 	drawKindMark(img, spec.Kind, w, h, pal[1])
+	return encodeJPEG(img)
+}
+
+func encodeJPEG(img image.Image) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 86}); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// hairColors: flat tones for the portraits' hair.
+var hairColors = []color.NRGBA{
+	{0x2B, 0x1E, 0x16, 255}, // dark brown
+	{0x18, 0x18, 0x1C, 255}, // near black
+	{0x6E, 0x3B, 0x22, 255}, // auburn
+	{0xB8, 0x92, 0x5A, 255}, // fair
+	{0x8C, 0x8C, 0x94, 255}, // grey
+}
+
+// Portrait renders a credited person's picture (cast and directors) as a
+// size×size JPEG: a flat head-and-shoulders figure with no face on a
+// gradient, an illustration rather than anyone's likeness. The hash of the
+// name picks the background, build, hair style and colour, and clothing,
+// so people differ from each other and each always looks the same.
+func Portrait(name string, size int) ([]byte, error) {
+	if size <= 0 {
+		size = 400
+	}
+	seed := hash("person|" + name)
+	pi := int(seed % uint32(len(palette)))
+	pal := palette[pi]
+	img := image.NewNRGBA(image.Rect(0, 0, size, size))
+	paintGradient(img, pal[0], pal[1], float64(int(seed>>16)%360))
+
+	f := float64(size)
+	cx := f / 2
+	headR := f * (0.15 + 0.01*float64((seed>>3)%4))      // 0.15–0.18
+	headY := f * (0.40 + 0.01*float64((seed>>23)%3))     // 0.40–0.42
+	shoulderW := f * (0.33 + 0.025*float64((seed>>5)%4)) // 0.33–0.405
+	skin := lerp(color.NRGBA{250, 248, 245, 255}, pal[1], 0.08)
+	si := (pi + 3 + int((seed>>20)%5)) % len(palette)
+	shirt := lerp(palette[si][0], palette[si][1], 0.45)
+	hair := hairColors[int((seed>>9)%uint32(len(hairColors)))]
+	style := (seed >> 12) % 6
+
+	circle := func(x0, y0, r float64) func(x, y float64) float64 {
+		return func(x, y float64) float64 { return math.Hypot(x-x0, y-y0) - r }
+	}
+	above := func(y0 float64) func(x, y float64) float64 { return func(x, y float64) float64 { return y - y0 } }
+	both := func(a, b func(x, y float64) float64) func(x, y float64) float64 {
+		return func(x, y float64) float64 { return math.Max(a(x, y), b(x, y)) }
+	}
+	ellipse := func(x0, y0, rx, ry float64) func(x, y float64) float64 {
+		return func(x, y float64) float64 {
+			return (math.Hypot((x-x0)/rx, (y-y0)/ry) - 1) * math.Min(rx, ry)
+		}
+	}
+	roundRect := func(x0, y0, hw, hh, rad float64) func(x, y float64) float64 {
+		return func(x, y float64) float64 {
+			qx := math.Abs(x-x0) - hw + rad
+			qy := math.Abs(y-y0) - hh + rad
+			return math.Hypot(math.Max(qx, 0), math.Max(qy, 0)) + math.Min(math.Max(qx, qy), 0) - rad
+		}
+	}
+	// The hair over the crown, shared by most styles.
+	crown := both(circle(cx, headY-headR*0.06, headR*1.05), above(headY-headR*0.22))
+
+	switch style {
+	case 1: // long: falls behind the head to the shoulders
+		fillSDF(img, hair, roundRect(cx, headY+headR*0.55, headR*1.2, headR*1.5, headR*0.95))
+	case 4: // bob: frames the head down to the jaw
+		fillSDF(img, hair, both(circle(cx, headY, headR*1.14), above(headY+headR*0.62)))
+	}
+	fillSDF(img, skin, roundRect(cx, f*0.62, headR*0.42, f*0.07, headR*0.3)) // neck
+	fillSDF(img, shirt, ellipse(cx, f*0.98, shoulderW, f*0.29))              // shoulders
+	fillSDF(img, skin, circle(cx, headY, headR))                             // head
+	switch style {
+	case 0, 1: // cropped; long
+		fillSDF(img, hair, crown)
+	case 2: // bun
+		fillSDF(img, hair, crown)
+		fillSDF(img, hair, circle(cx, headY-headR*1.12, headR*0.42))
+	case 3: // curls
+		for a := -165.0; a <= -15; a += 25 {
+			r := a * math.Pi / 180
+			fillSDF(img, hair, circle(cx+math.Cos(r)*headR*0.98, headY+math.Sin(r)*headR*0.98, headR*0.36))
+		}
+		fillSDF(img, hair, crown)
+	case 4: // bob: a fringe over the brow
+		fillSDF(img, hair, both(circle(cx, headY-headR*0.04, headR*1.06), above(headY-headR*0.12)))
+	case 5: // side part: the line slants across the crown
+		fillSDF(img, hair, both(circle(cx, headY-headR*0.06, headR*1.06), func(x, y float64) float64 {
+			return (y - (headY - headR*0.12)) + (x-cx)*0.38
+		}))
+	}
+	return encodeJPEG(img)
+}
+
+// fillSDF paints col wherever the signed distance d (in pixels, negative
+// inside the shape) is below zero, with a one-pixel soft edge.
+func fillSDF(img *image.NRGBA, col color.NRGBA, d func(x, y float64) float64) {
+	b := img.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			a := 0.5 - d(float64(x)+0.5, float64(y)+0.5)
+			if a <= 0 {
+				continue
+			}
+			if a > 1 {
+				a = 1
+			}
+			c := img.NRGBAAt(x, y)
+			img.SetNRGBA(x, y, color.NRGBA{
+				uint8(float64(c.R)*(1-a) + float64(col.R)*a),
+				uint8(float64(c.G)*(1-a) + float64(col.G)*a),
+				uint8(float64(c.B)*(1-a) + float64(col.B)*a), 255})
+		}
+	}
 }
 
 // CoverPNG is Cover as PNG, for the few places that want it (icons, tests).

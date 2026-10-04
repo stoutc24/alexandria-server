@@ -102,7 +102,7 @@ type Movie struct {
 	Year     int
 	Minutes  int
 	Genres   []string
-	Cast     []string
+	Cast     []castMember
 	Score    float64
 	Progress float64
 	LastPlay time.Time
@@ -142,6 +142,7 @@ type Show struct {
 	Year    int
 	Minutes int
 	Genres  []string
+	Cast    []castMember
 	Seasons []*Season
 	AddedAt time.Time
 	NextUp  *Episode
@@ -201,6 +202,7 @@ func Build(now time.Time, clips []string) *Catalog {
 	c.buildVideo()
 	c.buildCollections()
 	c.assignKeys()
+	c.registerPeople()
 	return c
 }
 
@@ -346,12 +348,12 @@ func (c *Catalog) buildVideo() {
 	}
 	for i, s := range shows {
 		sh := &Show{ID: fmt.Sprintf("sh%02d", i+1), Index: i, Title: s.Title, Summary: s.Summary, Rating: s.Rating,
-			Year: s.Year, Minutes: s.Minutes, Genres: s.Genres, AddedAt: c.daysAgo(s.Added)}
+			Year: s.Year, Minutes: s.Minutes, Genres: s.Genres, Cast: showCast[s.Title], AddedAt: c.daysAgo(s.Added)}
 		for si, eps := range s.Seasons {
 			se := &Season{ID: fmt.Sprintf("%ss%02d", sh.ID, si+1), Show: sh, Index: si + 1}
 			for ei, title := range eps {
 				ep := &Episode{ID: fmt.Sprintf("%se%02d", se.ID, ei+1), Show: sh, Season: se, Index: ei + 1, Title: title,
-					Summary: fmt.Sprintf("%s — season %d, episode %d.", sh.Summary, si+1, ei+1),
+					Summary: episodeSummary(s.Title, si, ei, title),
 					Minutes: s.Minutes, Aired: c.daysAgo(s.Added + (len(eps)-ei)*7 + (len(s.Seasons)-si-1)*120)}
 				if si < s.WatchedS || (si == s.WatchedS && ei < s.WatchedE) {
 					ep.Watched = true
@@ -454,6 +456,54 @@ func (c *Catalog) assignKeys() {
 	sort.Strings(ids)
 	for i, id := range ids {
 		k := 1000 + i
+		c.plexKey[id] = k
+		c.plexByKey[k] = id
+		h := md5.Sum([]byte("alexandria-showcase|" + id))
+		j := hex.EncodeToString(h[:])
+		c.jfID[id] = j
+		c.jfByID[j] = id
+	}
+}
+
+// personKeyBase starts the rating keys of people (cast and directors), far
+// above the entity keys so the two ranges never meet.
+const personKeyBase = 90000
+
+// personPrefix marks a person's catalog id: "person|<name>". People get
+// keys and Jellyfin ids (their portraits are fetched by them) but are not
+// entities: Get returns nil for them.
+const personPrefix = "person|"
+
+// PersonID is the catalog id of a credited person.
+func PersonID(name string) string { return personPrefix + name }
+
+// registerPeople gives every credited person (film and series cast, film
+// directors) a Plex rating key and a Jellyfin id, so each one's portrait
+// has its own address.
+func (c *Catalog) registerPeople() {
+	seen := map[string]bool{}
+	var names []string
+	add := func(n string) {
+		if n != "" && !seen[n] {
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	for _, m := range c.Movies {
+		add(m.Director)
+		for _, p := range m.Cast {
+			add(p.Name)
+		}
+	}
+	for _, s := range c.Shows {
+		for _, p := range s.Cast {
+			add(p.Name)
+		}
+	}
+	sort.Strings(names)
+	for i, n := range names {
+		id := PersonID(n)
+		k := personKeyBase + i
 		c.plexKey[id] = k
 		c.plexByKey[k] = id
 		h := md5.Sum([]byte("alexandria-showcase|" + id))

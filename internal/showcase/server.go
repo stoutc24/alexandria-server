@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,9 +29,9 @@ type Server struct {
 	// screenshot session that plays something sees it move. In memory.
 	mu       sync.Mutex
 	progress map[string]float64
-	// Plex transcode session id → clip, so the segment requests that follow
-	// a start.m3u8 know which clip to serve.
-	sessions map[string]string
+	// Plex transcode session id → clip and running time, so the playlist
+	// and segment requests that follow a start.m3u8 know what to serve.
+	sessions map[string]playSession
 	log      *log.Logger
 }
 
@@ -127,15 +128,30 @@ func (s *Server) setProgress(id string, p float64) {
 type artKind int
 
 const (
-	artPoster artKind = iota // 2:3
-	artSquare                // 1:1
-	artWide                  // 16:9
+	artPoster   artKind = iota // 2:3
+	artSquare                  // 1:1
+	artWide                    // 16:9, titled (episode stills)
+	artBackdrop                // 16:9, no type (backdrops: the apps set the title over them)
 )
 
 func (s *Server) art(id string, kind artKind, width int) []byte {
 	key := fmt.Sprintf("%s|%d|%d", id, kind, width)
 	if v, ok := s.covers.Load(key); ok {
 		return v.([]byte)
+	}
+	// People (cast, directors) get a portrait whatever shape was asked for:
+	// the apps crop it to a circle.
+	if name, isPerson := strings.CutPrefix(id, personPrefix); isPerson {
+		size := 400
+		if width > 0 && width < size {
+			size = width
+		}
+		data, err := Portrait(name, size)
+		if err != nil {
+			return nil
+		}
+		s.covers.Store(key, data)
+		return data
 	}
 	spec := s.coverSpec(id)
 	switch kind {
@@ -145,6 +161,9 @@ func (s *Server) art(id string, kind artKind, width int) []byte {
 		spec.Width, spec.Height = 800, 800
 	case artWide:
 		spec.Width, spec.Height = 1280, 720
+	case artBackdrop:
+		spec.Width, spec.Height = 1280, 720
+		spec.Bare = true
 	}
 	if width > 0 && width < spec.Width {
 		spec.Height = spec.Height * width / spec.Width
@@ -176,7 +195,11 @@ func (s *Server) coverSpec(id string) CoverSpec {
 	case *Movie:
 		return CoverSpec{Title: v.Title, Subtitle: fmt.Sprintf("%d · %s", v.Year, strings.Join(v.Genres, ", ")), Kind: "film"}
 	case *Show:
-		return CoverSpec{Title: v.Title, Subtitle: fmt.Sprintf("%d · %d seasons", v.Year, len(v.Seasons)), Kind: "show"}
+		seasons := fmt.Sprintf("%d seasons", len(v.Seasons))
+		if len(v.Seasons) == 1 {
+			seasons = "1 season"
+		}
+		return CoverSpec{Title: v.Title, Subtitle: fmt.Sprintf("%d · %s", v.Year, seasons), Kind: "show"}
 	case *Season:
 		return CoverSpec{Title: v.Show.Title, Subtitle: fmt.Sprintf("Season %d", v.Index), Kind: "show"}
 	case *Episode:
@@ -298,6 +321,98 @@ func (s *Server) serveClipFile(w http.ResponseWriter, r *http.Request, clip, fil
 	}
 	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeFile(w, r, p)
+}
+
+// serveRuntimePlaylist answers a clip's HLS media playlist stretched to an
+// item's running time (stretchPlaylist). AVPlayer reads an item's duration
+// from its playlist, so the player shows the film's or episode's real
+// length instead of the clip's 45 s, and a resume point lands inside the
+// stream. Nothing extra is stored: the same segment files repeat.
+func (s *Server) serveRuntimePlaylist(w http.ResponseWriter, r *http.Request, clip string, seconds float64) {
+	p := s.clipPath(clip, "index.m3u8")
+	if p == "" {
+		http.Error(w, "no clip", http.StatusNotFound)
+		return
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		http.Error(w, "no clip", http.StatusNotFound)
+		return
+	}
+	text, stretched := stretchPlaylist(string(data), seconds)
+	if !stretched {
+		s.serveClipFile(w, r, clip, "index.m3u8")
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = io.WriteString(w, text)
+}
+
+// stretchPlaylist repeats a VOD media playlist's segments until it lasts at
+// least `seconds`, ending on a segment boundary. Every pass after the first
+// opens with EXT-X-DISCONTINUITY (the segments' timestamps start again at
+// zero) and repeats the EXT-X-MAP. false when the playlist is already that
+// long or cannot be read, so the caller serves the file as it is.
+func stretchPlaylist(src string, seconds float64) (string, bool) {
+	type segment struct {
+		dur float64
+		uri string
+	}
+	var segs []segment
+	mapLine := ""
+	pending := -1.0
+	for _, line := range strings.Split(src, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "#EXT-X-MAP:"):
+			mapLine = line
+		case strings.HasPrefix(line, "#EXTINF:"):
+			v := strings.TrimPrefix(line, "#EXTINF:")
+			if i := strings.Index(v, ","); i >= 0 {
+				v = v[:i]
+			}
+			d, err := strconv.ParseFloat(v, 64)
+			if err != nil || d <= 0 {
+				return "", false
+			}
+			pending = d
+		case line != "" && !strings.HasPrefix(line, "#"):
+			if pending < 0 {
+				return "", false
+			}
+			segs = append(segs, segment{pending, line})
+			pending = -1
+		}
+	}
+	once, longest := 0.0, 0.0
+	for _, sg := range segs {
+		once += sg.dur
+		longest = math.Max(longest, sg.dur)
+	}
+	if len(segs) == 0 || seconds <= once {
+		return "", false
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:%d\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-INDEPENDENT-SEGMENTS\n", int(math.Ceil(longest)))
+	total := 0.0
+	for pass := 0; total < seconds; pass++ {
+		if pass > 0 {
+			b.WriteString("#EXT-X-DISCONTINUITY\n")
+		}
+		if mapLine != "" {
+			b.WriteString(mapLine + "\n")
+		}
+		for _, sg := range segs {
+			if total >= seconds {
+				break
+			}
+			fmt.Fprintf(&b, "#EXTINF:%.3f,\n%s\n", sg.dur, sg.uri)
+			total += sg.dur
+		}
+	}
+	b.WriteString("#EXT-X-ENDLIST\n")
+	return b.String(), true
 }
 
 // ClipIDs lists the clip directories available.

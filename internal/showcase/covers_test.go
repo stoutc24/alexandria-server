@@ -5,7 +5,10 @@ import (
 	"image/jpeg"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestCoversRenderAndAreDeterministic(t *testing.T) {
@@ -45,6 +48,94 @@ func TestCoversRenderAndAreDeterministic(t *testing.T) {
 		}
 		bd, _ := Backdrop("The Cartographer's Daughter", "2023 · Adventure", "film")
 		_ = os.WriteFile(filepath.Join(dir, "backdrop.jpg"), bd, 0o644)
+	}
+}
+
+func TestPortraitsAreDistinctAndDeterministic(t *testing.T) {
+	cat := Build(time.Now(), nil)
+	seen := map[string]string{}
+	for _, m := range cat.Movies {
+		for _, c := range m.Cast {
+			a, err := Portrait(c.Name, 400)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := Portrait(c.Name, 400)
+			if !bytes.Equal(a, b) {
+				t.Fatalf("%s: same name must give the same portrait", c.Name)
+			}
+			img, err := jpeg.Decode(bytes.NewReader(a))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if img.Bounds().Dx() != 400 || img.Bounds().Dy() != 400 {
+				t.Fatalf("%s: portrait size %v", c.Name, img.Bounds())
+			}
+			if other, dup := seen[string(a)]; dup && other != c.Name {
+				t.Fatalf("%s and %s share a portrait", c.Name, other)
+			}
+			seen[string(a)] = c.Name
+		}
+	}
+	// Every credited person resolves both ways, Plex and Jellyfin.
+	for _, m := range cat.Movies {
+		for _, c := range m.Cast {
+			id := PersonID(c.Name)
+			if cat.IDForPlexKey(cat.PlexKey(id)) != id || cat.IDForJF(cat.JFID(id)) != id {
+				t.Fatalf("%s has no stable key", c.Name)
+			}
+		}
+	}
+	if dir := os.Getenv("SHOWCASE_SAMPLES"); dir != "" {
+		for _, n := range seen {
+			data, _ := Portrait(n, 400)
+			_ = os.WriteFile(filepath.Join(dir, "portrait-"+slug(n)+".jpg"), data, 0o644)
+		}
+		bare, _ := Cover(CoverSpec{Title: "Harbor Bell", Subtitle: "2021 · Family, Comedy", Kind: "film", Width: 1280, Height: 720, Bare: true})
+		_ = os.WriteFile(filepath.Join(dir, "backdrop-bare.jpg"), bare, 0o644)
+	}
+}
+
+func TestBareBackdropDropsTheType(t *testing.T) {
+	spec := CoverSpec{Title: "Harbor Bell", Subtitle: "2021 · Family, Comedy", Kind: "film", Width: 1280, Height: 720}
+	titled, _ := Cover(spec)
+	spec.Bare = true
+	bare, err := Cover(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(titled, bare) {
+		t.Fatal("a bare backdrop must differ from the titled one")
+	}
+}
+
+func TestStretchPlaylistReachesTheRuntime(t *testing.T) {
+	src := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-MAP:URI=\"init.mp4\"\n" +
+		"#EXTINF:6.000,\nseg0.m4s\n#EXTINF:6.000,\nseg1.m4s\n#EXTINF:6.000,\nseg2.m4s\n#EXTINF:6.000,\nseg3.m4s\n" +
+		"#EXTINF:6.000,\nseg4.m4s\n#EXTINF:6.000,\nseg5.m4s\n#EXTINF:6.000,\nseg6.m4s\n#EXTINF:3.000,\nseg7.m4s\n#EXT-X-ENDLIST\n"
+	if _, ok := stretchPlaylist(src, 45); ok {
+		t.Fatal("a playlist already that long is served as it is")
+	}
+	out, ok := stretchPlaylist(src, 104*60)
+	if !ok {
+		t.Fatal("not stretched")
+	}
+	total := 0.0
+	for _, line := range strings.Split(out, "\n") {
+		if v, found := strings.CutPrefix(line, "#EXTINF:"); found {
+			d, err := strconv.ParseFloat(strings.TrimSuffix(v, ","), 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			total += d
+		}
+	}
+	if total < 104*60 || total >= 104*60+6 {
+		t.Fatalf("stretched to %.0f s, want 6240–6245", total)
+	}
+	passes := strings.Count(out, "#EXT-X-MAP:")
+	if strings.Count(out, "#EXT-X-DISCONTINUITY") != passes-1 || !strings.HasSuffix(out, "#EXT-X-ENDLIST\n") {
+		t.Fatalf("%d passes, %d discontinuities", passes, strings.Count(out, "#EXT-X-DISCONTINUITY"))
 	}
 }
 

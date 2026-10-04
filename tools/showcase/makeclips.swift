@@ -1,12 +1,17 @@
 // makeclips.swift — synthetic video for the showcase server.
 //
 // Renders short H.264 clips (1280×720, 24 fps) of drifting gradients and
-// soft shapes with the title set in the lower third, plus a gentle
-// synthesized audio bed, and writes each as (1) a progressive MP4 and
-// (2) an HLS fMP4 set (init.mp4, seg<n>.m4s, index.m3u8). Nobody's
-// footage, nobody's music. macOS only (AVFoundation).
+// soft shapes, plus a gentle synthesized audio bed, and writes each as
+// (1) a progressive MP4 and (2) an HLS fMP4 set (init.mp4, seg<n>.m4s,
+// index.m3u8). Nobody's footage, nobody's music. macOS only (AVFoundation).
 //
-//   swift tools/showcase/makeclips.swift <outdir> "<id>|<title>|<subtitle>|<seconds>" ...
+// The picture is clean: no type, so a store screenshot of the player shows
+// nothing that gives the clip away. `--burn-in` adds the old debugging
+// overlay (the title in a lower-third band and a running timecode, top
+// right). The showcase server stretches each clip's HLS playlist to the
+// item's running time, so the clips can stay short.
+//
+//   swift tools/showcase/makeclips.swift [--burn-in] <outdir> "<id>|<title>|<subtitle>|<seconds>" ...
 
 import Foundation
 import AVFoundation
@@ -14,9 +19,10 @@ import CoreGraphics
 import CoreText
 import UniformTypeIdentifiers
 
-let args = CommandLine.arguments
+let burnIn = CommandLine.arguments.contains("--burn-in")
+let args = CommandLine.arguments.filter { $0 != "--burn-in" }
 guard args.count >= 3 else {
-    print("usage: makeclips <outdir> \"id|title|subtitle|seconds\" ...")
+    print("usage: makeclips [--burn-in] <outdir> \"id|title|subtitle|seconds\" ...")
     exit(2)
 }
 let outRoot = URL(fileURLWithPath: args[1])
@@ -59,7 +65,8 @@ func drawFrame(_ ctx: CGContext, clip: Clip, t: Double, seed: UInt32) {
         let rad = 90.0 + 60.0 * sin(t * 0.3 + ph)
         ctx.fillEllipse(in: CGRect(x: x - rad, y: y - rad, width: rad * 2, height: rad * 2))
     }
-    // Lower-third band + title.
+    guard burnIn else { return }
+    // --burn-in: lower-third band + title.
     ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.35))
     ctx.fill(CGRect(x: 0, y: 0, width: width, height: 190))
     func text(_ s: String, size: CGFloat, weight: CFString, y: CGFloat, alpha: CGFloat) {

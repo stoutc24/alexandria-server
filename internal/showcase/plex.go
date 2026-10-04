@@ -89,6 +89,18 @@ func tags(names []string) []map[string]any {
 	return out
 }
 
+// plexRoles is a Role array: each person with the part they play and a
+// thumb at their own rating key (a generated portrait, see Portrait).
+func (s *Server) plexRoles(cast []castMember) []map[string]any {
+	var out []map[string]any
+	for i, c := range cast {
+		k := s.cat.PlexKey(PersonID(c.Name))
+		out = append(out, map[string]any{"id": 500 + i, "filter": "actor=" + strconv.Itoa(500+i), "tag": c.Name, "role": c.Role,
+			"thumb": fmt.Sprintf("/library/metadata/%s/thumb/1", k)})
+	}
+	return out
+}
+
 func (s *Server) plexVideoMedia(id, clip string, durationMs int64, uhd bool) []map[string]any {
 	w, h, res, bitrate := 1280, 720, "720", 3000
 	if uhd {
@@ -129,13 +141,7 @@ func (s *Server) plexMovie(m *Movie, full bool) map[string]any {
 		"thumb": thumb, "art": art, "duration": durMs, "originallyAvailableAt": fmt.Sprintf("%d-05-10", m.Year),
 		"addedAt": m.AddedAt.Unix(), "updatedAt": m.AddedAt.Unix(), "audienceRatingImage": "rottentomatoes://image.rating.upright", "ratingImage": "imdb://image.rating",
 		"Genre": tags(m.Genres), "Director": tags([]string{m.Director}), "Writer": tags([]string{m.Director}),
-		"Role": func() []map[string]any {
-			var out []map[string]any
-			for i, c := range m.Cast {
-				out = append(out, map[string]any{"id": 500 + i, "filter": "actor=" + strconv.Itoa(500+i), "tag": c, "role": "Self", "thumb": fmt.Sprintf("/library/metadata/%s/thumb/1", s.cat.PlexKey("person|"+c))})
-			}
-			return out
-		}(),
+		"Role":    s.plexRoles(m.Cast),
 		"Country": tags([]string{"United States of America"}),
 	}
 	if prog > 0 && prog < 1 {
@@ -166,7 +172,7 @@ func (s *Server) plexShow(sh *Show) map[string]any {
 		"title": sh.Title, "titleSort": strings.TrimPrefix(sh.Title, "The "), "librarySectionTitle": "TV Shows", "librarySectionID": 2, "librarySectionKey": "/library/sections/2",
 		"contentRating": sh.Rating, "summary": sh.Summary, "index": 1, "rating": 7.9, "audienceRating": 8.1, "year": sh.Year, "thumb": thumb, "art": art,
 		"duration": int64(sh.Minutes) * 60000, "originallyAvailableAt": fmt.Sprintf("%d-09-12", sh.Year), "leafCount": total, "viewedLeafCount": watched, "childCount": len(sh.Seasons),
-		"addedAt": sh.AddedAt.Unix(), "updatedAt": sh.AddedAt.Unix(), "Genre": tags(sh.Genres), "Role": tags([]string{"Delphine Arquette", "Marcus Oyelaran"}),
+		"addedAt": sh.AddedAt.Unix(), "updatedAt": sh.AddedAt.Unix(), "Genre": tags(sh.Genres), "Role": s.plexRoles(sh.Cast),
 	}
 	if sh.NextUp != nil && !sh.NextUp.LastPlay.IsZero() {
 		item["lastViewedAt"] = sh.NextUp.LastPlay.Unix()
@@ -472,7 +478,16 @@ func (s *Server) plexAll(w http.ResponseWriter, r *http.Request, key string) {
 			return toInt64(items[i]["lastViewedAt"])+toInt64(items[i]["viewCount"]) > toInt64(items[j]["lastViewedAt"])+toInt64(items[j]["viewCount"])
 		})
 	case "titleSort", "":
-		// catalog order is already by title for most lists
+		// Plex answers in titleSort order, and the TV shows the server's
+		// order under "by Title". Films are sorted; the other lists keep
+		// catalog order, which the store tours walk by position.
+		if key == plexMovies {
+			sort.SliceStable(items, func(i, j int) bool {
+				a, _ := items[i]["titleSort"].(string)
+				b, _ := items[j]["titleSort"].(string)
+				return strings.ToLower(a) < strings.ToLower(b)
+			})
+		}
 	}
 	total := len(items)
 	start := qInt(r, "X-Plex-Container-Start", 0)
@@ -598,7 +613,7 @@ func (s *Server) plexMetadata(w http.ResponseWriter, r *http.Request, p []string
 	}
 	id := s.cat.IDForPlexKey(p[0])
 	if id == "" {
-		// Person thumbs and other synthesized keys still get art.
+		// Unknown keys still get art (people have their own keys; see registerPeople).
 		if len(p) >= 2 && (p[1] == "thumb" || p[1] == "art") {
 			serveJPEG(w, s.art("person", artSquare, 0))
 			return
@@ -619,7 +634,8 @@ func (s *Server) plexMetadata(w http.ResponseWriter, r *http.Request, p []string
 	case "thumb", "art", "composite", "poster", "banner":
 		kind := artPoster
 		if p[1] == "art" {
-			kind = artWide
+			// Backdrops carry no type: the apps set the title over them.
+			kind = artBackdrop
 		}
 		switch s.cat.Get(id).(type) {
 		case *Album, *Artist, *Playlist, *Track:
@@ -858,6 +874,7 @@ func (s *Server) plexTranscode(w http.ResponseWriter, r *http.Request, p []strin
 			http.Error(w, "nothing to play", http.StatusNotFound)
 			return
 		}
+		s.rememberSession(session, clip, s.runtimeOf(id))
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		_, _ = fmt.Fprintf(w, "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=3200000,RESOLUTION=1280x720,FRAME-RATE=24.000,CODECS=\"avc1.640028,mp4a.40.2\"\nsession/%s/base/index.m3u8\n", session)
 	case "start.mp3", "start.wav":
@@ -873,7 +890,11 @@ func (s *Server) plexTranscode(w http.ResponseWriter, r *http.Request, p []strin
 			notFound(w)
 			return
 		}
-		clip := s.sessionClip(rest[1])
+		clip, seconds := s.sessionClip(rest[1])
+		if rest[3] == "index.m3u8" {
+			s.serveRuntimePlaylist(w, r, clip, seconds)
+			return
+		}
 		s.serveClipFile(w, r, clip, rest[3])
 	case "ping", "stop":
 		w.WriteHeader(http.StatusOK)
@@ -892,27 +913,47 @@ func (s *Server) clipOf(id string) string {
 	return ""
 }
 
-// sessionClips remembers which clip a transcode session plays; start.m3u8 and
+// runtimeOf is an item's running time in seconds (0 for non-video).
+func (s *Server) runtimeOf(id string) float64 {
+	switch v := s.cat.Get(id).(type) {
+	case *Movie:
+		return float64(v.Minutes) * 60
+	case *Episode:
+		return float64(v.Minutes) * 60
+	}
+	return 0
+}
+
+// playSession is what a transcode session plays: the clip, and the
+// item's running time, which its media playlist is stretched to.
+type playSession struct {
+	clip    string
+	seconds float64
+}
+
+// rememberSession records which clip a transcode session plays; start.m3u8 and
 // decision both set it (the decision is what the TV calls first).
-func (s *Server) rememberSession(session, clip string) {
+func (s *Server) rememberSession(session, clip string, seconds float64) {
 	if session == "" || clip == "" {
 		return
 	}
 	s.mu.Lock()
 	if s.sessions == nil {
-		s.sessions = map[string]string{}
+		s.sessions = map[string]playSession{}
 	}
-	s.sessions[session] = clip
+	s.sessions[session] = playSession{clip: clip, seconds: seconds}
 	s.mu.Unlock()
 }
 
-func (s *Server) sessionClip(session string) string {
+// sessionClip is the clip and running time of a session (the first clip,
+// unstretched, for a session nobody announced).
+func (s *Server) sessionClip(session string) (string, float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if c, ok := s.sessions[session]; ok {
-		return c
+	if p, ok := s.sessions[session]; ok {
+		return p.clip, p.seconds
 	}
-	return s.cat.Clips[0]
+	return s.cat.Clips[0], 0
 }
 
 func (s *Server) plexDecision(w http.ResponseWriter, r *http.Request, id string) {
@@ -921,7 +962,7 @@ func (s *Server) plexDecision(w http.ResponseWriter, r *http.Request, id string)
 		ok(w, mc(map[string]any{"generalDecisionCode": 2000, "generalDecisionText": "Unknown item", "Metadata": []map[string]any{}}))
 		return
 	}
-	s.rememberSession(qStr(r, "session"), s.clipOf(id))
+	s.rememberSession(qStr(r, "session"), s.clipOf(id), s.runtimeOf(id))
 	// Mark every stream as copied: the TV reads Part.Stream[].decision.
 	if media, isList := item["Media"].([]map[string]any); isList {
 		for _, m := range media {
@@ -965,7 +1006,7 @@ func (s *Server) plexPhoto(w http.ResponseWriter, r *http.Request) {
 			kind = artWide
 		}
 		if len(parts) >= 4 && parts[3] == "art" {
-			kind = artWide
+			kind = artBackdrop
 		}
 		serveJPEG(w, s.art(id, kind, qInt(r, "width", 0)))
 		return

@@ -245,13 +245,19 @@ func (s *Server) jfArtist(a *Artist) map[string]any {
 	}
 }
 
-func (s *Server) jfPeople(cast []string, director string) []map[string]any {
-	var out []map[string]any
+// jfPeople: each person with their own id and a Primary image (a generated
+// portrait, see Portrait), which the apps fetch at /Items/{id}/Images/Primary.
+func (s *Server) jfPeople(cast []castMember, director string) []map[string]any {
+	out := []map[string]any{}
+	person := func(name, role, typ string) map[string]any {
+		id := s.cat.JFID(PersonID(name))
+		return map[string]any{"Name": name, "Id": id, "Role": role, "Type": typ, "PrimaryImageTag": "pt" + id[:8]}
+	}
 	if director != "" {
-		out = append(out, map[string]any{"Name": director, "Id": s.cat.JFID("person|" + director), "Role": "", "Type": "Director", "PrimaryImageTag": nil})
+		out = append(out, person(director, "", "Director"))
 	}
 	for _, c := range cast {
-		out = append(out, map[string]any{"Name": c, "Id": s.cat.JFID("person|" + c), "Role": "Self", "Type": "Actor", "PrimaryImageTag": nil})
+		out = append(out, person(c.Name, c.Role, "Actor"))
 	}
 	return out
 }
@@ -328,7 +334,7 @@ func (s *Server) jfShow(sh *Show, full bool) map[string]any {
 		"RunTimeTicks": ticks(float64(sh.Minutes) * 60), "IsFolder": true, "Type": "Series", "MediaType": "Unknown", "ParentId": jfShowView,
 		"LocationType": "FileSystem", "ImageTags": map[string]any{"Primary": "tag" + id[:8]}, "BackdropImageTags": []string{"bd" + id[:8]},
 		"ChildCount": len(sh.Seasons), "RecursiveItemCount": total, "Status": "Continuing", "AirDays": []string{"Thursday"}, "Tags": []any{},
-		"People": s.jfPeople([]string{"Delphine Arquette", "Marcus Oyelaran"}, ""), "Studios": []map[string]any{{"Name": "Showcase Television", "Id": s.cat.JFID("studio2")}},
+		"People": s.jfPeople(sh.Cast, ""), "Studios": []map[string]any{{"Name": "Showcase Television", "Id": s.cat.JFID("studio2")}},
 		"UserData": map[string]any{"UnplayedItemCount": total - watched, "PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": false, "Played": watched == total, "Key": id},
 	}
 	if full {
@@ -736,7 +742,8 @@ func (s *Server) jfItemsRoot(w http.ResponseWriter, r *http.Request, p []string)
 	case "Images":
 		kind := artPoster
 		if len(p) >= 3 && strings.EqualFold(p[2], "Backdrop") {
-			kind = artWide
+			// Backdrops carry no type: the apps set the title over them.
+			kind = artBackdrop
 		}
 		switch v := s.cat.Get(id).(type) {
 		case *Album, *Artist, *Playlist, *Track:
@@ -985,7 +992,7 @@ func (s *Server) jfVideos(w http.ResponseWriter, r *http.Request, p []string) {
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		_, _ = fmt.Fprintf(w, "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-STREAM-INF:BANDWIDTH=3200000,AVERAGE-BANDWIDTH=3000000,RESOLUTION=1280x720,FRAME-RATE=24.000,CODECS=\"avc1.640028,mp4a.40.2\"\nmain.m3u8?ApiKey=%s\n", s.Token)
 	case strings.EqualFold(file, "main.m3u8"):
-		s.serveClipFile(w, r, clip, "index.m3u8")
+		s.serveRuntimePlaylist(w, r, clip, s.runtimeOf(id))
 	case strings.EqualFold(file, "init.mp4"), strings.HasPrefix(file, "seg") && strings.HasSuffix(file, ".m4s"):
 		s.serveClipFile(w, r, clip, file)
 	case strings.EqualFold(file, "Trickplay"):
