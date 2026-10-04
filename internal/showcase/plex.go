@@ -275,7 +275,7 @@ func (s *Server) plexTrack(t *Track) map[string]any {
 		"duration": durMs, "addedAt": t.Album.AddedAt.Unix(), "updatedAt": t.Album.AddedAt.Unix(), "ratingCount": 100 + int(t.Seed%900),
 		"librarySectionID": 3, "librarySectionTitle": "Music", "librarySectionKey": "/library/sections/3",
 		"Media": []map[string]any{{
-			"id": s.cat.plexKey[t.ID], "duration": durMs, "bitrate": 353, "audioChannels": 1, "audioCodec": "pcm", "container": "wav",
+			"id": s.cat.plexKey[t.ID], "duration": durMs, "bitrate": 353, "audioChannels": 1, "audioCodec": s.plexTrackCodec(), "container": "wav",
 			"Part": []map[string]any{{
 				"id": partID, "key": fmt.Sprintf("/library/parts/%d/file.wav", partID), "duration": durMs, "file": "/music/" + slug(t.Album.Artist.Name) + "/" + slug(t.Album.Title) + "/" + slug(t.Title) + ".wav",
 				"size": WAVSize(t.Duration), "container": "wav", "hasThumbnail": "0",

@@ -33,11 +33,25 @@ type Server struct {
 	// and segment requests that follow a start.m3u8 know what to serve.
 	sessions map[string]playSession
 	log      *log.Logger
+	// LossyMusic labels the Plex music tracks AAC instead of PCM (the bytes
+	// served stay WAV). The phone app streams lossless tracks through
+	// libmpv, which cannot open an audio device in the iOS simulator, so
+	// they never start there; labelled lossy they go to AVPlayer, which
+	// plays the same WAV. Off unless SHOWCASE_LOSSY_MUSIC=1 is set.
+	LossyMusic bool
+}
+
+// plexTrackCodec is the audioCodec the Plex dialect reports for music.
+func (s *Server) plexTrackCodec() string {
+	if s.LossyMusic {
+		return "aac"
+	}
+	return "pcm"
 }
 
 func New(cat *Catalog, clipsDir string) *Server {
 	return &Server{cat: cat, clipsDir: clipsDir, Token: "showcase-token", progress: map[string]float64{},
-		log: log.New(os.Stdout, "", log.Ltime)}
+		log: log.New(os.Stdout, "", log.Ltime), LossyMusic: os.Getenv("SHOWCASE_LOSSY_MUSIC") == "1"}
 }
 
 // ---- JSON / HTTP helpers ---------------------------------------------------
