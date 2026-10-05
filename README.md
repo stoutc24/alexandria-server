@@ -456,6 +456,15 @@ diagnostics** shows how far each start landed from the party clock.
   [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md); all are MIT or
   BSD-3.
 
-## Support
+## Support and feedback
 
-stoutservers@gmail.com
+- **Bugs and feature requests:** [open an issue](../../issues/new/choose).
+- **Questions and setup help:**
+  [r/AlexandriaMediaLib2](https://www.reddit.com/r/AlexandriaMediaLib2/).
+- **Email:** stoutservers@gmail.com
+- **Security problems:** privately, as described in
+  [SECURITY.md](SECURITY.md). Never in a public issue.
+
+This is proprietary software, so code contributions are not accepted and
+pull requests are closed automatically. See
+[CONTRIBUTING.md](CONTRIBUTING.md).

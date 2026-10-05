@@ -1,0 +1,60 @@
+name: Bug report
+description: Something in the companion server does not work as described.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Never paste your admin token, a device token, a link code or an authenticator code here.** Security problems go privately; see the Security policy.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: server-version
+    attributes:
+      label: Server version
+      description: The `version` from `curl http://<server address>:4000/health`.
+      placeholder: 0.3.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - The installer script
+        - Docker Compose
+        - docker run
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Machine
+      description: What it runs on, and its architecture.
+      placeholder: Synology DS920+ (amd64), Raspberry Pi 5 (arm64), …
+  - type: input
+    id: app
+    attributes:
+      label: Alexandria app and version
+      placeholder: iPhone 3.1 (1200), Apple TV (168), Android 3.1 …
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The relevant part of `docker logs alexandria-server`. Remove anything private first.
+      render: text

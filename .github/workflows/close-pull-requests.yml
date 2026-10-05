@@ -1,0 +1,34 @@
+name: Close outside pull requests
+
+# Alexandria Server is proprietary: code contributions are not accepted
+# (CONTRIBUTING.md). A pull request from anyone but the owner or
+# Dependabot is closed with a pointer to the issue tracker.
+#
+# pull_request_target runs in THIS repository's context with a write
+# token. This job therefore never checks out or runs the pull request's
+# code, and never puts any text from the pull request into a command:
+# only its number, passed as an environment variable.
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions: {}
+
+jobs:
+  close:
+    if: >-
+      github.event.pull_request.user.login != github.repository_owner &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Close with a pointer to the issue tracker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr close "$NUMBER" --repo "$REPO" --comment "Thanks for taking the time! Alexandria Server is proprietary software and does not accept code contributions, so this pull request was closed automatically. For bugs and feature requests, please open an issue: https://github.com/$REPO/issues/new/choose. You can also reach us on Reddit (https://www.reddit.com/r/AlexandriaMediaLib2/) or by email (stoutservers@gmail.com)."

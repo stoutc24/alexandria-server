@@ -7,7 +7,13 @@
 # There is no frontend stage: the admin page is a single HTML file
 # embedded with go:embed (internal/adminui), so the image needs no Node
 # toolchain and no npm dependencies.
-FROM golang:1.22-alpine AS builder
+#
+# Both base images are a supported release pinned by digest (a tag can be
+# re-pointed; a digest cannot). Dependabot proposes updates. go.mod's `go`
+# line is the MINIMUM version: building with a newer Go is fine, and an
+# out-of-support Go (1.22 was) ships without the standard library's
+# security fixes.
+FROM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
 
 WORKDIR /build
 
@@ -31,7 +37,7 @@ RUN CGO_ENABLED=0 go build \
 # =============================================================================
 # Runtime stage - minimal image
 # =============================================================================
-FROM alpine:3.19
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 # Labels for container metadata
 LABEL org.opencontainers.image.title="Alexandria Server"

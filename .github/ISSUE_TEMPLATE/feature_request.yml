@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest something the companion server could do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why?
+      description: What it would let you or your household do.
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Alternatives you have tried, screenshots, links.
