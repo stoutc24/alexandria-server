@@ -1,15 +1,22 @@
 # Keeps the pinned GitHub Actions (commit SHAs) and the pinned base images
-# (digests) current, as pull requests for the owner to review. Go modules
-# are deliberately left out: dependency bumps are done by hand and built
-# first, because a module that raises go.mod's `go` line once broke every
-# container rebuild.
+# (digests) current, as at most one pull request a week for each, for the
+# owner to review. CI builds each proposal without publishing it. Go
+# modules are deliberately left out: dependency bumps are done by hand and
+# built first, because a module that raises go.mod's `go` line once broke
+# every container rebuild.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    groups:
+      base-images:
+        patterns: ["*"]
