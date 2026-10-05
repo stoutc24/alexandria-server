@@ -63,12 +63,13 @@ check_docker_compose() {
     echo -e "${GREEN}✓${NC} Docker Compose found"
 }
 
-# Generate a secure random secret
+# Generate a secure random secret (64 hex characters, as the README's
+# `openssl rand -hex 32`)
 generate_secret() {
     if command -v openssl &> /dev/null; then
-        openssl rand -base64 32
+        openssl rand -hex 32
     else
-        head -c 32 /dev/urandom | base64
+        head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
     fi
 }
 
@@ -95,42 +96,66 @@ main() {
     if [ ! -f .env ]; then
         echo -e "${YELLOW}Generating configuration...${NC}"
         ALEXANDRIA_API_TOKEN=$(generate_secret)
+        SERVER_NAME=$(hostname -s 2>/dev/null || hostname)
         cat > .env << EOF
 # Alexandria Server Configuration
 # Generated on $(date)
 
-# Server port (default: 3000)
-PORT=3000
+# Port on this machine. Keep 4000: the apps look for the server on port
+# 4000 when they search your network.
+PORT=4000
 
-# Shared API token - KEEP THIS SAFE!
-# The app sends it as: Authorization: Bearer <token>
-# The server refuses to start without it.
+# Admin token - KEEP THIS SAFE. It sets up the admin login on the
+# server's web page (http://<this machine>:4000/admin). Phones, TVs and
+# watches never use it: they link with a one-time code instead.
+# The server refuses to start without it (16 characters or more).
 ALEXANDRIA_API_TOKEN=${ALEXANDRIA_API_TOKEN}
+
+# The name devices see when they find this server on the network.
+ALEXANDRIA_SERVER_NAME=${SERVER_NAME:-Alexandria Companion}
+
+# Optional: the https address this server is reached at from outside,
+# behind a reverse proxy (https://alexandria.example.com). Leave empty
+# if unused.
+ALEXANDRIA_PUBLIC_URL=
 
 # Timezone
 TZ=UTC
 EOF
-        echo -e "${GREEN}✓${NC} .env file created with a generated API token"
-        echo -e "${YELLOW}!${NC} Enter this token in the app under Settings:"
+        chmod 600 .env
+        echo -e "${GREEN}✓${NC} .env created with a new admin token (also saved in $INSTALL_DIR/.env):"
         echo -e "    ${ALEXANDRIA_API_TOKEN}"
     else
-        echo -e "${YELLOW}!${NC} .env file already exists, skipping..."
+        echo -e "${YELLOW}!${NC} .env file already exists, keeping it"
     fi
     echo ""
 
-    # Pull and start
+    # Pull the published image and start it. Never build here: this
+    # directory holds only the compose file, not the source.
+    echo -e "${YELLOW}Downloading the server image...${NC}"
+    if ! $COMPOSE_CMD pull; then
+        echo -e "${RED}Error: could not download ghcr.io/stoutc24/alexandria-server.${NC}"
+        echo "Check this machine's internet connection, then run this script again."
+        exit 1
+    fi
     echo -e "${YELLOW}Starting Alexandria Server...${NC}"
-    $COMPOSE_CMD pull 2>/dev/null || true
-    $COMPOSE_CMD up -d --build
+    $COMPOSE_CMD up -d --no-build
 
     echo ""
     echo -e "${GREEN}======================================================"
     echo "  Alexandria Server is now running!"
     echo "======================================================${NC}"
     echo ""
-    echo "  URL:        http://localhost:3000"
-    echo "  Health:     http://localhost:3000/health"
-    echo "  API Docs:   http://localhost:3000/api/v1"
+    echo "  Health:      http://localhost:4000/health"
+    echo "  Admin page:  http://<this machine's address>:4000/admin"
+    echo ""
+    echo "  Next:"
+    echo "  1. Open the admin page and sign in with the admin token above."
+    echo "     Set an admin password and add the login to your"
+    echo "     authenticator app; keep the recovery codes it shows."
+    echo "  2. In Alexandria: Settings > Companion Server > Find my server"
+    echo "     on this network > Get a link code. Approve the code on the"
+    echo "     admin page."
     echo ""
     echo "  Installation directory: $INSTALL_DIR"
     echo ""

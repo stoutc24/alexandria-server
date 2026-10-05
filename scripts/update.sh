@@ -38,7 +38,8 @@ echo -e "${YELLOW}Pulling latest image...${NC}"
 $COMPOSE_CMD pull
 
 echo -e "${YELLOW}Restarting server...${NC}"
-$COMPOSE_CMD up -d
+# The image just pulled; this directory holds no source to build from.
+$COMPOSE_CMD up -d --no-build
 
 echo ""
 echo -e "${GREEN}✓ Alexandria Server updated successfully!${NC}"

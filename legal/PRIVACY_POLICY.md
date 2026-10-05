@@ -1,6 +1,6 @@
 # Privacy Policy — Alexandria Companion Server
 
-**Last updated:** August 2026
+**Last updated:** October 2026
 
 ## The short version
 
@@ -34,14 +34,25 @@ possible.
 **Pending link requests.** A short code and an expiry, deleted after use
 or expiry.
 
+**The administrator's login.** A slow hash of the admin password, the
+authenticator secret used to check its codes, and hashes of the one-time
+recovery codes, of browser sessions and of phones signed in to manage the
+server.
+
+**Party Play, in memory only.** While a party runs, the server holds what
+is playing (title, author, position and the queue) and which devices are
+in it. This is never written to the database, and it is gone when the
+party ends or the server restarts.
+
 ## What it never stores
 
 - **Credentials for your media servers.** Plex, Audiobookshelf, Jellyfin
   and the rest are authenticated by the app on your device, using its
   keychain. Those credentials never reach this server.
 - **Media files.** It keeps an index, not content.
-- **Email addresses, passwords, or payment information.** There are no
-  accounts here.
+- **Email addresses or payment information, or passwords for your
+  household.** There are no accounts here. The only password is the
+  administrator's own, and it is stored only as a slow hash.
 - **Analytics or telemetry of any kind.**
 
 ## What leaves your machine
@@ -96,9 +107,14 @@ servers its operator configures.
 
 - The admin token is required to start the server; it refuses to run
   without one, so it cannot come up unauthenticated by accident.
-- Device tokens are stored only as hashes.
+- Device tokens, admin sessions and phones' admin sign-ins are stored only
+  as hashes.
+- The authenticator secret of the admin login is stored as it is (the
+  server needs it to check codes). Guard backups and the data volume as
+  you would the admin password.
 - Run it behind HTTPS if it is reachable from outside your network. Over
-  plain HTTP on a hostile network, the bearer token is readable.
+  plain HTTP on a hostile network, tokens and codes in transit are
+  readable.
 
 ## Changes
 
