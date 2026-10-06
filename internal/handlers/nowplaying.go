@@ -112,6 +112,10 @@ func (h *NowPlayingHandler) Report(c *fiber.Ctx) error {
 		BasedOnRevision: req.BasedOnRevision,
 		ClaimSeat:       req.ClaimSeat,
 		TakeOver:        req.TakeOver,
+		// The store decides whether the queue lands, with the report and
+		// under the same lock: a device that another device's seat
+		// refuses cannot replace the party's queue.
+		Queue: req.Queue,
 	}
 	if req.PositionMs != nil {
 		st.PositionMs = *req.PositionMs
@@ -121,11 +125,6 @@ func (h *NowPlayingHandler) Report(c *fiber.Ctx) error {
 		opts.SampledAtMs = *req.SampledAtServerMs
 	}
 
-	// Validate everything BEFORE touching the store, so a refused report
-	// cannot leave the queue replaced and the state untouched.
-	if req.Queue != nil {
-		h.store.SetQueue(profileID, *req.Queue)
-	}
 	out, outcome := h.store.Report(profileID, st, opts)
 	switch outcome {
 	case nowplaying.OutcomeIgnored:
@@ -232,13 +231,23 @@ func (h *NowPlayingHandler) Follow(c *fiber.Ctx) error {
 			"error": "deviceKey is required",
 		})
 	}
+	if len(key) > nowplaying.MaxDeviceKeyLen {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "deviceKey is too long",
+		})
+	}
 	if body.Stop {
 		h.store.StopFollowing(profileID, key)
 		return c.JSON(fiber.Map{"ok": true})
 	}
 	// The revision the join (or the refresh request) landed at: an
 	// anchor revision past it was taken after this device arrived.
-	rev := h.store.JoinWithDrift(profileID, key, deviceLabel, body.Role, body.DriftMs, body.DriftMeasuredAtMs)
+	rev, ok := h.store.JoinWithDrift(profileID, key, deviceLabel, body.Role, body.DriftMs, body.DriftMeasuredAtMs)
+	if !ok {
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+			"error": "too many devices are following this person's playback",
+		})
+	}
 	if body.RefreshAnchor {
 		if r := h.store.RequestAnchorRefresh(profileID); r > rev {
 			rev = r

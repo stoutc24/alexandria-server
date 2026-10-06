@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -24,7 +25,16 @@ type AdminAuthHandler struct {
 	// over HTTPS (scheme basis "config", for a sign-in that stays and
 	// whose headers name no scheme — see decideSchemeBasis).
 	httpsDeclared bool
+	// signIns is the allowance of wrong passwords and codes that every
+	// sign-in draws on, every visitor together; stepUps is each signed-in
+	// phone's own, for the codes its backups and approvals carry (see
+	// adminauth.GuessLimit).
+	signIns *adminauth.GuessLimit
+	stepUps *adminauth.GuessLimit
 }
+
+// everyone is the sign-ins' one allowance key.
+const everyone = ""
 
 // NewAdminAuthHandler takes the configured public URL (config.PublicURL,
 // "" when unset) so an admin sign-in can record an operator's https://
@@ -36,7 +46,63 @@ func NewAdminAuthHandler(
 	return &AdminAuthHandler{
 		auth:          auth,
 		httpsDeclared: strings.HasPrefix(strings.ToLower(publicURL), "https://"),
+		signIns: adminauth.NewGuessLimit(
+			adminauth.SignInGuessBurst, adminauth.SignInGuessRefill),
+		stepUps: adminauth.NewGuessLimit(
+			adminauth.StepUpGuessBurst, adminauth.StepUpGuessRefill),
 	}
+}
+
+// spendSignInGuess takes one guess from the sign-ins' shared allowance
+// before a password or code is checked. ok false means the reply is
+// written (429 guess-limit). The caller refunds a right answer.
+func (h *AdminAuthHandler) spendSignInGuess(c *fiber.Ctx, attempt string) (bool, error) {
+	ok, wait, announce := h.signIns.Take(everyone)
+	if ok {
+		return true, nil
+	}
+	if announce {
+		log.Printf("%s refused: more wrong passwords or codes than the "+
+			"admin login takes from everyone together (one every %v). "+
+			"Someone is guessing at it from several addresses",
+			attempt, adminauth.SignInGuessRefill)
+	}
+	return false, guessLimited(c, wait,
+		"too many wrong passwords or codes on this server lately")
+}
+
+// spendStepUpGuess is spendSignInGuess for a step-up code, from the
+// calling phone's own allowance: nobody else can use it up.
+func (h *AdminAuthHandler) spendStepUpGuess(c *fiber.Ctx, action string) (bool, error) {
+	ok, wait, announce := h.stepUps.Take(stepUpKey(c))
+	if ok {
+		return true, nil
+	}
+	if announce {
+		log.Printf("%s step-up refused%s: too many wrong codes from this "+
+			"device lately", action, callerForLog(c))
+	}
+	return false, guessLimited(c, wait, "too many wrong codes from this device lately")
+}
+
+// stepUpKey is whose allowance a step-up draws on: the phone's admin
+// device id, or the browser's session for a cookie.
+func stepUpKey(c *fiber.Ctx) string {
+	if id := middleware.AdminDevice(c); id != "" {
+		return "device:" + id
+	}
+	return "browser"
+}
+
+// guessLimited answers 429 guess-limit, with how long until the next
+// guess.
+func guessLimited(c *fiber.Ctx, wait time.Duration, msg string) error {
+	secs := int((wait + time.Second - 1) / time.Second)
+	c.Set(fiber.HeaderRetryAfter, strconv.Itoa(secs))
+	return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+		"error":  fmt.Sprintf("%s; try again in %d seconds", msg, secs),
+		"reason": "guess-limit",
+	})
 }
 
 // Status is open, and says only whether a login exists.
@@ -138,6 +204,9 @@ func (h *AdminAuthHandler) Login(c *fiber.Ctx) error {
 			JSON(fiber.Map{"error": "no admin login is set up on this server"})
 	}
 
+	if ok, err := h.spendSignInGuess(c, "admin sign-in"); !ok {
+		return err
+	}
 	ok, usedRecovery, fault := h.checkCredentials(cred, req, "admin sign-in")
 	if fault != nil {
 		return serverError(c, fault.msg, fault.err)
@@ -146,6 +215,7 @@ func (h *AdminAuthHandler) Login(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).
 			JSON(fiber.Map{"error": "wrong password or code"})
 	}
+	h.signIns.Refund(everyone)
 
 	token, err := adminauth.NewToken()
 	if err != nil {
@@ -320,6 +390,9 @@ func (h *AdminAuthHandler) IssueDeviceToken(c *fiber.Ctx) error {
 		return serverError(c, "could not read admin credentials", err)
 	}
 
+	if ok, err := h.spendSignInGuess(c, "admin device sign-in"); !ok {
+		return err
+	}
 	ok, usedRecovery, fault := h.checkCredentials(cred, loginRequest{
 		Password:     req.Password,
 		Code:         req.Code,
@@ -332,6 +405,7 @@ func (h *AdminAuthHandler) IssueDeviceToken(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "wrong password or code", "reason": "bad-credentials"})
 	}
+	h.signIns.Refund(everyone)
 
 	token, err := adminauth.NewDeviceToken()
 	if err != nil {
@@ -447,6 +521,9 @@ func (h *AdminAuthHandler) FreshCode(
 		return false, serverError(c, "could not read admin credentials", err)
 	}
 
+	if ok, err := h.spendStepUpGuess(c, action); !ok {
+		return false, err
+	}
 	ok, _, refusal, fault := h.checkSecondFactor(cred, code, recoveryCode)
 	if fault != nil {
 		return false, serverError(c, fault.msg, fault.err)
@@ -456,6 +533,7 @@ func (h *AdminAuthHandler) FreshCode(
 		return false, c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "wrong code", "reason": "step-up-failed"})
 	}
+	h.stepUps.Refund(stepUpKey(c))
 	return true, nil
 }
 

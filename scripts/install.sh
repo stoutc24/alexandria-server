@@ -119,6 +119,10 @@ ALEXANDRIA_SERVER_NAME=${SERVER_NAME:-Alexandria Companion}
 # if unused.
 ALEXANDRIA_PUBLIC_URL=
 
+# Optional: the address that reverse proxy connects from, so sign-in and
+# linking limits count each visitor separately. Leave empty if unused.
+ALEXANDRIA_TRUSTED_PROXIES=
+
 # Timezone
 TZ=UTC
 EOF

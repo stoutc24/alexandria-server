@@ -2,6 +2,7 @@ package config
 
 import (
 	"log"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
@@ -34,6 +35,13 @@ type Config struct {
 	// address is kept, in canonical form (see publicURL); empty when
 	// unset or anything else.
 	PublicURL string
+
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For the
+	// rate limiters believe, from ALEXANDRIA_TRUSTED_PROXIES: addresses
+	// or ranges, comma-separated ("172.18.0.5", "172.16.0.0/12"). Behind
+	// a proxy not named here every visitor looks like the proxy and
+	// shares one limit (see middleware.ClientKey). Empty when unset.
+	TrustedProxies []netip.Prefix
 }
 
 // defaultToken is the placeholder shipped in .env.example and the
@@ -48,6 +56,8 @@ func Load() *Config {
 		APIToken:   os.Getenv("ALEXANDRIA_API_TOKEN"),
 		ServerName: os.Getenv("ALEXANDRIA_SERVER_NAME"),
 		PublicURL:  publicURL(os.Getenv("ALEXANDRIA_PUBLIC_URL")),
+
+		TrustedProxies: trustedProxies(os.Getenv("ALEXANDRIA_TRUSTED_PROXIES")),
 	}
 
 	// Refuse to start rather than come up unauthenticated. This server
@@ -87,6 +97,59 @@ func publicURL(raw string) string {
 		return ""
 	}
 	return canonical
+}
+
+// trustedProxies parses ALEXANDRIA_TRUSTED_PROXIES: comma-separated IP
+// addresses and CIDR ranges. An entry that is neither is skipped with a
+// warning rather than refusing to boot, as with ALEXANDRIA_PUBLIC_URL;
+// a typo leaves the limits shared, which fails safe. So is a range wider
+// than the widest private one (an IPv4 /8, an IPv6 /7): every address
+// in it would be believed about who its client is.
+func trustedProxies(raw string) []netip.Prefix {
+	var out []netip.Prefix
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		p, ok := proxyPrefix(entry)
+		switch {
+		case !ok:
+			log.Printf("ALEXANDRIA_TRUSTED_PROXIES: %q is ignored: it is "+
+				"not an IP address or a range like 172.18.0.0/16", entry)
+		case p.Addr().Is4() && p.Bits() < 8, p.Addr().Is6() && p.Bits() < 7:
+			log.Printf("ALEXANDRIA_TRUSTED_PROXIES: %q is ignored: it is "+
+				"too wide; name your proxy's own address or network", entry)
+		default:
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// proxyPrefix reads one entry: a range, or one address as a range of one.
+// An IPv4 range written in IPv6 form (::ffff:10.0.0.0/104) is read as the
+// IPv4 range, which is how a client's address is compared.
+func proxyPrefix(entry string) (netip.Prefix, bool) {
+	if strings.Contains(entry, "/") {
+		p, err := netip.ParsePrefix(entry)
+		if err != nil {
+			return netip.Prefix{}, false
+		}
+		if p.Addr().Is4In6() {
+			if p.Bits() < 96 {
+				return netip.Prefix{}, false
+			}
+			p = netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
+		}
+		return p.Masked(), true
+	}
+	a, err := netip.ParseAddr(entry)
+	if err != nil {
+		return netip.Prefix{}, false
+	}
+	a = a.Unmap()
+	return netip.PrefixFrom(a, a.BitLen()), true
 }
 
 // The parts of a plain address, as the phone checks them.

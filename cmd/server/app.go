@@ -102,15 +102,23 @@ func buildApp(cfg *config.Config) *fiber.App {
 	requireProfile := middleware.RequireProfile(profileRepo)
 	requireAnyToken := middleware.RequireAnyToken(cfg, profileRepo, adminAuthRepo)
 
+	// Both rate limiters count each client on its own: the TCP peer, or
+	// behind a proxy named in ALEXANDRIA_TRUSTED_PROXIES, the address it
+	// forwarded for. Without that setting everyone behind a proxy is the
+	// proxy, and one visitor could spend the whole household's budget.
+	clientKey := middleware.ClientKey(cfg.TrustedProxies)
+
 	// Household management: who exists, and how much space they use.
 	// Nothing here returns anyone's history — see handlers/admin.go.
 	// The admin login. Rate limited hard: this is the one place on the
 	// server where guessing is the attack, and 10/min makes grinding a
 	// 6-digit code hopeless while never inconveniencing a person who
-	// mistypes it twice.
+	// mistypes it twice. Per client; the login's own allowance of wrong
+	// guesses (adminauth.GuessLimit) holds for every client at once.
 	authLimiter := limiter.New(limiter.Config{
-		Max:        10,
-		Expiration: time.Minute,
+		Max:          10,
+		Expiration:   time.Minute,
+		KeyGenerator: clientKey,
 		LimitReached: func(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
 				"error": "too many sign-in attempts; wait a minute",
@@ -180,16 +188,33 @@ func buildApp(cfg *config.Config) *fiber.App {
 	// limited so it cannot be used to churn codes or grind claim
 	// secrets.
 	linkLimiter := limiter.New(limiter.Config{
-		Max:        30,
-		Expiration: time.Minute,
+		Max:          30,
+		Expiration:   time.Minute,
+		KeyGenerator: clientKey,
 		LimitReached: func(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
 				"error": "too many link attempts; wait a minute",
 			})
 		},
 	})
+	// And every visitor together, for new requests only: each one is a
+	// row in the list of devices waiting, so a client with many addresses
+	// (an IPv6 block behind a trusted proxy) could otherwise grow it
+	// without limit. Four visitors' worth a minute: no one visitor can
+	// reach it alone. Claims are polls and add nothing, so they are not
+	// counted here.
+	linkRequestsEveryone := limiter.New(limiter.Config{
+		Max:          120,
+		Expiration:   time.Minute,
+		KeyGenerator: func(*fiber.Ctx) string { return "everyone" },
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": "too many devices are asking to link right now; wait a minute",
+			})
+		},
+	})
 	link := v1.Group("/link", linkLimiter)
-	link.Post("/request", linkHandler.RequestLink)
+	link.Post("/request", linkRequestsEveryone, linkHandler.RequestLink)
 	link.Post("/claim", linkHandler.Claim)
 
 	// The library index describes the household's SERVERS, not any

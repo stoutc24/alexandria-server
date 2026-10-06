@@ -114,6 +114,7 @@ services:
       - ALEXANDRIA_API_TOKEN=${ALEXANDRIA_API_TOKEN:?set ALEXANDRIA_API_TOKEN in .env}
       - ALEXANDRIA_SERVER_NAME=${ALEXANDRIA_SERVER_NAME:-Alexandria Companion}
       - ALEXANDRIA_PUBLIC_URL=${ALEXANDRIA_PUBLIC_URL:-}
+      - ALEXANDRIA_TRUSTED_PROXIES=${ALEXANDRIA_TRUSTED_PROXIES:-}
       - TZ=${TZ:-UTC}
 
 volumes:
@@ -183,6 +184,7 @@ All settings are environment variables, set in `.env` or with `-e`.
 | `ALEXANDRIA_API_TOKEN` | **required** | The admin token. The server refuses to start without one, with the placeholder `change-me`, or with fewer than 16 characters. Make one with `openssl rand -hex 32`. |
 | `ALEXANDRIA_SERVER_NAME` | the machine's hostname | The name devices see when they find the server. Set it under Docker: inside a container the hostname is the container id, so without a name the server looks like a new machine after every recreate. |
 | `ALEXANDRIA_PUBLIC_URL` | empty | The `https://` address the server is reached at through a reverse proxy. See [Reaching it from outside your home](#reaching-it-from-outside-your-home). |
+| `ALEXANDRIA_TRUSTED_PROXIES` | empty | The address your reverse proxy connects from, if you use one (one address or range, or several, comma-separated). The sign-in and linking limits then count each visitor separately instead of everyone as the proxy. See [Reaching it from outside your home](#reaching-it-from-outside-your-home). |
 | `TZ` | `UTC` | Timezone for the logs. |
 | `PORT` | `4000` | In the installer's `.env`, the port on this machine. Keep 4000: the apps search your network on it. |
 | `DB_PATH` | `/data/alexandria.db` | Where the database lives inside the container. Leave it unless you know why. |
@@ -311,15 +313,34 @@ server {
 Party Play holds a request open for up to 15 seconds while it waits for
 news, which fits every proxy's default timeout.
 
-Then add this to `.env` and restart the server:
+Then add these to `.env` and restart the server:
 
 ```bash
 ALEXANDRIA_PUBLIC_URL=https://alexandria.example.com
+ALEXANDRIA_TRUSTED_PROXIES=192.168.1.10
 ```
 
 The app is told about the address, so a phone linked at home can switch
 to it. A phone stays signed in to **Manage server** only over
 `https://`.
+
+`ALEXANDRIA_TRUSTED_PROXIES` is the address your proxy connects to the
+server from: here, the machine Caddy or nginx runs on. With it, the
+limits on signing in and linking count each visitor separately. Without
+it, everyone who comes through the proxy counts as the proxy, so one
+stranger could use up everyone's tries.
+
+- **Not sure of the address?** Leave it out, open the admin page through
+  the proxy once, then run `docker logs alexandria-server`. The server
+  names the address that forwarded the request.
+- **Name only your proxy.** A range that also covers other machines lets
+  them claim to be anyone. Some Docker setups (Docker Desktop, for
+  example) can show every connection as coming from one internal
+  address. If the logged address is also what your other devices
+  connect from, leave the setting out.
+- **Your proxy must set or append `X-Forwarded-For`.** Caddy does by
+  default, and the nginx example above appends it. A proxy that passes
+  on whatever the client sent lets a client claim to be anyone.
 
 `ALEXANDRIA_PUBLIC_URL` must be a plain https address: no user name,
 query or fragment. Anything else is ignored with a warning in the log
@@ -391,6 +412,20 @@ every person, device and statistic.** Take a backup first.
   - A phone that stays signed in is signed out after 180 days unused.
   - You can sign out any phone, or all of them, on the admin page.
     Setting the login up again signs out every browser and phone.
+  - The admin page notes how each phone's HTTPS was established (for
+    example "HTTPS via proxy"). That note repeats what the request's
+    headers said, and a client can write those itself, so read it as a
+    hint, not proof. It grants nothing.
+- **Guessing at the admin login is limited three ways.**
+  - Each visitor gets 10 sign-in attempts a minute.
+  - All visitors together get at most 20 wrong passwords or codes a
+    minute, after a first 60. More addresses buy no more guesses.
+  - One visitor alone can never use that up. If several keep it used up
+    at once, your own sign-in waits too until they stop or the server
+    restarts. Browsers and phones already signed in keep working.
+  - Each signed-in phone has its own allowance for the codes its backups
+    and approvals carry: 10 wrong, then one a minute. Nobody else can use
+    it up, and a stolen phone cannot grind codes.
 - **Device tokens, admin sessions and phones' admin sign-ins are stored
   only as hashes.** None of them can be replayed from a stolen database.
 - **The admin login is different.** Its authenticator secret is stored as
@@ -406,7 +441,7 @@ every person, device and statistic.** Take a backup first.
   - `/admin` is the management page itself, inert until you sign in.
   - `/api/v1/link/request` and `/api/v1/link/claim` serve devices being
     linked, which have no token yet. Both are rate limited to 30 requests
-    a minute.
+    a minute for each visitor.
 
   Everything else requires a token.
 - **The container runs as a non-root user** (uid 1000), and its memory use
@@ -433,6 +468,18 @@ You can always type the address instead. The fastest check is
 
 **A link code says it expired.** Codes last ten minutes. Ask for a new
 one.
+
+**Signing in says "too many wrong passwords or codes on this server".**
+More wrong guesses have come in lately, from several addresses together,
+than the admin login takes. Wait the seconds it names, then sign in once,
+carefully. If it keeps happening, someone is guessing at the login:
+`docker logs alexandria-server` shows the attempts, and
+`docker restart alexandria-server` clears the count.
+
+**A phone says "Too many sign-in attempts" while backing up or approving
+a device.** That phone has made more than 10 tries in a minute, or sent
+10 wrong codes lately. Wait a minute, then try once with a fresh code.
+Signing in on the admin page is not affected.
 
 **The library index is empty.** The app fills it, not the server. On a
 linked phone, open the Companion Server screen and press **Refresh**

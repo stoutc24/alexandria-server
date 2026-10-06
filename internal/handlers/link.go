@@ -133,6 +133,11 @@ func (h *LinkHandler) Claim(c *fiber.Ctx) error {
 
 	if strings.TrimSpace(body.DeviceLabel) != "" {
 		label = body.DeviceLabel
+		// The same 80 as every other way a label arrives: it is listed on
+		// the admin page and carried in every party state.
+		if len(label) > 80 {
+			label = label[:80]
+		}
 	}
 
 	// Mint a token for THIS device only. Any other device this person

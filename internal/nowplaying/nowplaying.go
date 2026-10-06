@@ -349,6 +349,13 @@ type ReportOpts struct {
 	// reporter cannot say; then the arrival time stands in and the
 	// request's one-way latency lands in the anchor.
 	SampledAtMs int64
+	// Queue, when set, replaces the profile's queue, and only from a
+	// device that leads: it lands with an accepted report, in the same
+	// revision, and with a stale one from the seat's own holder, as it
+	// always has. Any other refused report leaves the party's queue
+	// alone; its queue is held for that device instead (see Store.held).
+	// nil keeps the stored queue; an empty list clears it.
+	Queue *[]QueueItem
 }
 
 // IntentRequest is a proposed state change. Every type is absolute and
@@ -387,6 +394,26 @@ type presenceEntry struct {
 	driftAt time.Time
 }
 
+// MaxFollowersPerProfile caps how many devices one profile's party
+// lists at once: followers, viewers and remotes together. A household is
+// a handful of screens, each holding up to three entries (its player,
+// its Home card, its Remote), so 64 turns no real device away, while one
+// leaked token can no longer grow the list without end: entries expire
+// after followerTTL, but only a read of a live session swept them out.
+const MaxFollowersPerProfile = 64
+
+// MaxDeviceKeyLen caps the key a device follows under. A TV's is a UUID
+// with a short suffix (":viewer", ":remote"); a newer device's is its
+// token id.
+const MaxDeviceKeyLen = 128
+
+// heldQueue is a queue refused while another device leads, kept for the
+// device that sent it (Store.held).
+type heldQueue struct {
+	deviceID string
+	items    []QueueItem
+}
+
 // withdrawnStart is a next-track announcement (StartItemID, StartAtMs)
 // that an intent cancelled.
 type withdrawnStart struct {
@@ -422,6 +449,16 @@ type Store struct {
 	// stay tiny. Same lifetime rules as the state: memory only, gone
 	// with the state.
 	q map[string][]QueueItem
+	// held[profile] are the queues carried by reports refused while
+	// another device leads (seat-held, a legacy publisher ignored, a
+	// take-over or claim refused as stale), one per device that sent one,
+	// oldest first. None is the party's: each lands only when its own
+	// device's report is accepted without a queue of its own. A TV counts
+	// a queue as sent whatever the answer, so the take-over that follows
+	// its refusal does not send it again; before this hold, the refused
+	// report itself replaced the queue of the party another device was
+	// leading. At most maxHeldQueues per profile, gone with the state.
+	held map[string][]heldQueue
 
 	// anchor[profile] = when the current track started (server ms).
 	anchor map[string]int64
@@ -464,6 +501,7 @@ func NewStore() *Store {
 	return &Store{
 		m:             make(map[string]State),
 		q:             make(map[string][]QueueItem),
+		held:          make(map[string][]heldQueue),
 		rev:           make(map[string]int64),
 		qrev:          make(map[string]int64),
 		anchor:        make(map[string]int64),
@@ -531,6 +569,9 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 		had = false
 		prev = State{}
 	}
+	// Whether this device holds the seat as stored, awake or not: the
+	// only device whose queue may land with a refused (stale) report.
+	holder := had && opts.DeviceID != "" && prev.LeaderTokenID == opts.DeviceID
 	if had && !s.seatLiveLocked(prev, nowMs) {
 		// A dormant or vacant seat protects nobody: whoever is actually
 		// making noise now takes it.
@@ -541,8 +582,10 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 	case otherHolds && opts.TakeOver:
 		// Explicit "play here instead": the person chose this device.
 	case otherHolds && legacy:
+		s.holdQueueLocked(profileID, opts)
 		return s.readLocked(profileID, prev, nowMs), OutcomeIgnored
 	case otherHolds:
+		s.holdQueueLocked(profileID, opts)
 		return s.readLocked(profileID, prev, nowMs), OutcomeSeatHeld
 	}
 
@@ -550,6 +593,20 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 		// The reporter has not seen the last intent yet — a heartbeat
 		// must not overwrite a remote pause, and a returning or claiming
 		// device must catch up before it may lead. It gets the state.
+		switch {
+		case opts.Queue == nil:
+		case holder:
+			// The seat's own holder: its queue stands, as it always has.
+			// Only the queue revision moves, so a follower still learns
+			// the tracklist changed.
+			prev.QueueRevision, prev.Revision = s.setQueueLocked(profileID, *opts.Queue)
+			s.dropHeldLocked(profileID, opts.DeviceID)
+		default:
+			// A take-over or a claim that has not happened yet: held,
+			// like a seat-held one, until this device's report is
+			// accepted.
+			s.holdQueueLocked(profileID, opts)
+		}
 		return s.readLocked(profileID, prev, nowMs), OutcomeStale
 	}
 
@@ -686,6 +743,17 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 		if prev.ItemID == st.ItemID {
 			st.HandedOverAtMs = prev.HandedOverAtMs
 		}
+	}
+
+	// The queue lands with the report, in the same revision, so nobody
+	// reads the new state beside the old tracklist: the one this report
+	// carries, else the one this device was refused with while another
+	// led (held), which it counts as sent.
+	if opts.Queue != nil {
+		s.replaceQueueLocked(profileID, *opts.Queue)
+		s.dropHeldLocked(profileID, opts.DeviceID)
+	} else if items, ok := s.takeHeldLocked(profileID, opts.DeviceID); ok {
+		s.replaceQueueLocked(profileID, items)
 	}
 
 	rev := s.nextRevLocked(profileID)
@@ -997,7 +1065,8 @@ func (s *Store) Following(profileID, deviceKey string) {
 // Returns the profile's revision after the join (0 without a session),
 // so the joiner knows which anchor revisions postdate its arrival.
 func (s *Store) Join(profileID, deviceKey, label, role string) int64 {
-	return s.JoinWithDrift(profileID, deviceKey, label, role, nil, 0)
+	rev, _ := s.JoinWithDrift(profileID, deviceKey, label, role, nil, 0)
+	return rev
 }
 
 // JoinWithDrift is Join carrying the follower's latest drift reading
@@ -1006,7 +1075,10 @@ func (s *Store) Join(profileID, deviceKey, label, role string) int64 {
 // BEHIND), measured at driftMeasuredAtMs server time. A heartbeat with
 // a new reading does not bump the revision — the dashboard reads it on
 // its next poll; waking every device for a number would be churn.
-func (s *Store) JoinWithDrift(profileID, deviceKey, label, role string, driftMs *int64, driftMeasuredAtMs int64) int64 {
+//
+// ok is false, and nothing is recorded, when deviceKey is new and the
+// profile already lists MaxFollowersPerProfile live devices.
+func (s *Store) JoinWithDrift(profileID, deviceKey, label, role string, driftMs *int64, driftMeasuredAtMs int64) (rev int64, ok bool) {
 	if role != RoleViewer && role != RoleController {
 		role = RoleFollower
 	}
@@ -1019,6 +1091,18 @@ func (s *Store) JoinWithDrift(profileID, deviceKey, label, role string, driftMs 
 	e, existed := s.followers[profileID][deviceKey]
 	if existed && now.Sub(e.last) > followerTTL {
 		existed = false
+	}
+	if !existed && len(s.followers[profileID]) >= MaxFollowersPerProfile {
+		// Full: sweep out whoever has gone quiet, and turn the newcomer
+		// away only if every place is still taken by a live device.
+		for key, f := range s.followers[profileID] {
+			if now.Sub(f.last) > followerTTL {
+				delete(s.followers[profileID], key)
+			}
+		}
+		if len(s.followers[profileID]) >= MaxFollowersPerProfile {
+			return 0, false
+		}
 	}
 	if !existed {
 		e = presenceEntry{since: now}
@@ -1040,7 +1124,7 @@ func (s *Store) JoinWithDrift(profileID, deviceKey, label, role string, driftMs 
 	s.lastActivity[profileID] = now
 	st, has := s.m[profileID]
 	if !has {
-		return 0
+		return 0, true
 	}
 	if changed {
 		if role == RoleFollower && !st.Ended {
@@ -1049,7 +1133,7 @@ func (s *Store) JoinWithDrift(profileID, deviceKey, label, role string, driftMs 
 		s.nextRevLocked(profileID)
 		s.notifyLocked(profileID)
 	}
-	return s.rev[profileID]
+	return s.rev[profileID], true
 }
 
 // RequestAnchorRefresh: a follower about to launch again (the leader
@@ -1229,6 +1313,7 @@ func (s *Store) Get(profileID string) (State, bool) {
 		// Expired: drop it so the map does not accumulate ghosts.
 		delete(s.m, profileID)
 		delete(s.q, profileID)
+		delete(s.held, profileID)
 		delete(s.anchorRefresh, profileID)
 		delete(s.withdrawn, profileID)
 		return State{}, false
@@ -1239,6 +1324,7 @@ func (s *Store) Get(profileID string) (State, bool) {
 		if now.Sub(time.UnixMilli(st.EndedAtMs)) > endedTTL {
 			delete(s.m, profileID)
 			delete(s.q, profileID)
+			delete(s.held, profileID)
 			delete(s.lastActivity, profileID)
 			delete(s.withdrawn, profileID)
 			return State{}, false
@@ -1364,6 +1450,7 @@ func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcom
 		st.Revision = s.nextRevLocked(profileID)
 		s.m[profileID] = st
 		delete(s.q, profileID)
+		delete(s.held, profileID)
 		delete(s.anchorRefresh, profileID)
 		delete(s.withdrawn, profileID)
 		s.lastActivity[profileID] = now
@@ -1390,6 +1477,7 @@ func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcom
 	}
 	delete(s.m, profileID)
 	delete(s.q, profileID)
+	delete(s.held, profileID)
 	delete(s.lastActivity, profileID)
 	delete(s.anchorRefresh, profileID)
 	delete(s.withdrawn, profileID)
@@ -1410,12 +1498,15 @@ func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcom
 // heartbeat late.
 func (s *Store) SetQueue(profileID string, items []QueueItem) {
 	s.mu.Lock()
-	qrev := s.nextQueueRevLocked(profileID)
-	if len(items) == 0 {
-		delete(s.q, profileID)
-	} else {
-		s.q[profileID] = items
-	}
+	s.setQueueLocked(profileID, items)
+	s.mu.Unlock()
+}
+
+// setQueueLocked is SetQueue under the caller's lock. It returns the new
+// queue revision, and the stored state's new revision (zero when no
+// state is stored).
+func (s *Store) setQueueLocked(profileID string, items []QueueItem) (qrev, rev int64) {
+	qrev = s.replaceQueueLocked(profileID, items)
 	// Keep a already-stored state's queue revision current, so a
 	// follower polling between a queue change and the next heartbeat
 	// still learns the tracklist moved.
@@ -1423,9 +1514,76 @@ func (s *Store) SetQueue(profileID string, items []QueueItem) {
 		st.QueueRevision = qrev
 		st.Revision = s.nextRevLocked(profileID)
 		s.m[profileID] = st
+		rev = st.Revision
 	}
 	s.notifyLocked(profileID)
-	s.mu.Unlock()
+	return qrev, rev
+}
+
+// replaceQueueLocked swaps the profile's queue (an empty one clears it)
+// and returns the new queue revision. Caller holds the write lock.
+func (s *Store) replaceQueueLocked(profileID string, items []QueueItem) int64 {
+	qrev := s.nextQueueRevLocked(profileID)
+	if len(items) == 0 {
+		delete(s.q, profileID)
+	} else {
+		s.q[profileID] = items
+	}
+	return qrev
+}
+
+// maxHeldQueues caps the queues one profile holds (Store.held): one per
+// device refused while another led, oldest dropped first. A household
+// has a handful of screens that could be playing at once.
+const maxHeldQueues = 4
+
+// holdQueueLocked keeps the queue a refused report carried, for the
+// device that sent it, in place of any it held before. Caller holds the
+// write lock.
+func (s *Store) holdQueueLocked(profileID string, opts ReportOpts) {
+	if opts.Queue == nil || opts.DeviceID == "" {
+		return
+	}
+	s.dropHeldLocked(profileID, opts.DeviceID)
+	held := append(s.held[profileID], heldQueue{deviceID: opts.DeviceID, items: *opts.Queue})
+	if len(held) > maxHeldQueues {
+		// A fresh slice: the dropped queue must not stay reachable
+		// behind the kept ones.
+		held = append([]heldQueue(nil), held[len(held)-maxHeldQueues:]...)
+	}
+	s.held[profileID] = held
+}
+
+// takeHeldLocked removes and returns the queue held for deviceID. Caller
+// holds the write lock.
+func (s *Store) takeHeldLocked(profileID, deviceID string) ([]QueueItem, bool) {
+	if deviceID == "" {
+		return nil, false
+	}
+	for _, h := range s.held[profileID] {
+		if h.deviceID == deviceID {
+			s.dropHeldLocked(profileID, deviceID)
+			return h.items, true
+		}
+	}
+	return nil, false
+}
+
+// dropHeldLocked forgets the queue held for deviceID: a newer one from
+// the same device has replaced it. Caller holds the write lock.
+func (s *Store) dropHeldLocked(profileID, deviceID string) {
+	held := s.held[profileID]
+	for i, h := range held {
+		if h.deviceID == deviceID {
+			held = append(held[:i:i], held[i+1:]...)
+			break
+		}
+	}
+	if len(held) == 0 {
+		delete(s.held, profileID)
+	} else {
+		s.held[profileID] = held
+	}
 }
 
 // Queue returns the leader's queue — valid only while the state itself

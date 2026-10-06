@@ -46,6 +46,11 @@ services:
       # (behind a reverse proxy). Empty means unset.
       - ALEXANDRIA_PUBLIC_URL=${ALEXANDRIA_PUBLIC_URL:-}
 
+      # Optional: the address your reverse proxy connects from, so the
+      # sign-in and linking limits count each visitor separately. Empty
+      # means unset.
+      - ALEXANDRIA_TRUSTED_PROXIES=${ALEXANDRIA_TRUSTED_PROXIES:-}
+
       # Timezone
       - TZ=${TZ:-UTC}
 
