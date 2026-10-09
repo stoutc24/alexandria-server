@@ -139,6 +139,26 @@ the query (append when missing).
 | `POST /Sessions/Playing[/Progress|/Stopped]`, `POST /Users/{uid}/PlayedItems/{id}`, `DELETE /Videos/ActiveEncodings`, `POST /Sessions/Logout` | 204 |
 | `GET /Videos/{id}/Trickplay/{w}/{i}.jpg` | (optional) tiles |
 
+**Audiobooks — only with `SHOWCASE_JELLYFIN_BOOKS=1`** (TV: `Networking/JellyfinAudiobooks.swift`,
+the Audiobooks place's Jellyfin arm). Off, every row below is absent and the
+output above is byte-identical (the mock feeds the store screenshots). On, the
+catalog's audiobooks (the Audiobookshelf dialect's books, ebooks left out) are
+served a second time in Jellyfin's shape:
+
+| Endpoint | Returns |
+|---|---|
+| `GET /Users/{uid}/Views` | + `{Id view_books, Name "Audiobooks", CollectionType books}` (fourth view) |
+| `GET /Users/{uid}/Items?ParentId=view_books&IncludeItemTypes=MusicAlbum,AudioBook&Recursive=true[&ArtistIds=<author>][&SearchTerm=]` | `{Items[AudioBook]}`: `Type AudioBook, MediaType Audio, RunTimeTicks, AlbumArtist/Artists (the author), ArtistItems[{Id,Name}], ImageTags{Primary}, UserData{PlaybackPositionTicks, Played, PlayedPercentage, LastPlayedDate}`; `Fields=MediaSources` adds the one WAV source |
+| `GET /Users/{uid}/Items/{bookId}` | the item with `Chapters[{StartPositionTicks, Name}]` (the catalog's chapters) + `MediaSources` |
+| `GET /Users/{uid}/Items/Latest?ParentId=view_books` | **bare array**, newest first |
+| `GET /Users/{uid}/Items/Resume?ParentId=view_books&MediaTypes=Audio&IncludeItemTypes=Audio,AudioBook` | the in-progress books, most recent first, each with a position (off: today's part-played albums — pinned by `jellyfin_books_test.go`) |
+| `GET /Artists/AlbumArtists?UserId&ParentId=view_books`, `GET /Artists/{authorId}` | the authors as `MusicArtist` rows (`AlbumCount` = audiobooks) |
+| `GET /Audio/{bookId}/universal?…`, `/stream` | the book's WAV (Range) |
+| `POST /UserItems/{bookId}/UserData?userId= {PlaybackPositionTicks?, Played?}` | 200 UserData, applied verbatim (unknown id 404) |
+| `POST /UserPlayedItems/{bookId}?userId=` | 200 UserData, the book finished |
+| `POST /Sessions/Playing[/Progress|/Stopped]` | 204 as before; the body is RECORDED, and a book's Stopped moves its position |
+| `GET /__showcase/reports`, `DELETE /__showcase/reports` | `{reports[{route, itemId, playSessionId, positionTicks, isPaused, at}]}` — what a probe asserts against; DELETE clears |
+
 Item fields: `Id, Name, Type, MediaType, Overview, ProductionYear,
 PremiereDate, DateCreated, RunTimeTicks, IndexNumber, ParentIndexNumber,
 ParentId, AlbumId, Album, AlbumArtist, AlbumArtists[{Id,Name}], Artists[],

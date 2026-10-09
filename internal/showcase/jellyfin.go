@@ -18,6 +18,8 @@ const (
 	jfMusicView = "view_music"
 	jfMovieView = "view_movies"
 	jfShowView  = "view_shows"
+	// The audiobooks view, served only with Server.Books (SHOWCASE_JELLYFIN_BOOKS=1).
+	jfBooksView = "view_books"
 )
 
 const ticksPerSec = 10_000_000
@@ -37,6 +39,13 @@ func (s *Server) jellyfin(w http.ResponseWriter, r *http.Request) {
 	roots := map[string]bool{"System": true, "Users": true, "QuickConnect": true, "Items": true, "Artists": true, "Genres": true,
 		"Playlists": true, "Shows": true, "Audio": true, "Videos": true, "videos": true, "Sessions": true, "LiveTv": true, "MediaSegments": true,
 		"Branding": true, "Library": true, "Persons": true, "Studios": true, "DisplayPreferences": true}
+	if s.Books {
+		// The 10.9+ write routes the TV's audiobook arm uses, and the probe's
+		// readout. Off, these names fall through to the landing page as before.
+		roots["UserItems"] = true
+		roots["UserPlayedItems"] = true
+		roots["__showcase"] = true
+	}
 	for len(p) > 0 && !roots[p[0]] {
 		p = p[1:]
 	}
@@ -83,7 +92,23 @@ func (s *Server) jellyfin(w http.ResponseWriter, r *http.Request) {
 	case "videos":
 		s.jfVideos(w, r, p[1:])
 	case "sessions":
+		if s.Books {
+			s.jfSessionReport(r, p[1:])
+		}
 		w.WriteHeader(http.StatusNoContent)
+	case "useritems":
+		// POST /UserItems/{id}/UserData?userId= (Books only; see roots).
+		s.jfUserDataWrite(w, r, p[1:])
+	case "userplayeditems":
+		// POST /UserPlayedItems/{id}?userId= (Books only; see roots).
+		s.jfPlayedWrite(w, r, p[1:])
+	case "__showcase":
+		// GET /__showcase/reports → what was posted; DELETE clears (Books only).
+		if len(p) >= 2 && p[1] == "reports" {
+			ok(w, map[string]any{"reports": s.recorded(r.Method == http.MethodDelete)})
+			return
+		}
+		notFound(w)
 	case "livetv":
 		ok(w, map[string]any{"TotalRecordCount": 0, "Items": []any{}, "IsEnabled": false, "Services": []any{}})
 	case "mediasegments":
@@ -144,11 +169,15 @@ func (s *Server) jfUsers(w http.ResponseWriter, r *http.Request, p []string) {
 	}
 	switch p[1] {
 	case "Views":
-		ok(w, map[string]any{"Items": []map[string]any{
+		views := []map[string]any{
 			s.jfView(jfMusicView, "Music", "music"),
 			s.jfView(jfMovieView, "Movies", "movies"),
 			s.jfView(jfShowView, "TV Shows", "tvshows"),
-		}, "TotalRecordCount": 3, "StartIndex": 0})
+		}
+		if s.Books {
+			views = append(views, s.jfView(jfBooksView, "Audiobooks", "books"))
+		}
+		ok(w, map[string]any{"Items": views, "TotalRecordCount": len(views), "StartIndex": 0})
 	case "Items":
 		s.jfUserItems(w, r, p[2:])
 	case "Images":
@@ -243,6 +272,154 @@ func (s *Server) jfArtist(a *Artist) map[string]any {
 		"ImageTags": map[string]any{"Primary": "tag" + id[:8]}, "BackdropImageTags": []any{}, "LocationType": "FileSystem",
 		"AlbumCount": len(a.Albums), "ChildCount": len(a.Albums), "UserData": s.jfUserData(a.ID, 0, 0, 0, time.Time{}),
 	}
+}
+
+// ---- audiobooks (Books on) ---------------------------------------------------
+
+// jfAudioBook renders a catalog Book as a Jellyfin AudioBook item (the shape
+// a books library hands out: an Audio subclass with MediaType "Audio", the
+// author as AlbumArtist, Chapters and one MediaSource when `full`). The
+// ebooks are never rendered here; the callers skip them.
+func (s *Server) jfAudioBook(b *Book, full bool) map[string]any {
+	id := s.cat.JFID(b.ID)
+	authorID := s.cat.JFID(b.Author.ID)
+	prog := s.progressOf(b.ID, b.Progress)
+	year, _ := strconv.Atoi(b.Year)
+	plays := 0
+	if prog >= 1 {
+		plays = 1
+	}
+	item := map[string]any{
+		"Name": b.Title, "ServerId": jfServerID, "Id": id, "Etag": id, "DateCreated": jfDate(b.AddedAt), "CanDelete": false,
+		"SortName": strings.ToLower(strings.TrimPrefix(b.Title, "The ")), "ProductionYear": year,
+		"Overview": b.Blurb, "Genres": b.Genres, "GenreItems": genreItems(s, b.Genres), "RunTimeTicks": ticks(b.Duration),
+		"IsFolder": false, "Type": "AudioBook", "MediaType": "Audio", "ParentId": jfBooksView, "LocationType": "FileSystem",
+		"Container": "wav", "Path": "/audiobooks/" + slug(b.Title) + "/" + b.Filename,
+		"AlbumArtist": b.Author.Name, "AlbumArtists": []map[string]any{{"Name": b.Author.Name, "Id": authorID}},
+		"Artists": []string{b.Author.Name}, "ArtistItems": []map[string]any{{"Name": b.Author.Name, "Id": authorID}},
+		"ImageTags": map[string]any{"Primary": "tag" + id[:8]}, "BackdropImageTags": []any{}, "Tags": []any{},
+		"UserData": s.jfUserData(b.ID, prog, b.Duration, plays, b.LastPlay),
+	}
+	if full {
+		item["MediaSources"] = []map[string]any{s.jfBookSource(b)}
+		item["MediaStreams"] = item["MediaSources"].([]map[string]any)[0]["MediaStreams"]
+		chapters := []map[string]any{}
+		for _, ch := range b.Chapters {
+			chapters = append(chapters, map[string]any{"StartPositionTicks": ticks(ch.Start), "Name": ch.Title})
+		}
+		item["Chapters"] = chapters
+	}
+	return item
+}
+
+// jfBookSource is jfAudioSource's shape for a book's one WAV.
+func (s *Server) jfBookSource(b *Book) map[string]any {
+	id := s.cat.JFID(b.ID)
+	return map[string]any{
+		"Protocol": "File", "Id": id, "Path": "/audiobooks/" + slug(b.Title) + "/" + b.Filename,
+		"Type": "Default", "Container": "wav", "Size": WAVSize(b.Duration), "Name": slug(b.Title), "IsRemote": false, "ETag": id[:8],
+		"RunTimeTicks": ticks(b.Duration), "ReadAtNativeFramerate": false, "IgnoreDts": false, "IgnoreIndex": false, "GenPtsInput": false,
+		"SupportsTranscoding": true, "SupportsDirectStream": true, "SupportsDirectPlay": true, "IsInfiniteStream": false, "RequiresOpening": false,
+		"RequiresClosing": false, "RequiresLooping": false, "SupportsProbing": true, "VideoType": nil,
+		"MediaStreams": []map[string]any{{"Codec": "pcm_s16le", "Type": "Audio", "Index": 0, "Channels": 1, "SampleRate": 22050, "BitDepth": 16,
+			"BitRate": 352800, "IsDefault": true, "IsForced": false, "IsExternal": false, "DisplayTitle": "PCM - Mono - Default", "Language": "und",
+			"IsInterlaced": false, "IsTextSubtitleStream": false, "SupportsExternalStream": false, "Level": 0}},
+		"MediaAttachments": []any{}, "Formats": []any{}, "Bitrate": 352800, "RequiredHttpHeaders": map[string]any{}, "DefaultAudioStreamIndex": 0,
+	}
+}
+
+// jfAuthor renders a catalog Author in the MusicArtist shape (Jellyfin lists
+// a books library's authors through /Artists/AlbumArtists, as album artists).
+// AlbumCount counts the audiobooks only.
+func (s *Server) jfAuthor(a *Author) map[string]any {
+	id := s.cat.JFID(a.ID)
+	n := 0
+	for _, b := range a.Books {
+		if !b.Ebook {
+			n++
+		}
+	}
+	return map[string]any{
+		"Name": a.Name, "ServerId": jfServerID, "Id": id, "Etag": id, "DateCreated": jfDate(s.cat.daysAgo(300)), "SortName": strings.ToLower(a.Name),
+		"Overview": a.Bio, "IsFolder": true, "Type": "MusicArtist", "MediaType": "Unknown", "ParentId": jfBooksView,
+		"ImageTags": map[string]any{"Primary": "tag" + id[:8]}, "BackdropImageTags": []any{}, "LocationType": "FileSystem",
+		"AlbumCount": n, "ChildCount": n, "UserData": s.jfUserData(a.ID, 0, 0, 0, time.Time{}),
+	}
+}
+
+// jfAudioBooksAuthors: the authors with at least one audiobook, A–Z.
+func (s *Server) jfAudioBookAuthors() []map[string]any {
+	items := []map[string]any{}
+	for _, a := range s.cat.Authors {
+		item := s.jfAuthor(a)
+		if item["AlbumCount"].(int) > 0 {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+// jfSessionReport records a /Sessions/Playing[/Progress|/Stopped] body and,
+// for a book, moves its progress the way a real server would on Stopped.
+func (s *Server) jfSessionReport(r *http.Request, p []string) {
+	if r.Method != http.MethodPost || len(p) == 0 || p[0] != "Playing" {
+		return
+	}
+	route := "Sessions/Playing"
+	if len(p) >= 2 {
+		route += "/" + p[1]
+	}
+	body := readBody(r)
+	itemID, _ := body["ItemId"].(string)
+	sess, _ := body["PlaySessionId"].(string)
+	pos, _ := body["PositionTicks"].(float64)
+	paused, _ := body["IsPaused"].(bool)
+	s.record(reportRecord{Route: route, ItemID: itemID, PlaySessionID: sess, PositionTicks: int64(pos), IsPaused: paused})
+	if route == "Sessions/Playing/Stopped" {
+		if b, isBook := s.cat.Get(s.cat.IDForJF(itemID)).(*Book); isBook && !b.Ebook && b.Duration > 0 {
+			s.setProgress(b.ID, (pos/ticksPerSec)/b.Duration)
+		}
+	}
+}
+
+// jfUserDataWrite: POST /UserItems/{id}/UserData?userId= {PlaybackPositionTicks?, Played?}
+// — applied verbatim, as Jellyfin's SaveUserData does, and echoed back.
+func (s *Server) jfUserDataWrite(w http.ResponseWriter, r *http.Request, p []string) {
+	if r.Method != http.MethodPost || len(p) < 2 || p[1] != "UserData" {
+		notFound(w)
+		return
+	}
+	b, isBook := s.cat.Get(s.cat.IDForJF(p[0])).(*Book)
+	if !isBook {
+		notFound(w)
+		return
+	}
+	body := readBody(r)
+	pos, hasPos := body["PlaybackPositionTicks"].(float64)
+	played, hasPlayed := body["Played"].(bool)
+	s.record(reportRecord{Route: "UserItems/UserData", ItemID: s.cat.JFID(b.ID), PositionTicks: int64(pos)})
+	if hasPlayed && played {
+		s.setProgress(b.ID, 1)
+	} else if hasPos && b.Duration > 0 {
+		s.setProgress(b.ID, (pos/ticksPerSec)/b.Duration)
+	}
+	ok(w, s.jfUserData(b.ID, s.progressOf(b.ID, b.Progress), b.Duration, 0, b.LastPlay))
+}
+
+// jfPlayedWrite: POST /UserPlayedItems/{id}?userId= marks a book finished.
+func (s *Server) jfPlayedWrite(w http.ResponseWriter, r *http.Request, p []string) {
+	if r.Method != http.MethodPost || len(p) < 1 {
+		notFound(w)
+		return
+	}
+	b, isBook := s.cat.Get(s.cat.IDForJF(p[0])).(*Book)
+	if !isBook {
+		notFound(w)
+		return
+	}
+	s.record(reportRecord{Route: "UserPlayedItems", ItemID: s.cat.JFID(b.ID)})
+	s.setProgress(b.ID, 1)
+	ok(w, s.jfUserData(b.ID, 1, b.Duration, 1, s.cat.Now))
 }
 
 // jfPeople: each person with their own id and a Primary image (a generated
@@ -444,6 +621,14 @@ func (s *Server) jfAny(id string, full bool) map[string]any {
 		return s.jfBoxSet(v)
 	case *Playlist:
 		return s.jfPlaylist(v)
+	case *Book:
+		if s.Books && !v.Ebook {
+			return s.jfAudioBook(v, full)
+		}
+	case *Author:
+		if s.Books {
+			return s.jfAuthor(v)
+		}
 	}
 	return nil
 }
@@ -607,6 +792,23 @@ func (s *Server) jfQuery(w http.ResponseWriter, r *http.Request) {
 				add(s.jfEpisode(e, false))
 			}
 		}
+		// Audiobooks (Books on): the books view, or a server-wide AudioBook
+		// query; `MusicAlbum` counts too since a real books library holds
+		// multi-file books as albums. ArtistIds = the author. A music query
+		// (no view, MusicAlbum only) never reaches here.
+		booksParent := q.parent == jfBooksView || (q.parent == "" && q.types != nil && q.types["AudioBook"])
+		if s.Books && booksParent && q.types != nil && (q.types["AudioBook"] || q.types["MusicAlbum"]) && q.mediaType == "" {
+			full := strings.Contains(qStr(r, "Fields"), "MediaSources")
+			for _, b := range s.cat.Books {
+				if b.Ebook {
+					continue
+				}
+				if q.artist != "" && s.cat.JFID(b.Author.ID) != strings.ToLower(q.artist) {
+					continue
+				}
+				add(s.jfAudioBook(b, full))
+			}
+		}
 		if q.types == nil && q.ids != nil {
 			for id := range q.ids {
 				if cid := s.cat.IDForJF(id); cid != "" {
@@ -682,6 +884,18 @@ func (s *Server) jfLatest(r *http.Request) []map[string]any {
 		for _, sh := range s.cat.RecentShows(limit) {
 			items = append(items, s.jfShow(sh, false))
 		}
+	case jfBooksView:
+		if s.Books {
+			for _, b := range s.cat.RecentBooks(len(s.cat.Books)) {
+				if b.Ebook {
+					continue
+				}
+				items = append(items, s.jfAudioBook(b, false))
+				if len(items) >= limit {
+					break
+				}
+			}
+		}
 	}
 	if items == nil {
 		items = []map[string]any{}
@@ -692,6 +906,22 @@ func (s *Server) jfLatest(r *http.Request) []map[string]any {
 func (s *Server) jfResume(r *http.Request) map[string]any {
 	var items []map[string]any
 	types := qStr(r, "IncludeItemTypes")
+	if s.Books && qStr(r, "ParentId") == jfBooksView {
+		// Continue listening: the books part-way through, most recent first
+		// (the Audiobookshelf dialect's list, in Jellyfin's shape).
+		for _, b := range s.cat.InProgressBooks() {
+			if !b.Ebook {
+				items = append(items, s.jfAudioBook(b, strings.Contains(qStr(r, "Fields"), "MediaSources")))
+			}
+		}
+		if items == nil {
+			items = []map[string]any{}
+		}
+		if limit := qInt(r, "Limit", 0); limit > 0 && len(items) > limit {
+			items = items[:limit]
+		}
+		return map[string]any{"Items": items, "TotalRecordCount": len(items), "StartIndex": 0}
+	}
 	video := qStr(r, "MediaTypes") == "Video" || strings.Contains(types, "Movie") || strings.Contains(types, "Episode")
 	if video || types == "" {
 		movies, episodes := s.cat.ContinueWatching()
@@ -726,7 +956,7 @@ func (s *Server) jfItemsRoot(w http.ResponseWriter, r *http.Request, p []string)
 		return
 	}
 	id := s.cat.IDForJF(p[0])
-	if id == "" && p[0] != jfMusicView && p[0] != jfMovieView && p[0] != jfShowView && p[0] != "user" {
+	if id == "" && p[0] != jfMusicView && p[0] != jfMovieView && p[0] != jfShowView && p[0] != "user" && !(s.Books && p[0] == jfBooksView) {
 		notFound(w)
 		return
 	}
@@ -753,6 +983,12 @@ func (s *Server) jfItemsRoot(w http.ResponseWriter, r *http.Request, p []string)
 			}
 		case *Episode:
 			kind = artWide
+		case *Author:
+			// Books on: an author's art is square, as the Audiobookshelf
+			// dialect serves it (off, nothing asks for an author's image).
+			if s.Books {
+				kind = artSquare
+			}
 		}
 		if id == "" {
 			id = p[0] // a view
@@ -821,12 +1057,28 @@ func (s *Server) jfArtists(w http.ResponseWriter, r *http.Request, p []string) {
 			ok(w, s.jfArtist(a))
 			return
 		}
+		if au, isAuthor := s.cat.Get(id).(*Author); isAuthor && s.Books {
+			if len(p) >= 2 && p[1] == "Images" {
+				serveJPEG(w, s.art(id, artSquare, qInt(r, "maxWidth", 0)))
+				return
+			}
+			ok(w, s.jfAuthor(au))
+			return
+		}
 		if len(p) >= 2 && p[1] == "Images" {
 			serveJPEG(w, s.art(id, artSquare, qInt(r, "maxWidth", 0)))
 			return
 		}
 	}
 	var items []map[string]any
+	if s.Books && qStr(r, "ParentId") == jfBooksView {
+		// The books view's album artists are its authors (Books on).
+		items = s.jfAudioBookAuthors()
+		q := parseJFQuery(r)
+		sortItems(items, q.sortBy, q.desc)
+		ok(w, map[string]any{"Items": items, "TotalRecordCount": len(items), "StartIndex": 0})
+		return
+	}
 	for _, a := range s.cat.Artists {
 		items = append(items, s.jfArtist(a))
 	}
@@ -951,6 +1203,14 @@ func (s *Server) jfAudio(w http.ResponseWriter, r *http.Request, p []string) {
 	}
 	t, _ := s.cat.Get(s.cat.IDForJF(p[0])).(*Track)
 	if t == nil {
+		// Books on: a book's one WAV streams through the same audio routes.
+		if b, isBook := s.cat.Get(s.cat.IDForJF(p[0])).(*Book); isBook && s.Books && !b.Ebook {
+			switch strings.ToLower(p[1]) {
+			case "universal", "stream", "stream.wav":
+				serveWAV(w, r, b.Seed, b.Duration)
+				return
+			}
+		}
 		notFound(w)
 		return
 	}

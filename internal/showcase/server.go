@@ -39,6 +39,52 @@ type Server struct {
 	// they never start there; labelled lossy they go to AVPlayer, which
 	// plays the same WAV. Off unless SHOWCASE_LOSSY_MUSIC=1 is set.
 	LossyMusic bool
+	// Books makes the Jellyfin dialect also serve the catalog's audiobooks
+	// as a "books" view (AudioBook items with Chapters, one WAV each — the
+	// Audiobookshelf dialect's books, in Jellyfin's shape), plus the
+	// UserItems / UserPlayedItems write routes and a reports readout at
+	// GET /__showcase/reports for a probe to check what was posted. Off
+	// unless SHOWCASE_JELLYFIN_BOOKS=1 is set: the default output is
+	// byte-identical (the mock feeds the store screenshots).
+	Books bool
+	// The playback reports the apps POST while Books is on, newest last.
+	reports []reportRecord
+}
+
+// reportRecord is one recorded POST (Books on): the route, and the fields
+// a probe asserts on.
+type reportRecord struct {
+	Route         string `json:"route"`
+	ItemID        string `json:"itemId"`
+	PlaySessionID string `json:"playSessionId,omitempty"`
+	PositionTicks int64  `json:"positionTicks"`
+	IsPaused      bool   `json:"isPaused"`
+	At            string `json:"at"`
+}
+
+// record keeps a POST's facts for GET /__showcase/reports (bounded).
+func (s *Server) record(rec reportRecord) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec.At = time.Now().UTC().Format(time.RFC3339Nano)
+	s.reports = append(s.reports, rec)
+	if len(s.reports) > 500 {
+		s.reports = s.reports[len(s.reports)-500:]
+	}
+}
+
+// recorded returns a copy of the reports; clear empties them.
+func (s *Server) recorded(clear bool) []reportRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := append([]reportRecord(nil), s.reports...)
+	if clear {
+		s.reports = nil
+	}
+	if out == nil {
+		out = []reportRecord{}
+	}
+	return out
 }
 
 // plexTrackCodec is the audioCodec the Plex dialect reports for music.
@@ -51,7 +97,8 @@ func (s *Server) plexTrackCodec() string {
 
 func New(cat *Catalog, clipsDir string) *Server {
 	return &Server{cat: cat, clipsDir: clipsDir, Token: "showcase-token", progress: map[string]float64{},
-		log: log.New(os.Stdout, "", log.Ltime), LossyMusic: os.Getenv("SHOWCASE_LOSSY_MUSIC") == "1"}
+		log: log.New(os.Stdout, "", log.Ltime), LossyMusic: os.Getenv("SHOWCASE_LOSSY_MUSIC") == "1",
+		Books: os.Getenv("SHOWCASE_JELLYFIN_BOOKS") == "1"}
 }
 
 // ---- JSON / HTTP helpers ---------------------------------------------------
