@@ -9,6 +9,9 @@ name: Build and Push Docker Image
 #  - Pull requests from forks are never built: outside contributions are
 #    not accepted (CONTRIBUTING.md) and their code never runs here. Same-
 #    repository pull requests (Dependabot's) are built, never pushed.
+#  - workflow_dispatch: the owner can rebuild and republish main by hand
+#    (Actions › Run workflow), e.g. to pick up patched base images without
+#    a code change. Only people with write access can start it.
 
 on:
   push:
@@ -16,6 +19,7 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions: {}
 
