@@ -13,7 +13,7 @@
 # line is the MINIMUM version: building with a newer Go is fine, and an
 # out-of-support Go (1.22 was) ships without the standard library's
 # security fixes.
-FROM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
+FROM golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
 
 WORKDIR /build
 
@@ -33,6 +33,21 @@ RUN CGO_ENABLED=0 go build \
     -trimpath \
     -o alexandria-server \
     ./cmd/server
+
+# License notices for everything compiled into the binary: the Go standard
+# library and each module `go version -m` lists. MIT and BSD both require
+# the notice to travel with binary copies, and generating it here means it
+# can never fall behind a dependency update. A module without a license
+# file fails the build rather than shipping unannounced.
+RUN set -e; out=THIRD_PARTY_NOTICES.txt; \
+    { echo "Alexandria Server includes the third-party software below, each under its own license."; echo; \
+      echo "==== Go standard library and runtime"; cat "$(go env GOROOT)/LICENSE"; echo; } > "$out"; \
+    go version -m alexandria-server | awk '$1 == "dep" { print $2, $3 }' | while read -r mod ver; do \
+      dir="$(go env GOMODCACHE)/$(echo "$mod" | sed 's/[A-Z]/!&/g' | tr 'A-Z' 'a-z')@$ver"; \
+      lic="$(ls "$dir" | grep -i -E '^(licen[cs]e|copying)' | head -n 1)"; \
+      [ -n "$lic" ] || { echo "no license file for $mod $ver" >&2; exit 1; }; \
+      { echo "==== $mod $ver"; cat "$dir/$lic"; echo; } >> "$out"; \
+    done
 
 # =============================================================================
 # Runtime stage - minimal image
@@ -56,8 +71,9 @@ RUN addgroup -g 1000 alexandria && \
 
 WORKDIR /app
 
-# Copy binary from builder
-COPY --from=builder /build/alexandria-server .
+# Copy binary from builder, with Alexandria's license and the notices
+# for the software inside it
+COPY --from=builder /build/alexandria-server /build/LICENSE /build/THIRD_PARTY_NOTICES.txt ./
 
 # Create data directory and set permissions
 RUN mkdir -p /data && chown -R alexandria:alexandria /app /data

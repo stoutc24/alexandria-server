@@ -1,9 +1,15 @@
-# Keeps the pinned GitHub Actions (commit SHAs) and the pinned base images
-# (digests) current, as at most one pull request a week for each, for the
-# owner to review. CI builds each proposal without publishing it. Go
-# modules are deliberately left out: dependency bumps are done by hand and
-# built first, because a module that raises go.mod's `go` line once broke
-# every container rebuild.
+# Keeps the pinned GitHub Actions (commit SHAs), the pinned base images
+# (digests) and the Go modules current, as at most one pull request a week
+# for each, for the owner to review. CI builds each proposal without
+# publishing it. CI builds and smoke-tests; it does not run the test suite,
+# so run `go test -race ./...` on a Go-module proposal before merging it.
+#
+# Go modules were left out while the builder image was Go 1.22, because a
+# module that raised go.mod's `go` line broke every container rebuild. The
+# builder now tracks the current Go release, and a proposal that needs a
+# newer Go than the builder fails its CI build visibly instead of shipping.
+# Leaving them out let Fiber sit on a version with three published
+# vulnerabilities, fixed by hand on 2026-10-11.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -19,4 +25,11 @@ updates:
       interval: weekly
     groups:
       base-images:
+        patterns: ["*"]
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-modules:
         patterns: ["*"]

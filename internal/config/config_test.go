@@ -12,9 +12,9 @@ import (
 // the app), so the server never advertises an address the phone drops.
 func TestPublicURLAcceptsOnlyPlainHTTPSAddresses(t *testing.T) {
 	for raw, want := range map[string]string{
-		"":                               "",
-		"   ":                            "",
-		"https://alexandria.example.com": "https://alexandria.example.com",
+		"":                                    "",
+		"   ":                                 "",
+		"https://alexandria.example.com":      "https://alexandria.example.com",
 		"https://alexandria.home.example.net": "https://alexandria.home.example.net",
 		// A trailing slash is normalised away; so are the default port
 		// and the case of the scheme and host.
@@ -46,14 +46,14 @@ func TestPublicURLAcceptsOnlyPlainHTTPSAddresses(t *testing.T) {
 		// User-info, a query or a fragment: each makes the address read
 		// as one place and connect to another, or carries a secret.
 		"https://alexandria.home.example.net@evil.example/?x=1#frag": "",
-		"https://alexandria.example.com@evil.example":                      "",
-		"https://user:secret@alexandria.example.com":                       "",
-		"https://alexandria.example.com/?x=1":                              "",
-		"https://alexandria.example.com/?":                                 "",
-		"https://alexandria.example.com?x=1":                               "",
-		"https://alexandria.example.com/#frag":                             "",
-		"https://alexandria.example.com/#":                                 "",
-		"https://alexandria.example.com#frag":                              "",
+		"https://alexandria.example.com@evil.example":                "",
+		"https://user:secret@alexandria.example.com":                 "",
+		"https://alexandria.example.com/?x=1":                        "",
+		"https://alexandria.example.com/?":                           "",
+		"https://alexandria.example.com?x=1":                         "",
+		"https://alexandria.example.com/#frag":                       "",
+		"https://alexandria.example.com/#":                           "",
+		"https://alexandria.example.com#frag":                        "",
 
 		// Percent-encoding (a host spelled in escapes), a backslash, a
 		// space, a control character, a look-alike letter.
