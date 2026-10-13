@@ -254,6 +254,81 @@ func RunMigrations() error {
 					ON admin_device_tokens(expires_at);
 			`,
 		},
+		{
+			// Alexandria Accounts (owner, 2026-10-12): a person signs into
+			// any app ONCE, and every service the admin set up for them
+			// signs in with them. This revisits the August 2026 removal of
+			// accounts on the owner's say-so, and stays thinner than what
+			// was removed then:
+			//
+			//   - account_logins hangs a username and password off an
+			//     existing PROFILE. The profile is still the person; a
+			//     person without a login is still a person, linked by code
+			//     as before.
+			//   - account_invites are how a login comes to exist: the admin
+			//     invites, the person sets the password. There is no open
+			//     sign-up (decision 2A).
+			//   - account_services are the logins the person's devices are
+			//     handed, sealed with the server key (internal/vault), which
+			//     never sits in this file (decision 1A).
+			//   - account_device_keys is each signed-in device's public key:
+			//     its services travel sealed to it.
+			//
+			// New tables only; nothing existing changes shape, so a server
+			// that never uses accounts is untouched. Times are INTEGER unix
+			// seconds, as in admin_device_tokens.
+			name: "create_account_tables",
+			sql: `
+				CREATE TABLE IF NOT EXISTS account_logins (
+					profile_id TEXT PRIMARY KEY,
+					username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+					password_hash TEXT NOT NULL,
+					totp_secret TEXT,
+					totp_enabled INTEGER NOT NULL DEFAULT 0,
+					last_totp_step INTEGER NOT NULL DEFAULT 0,
+					failed_attempts INTEGER NOT NULL DEFAULT 0,
+					locked_until INTEGER NOT NULL DEFAULT 0,
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL,
+					last_login_at INTEGER,
+					FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+				);
+				CREATE TABLE IF NOT EXISTS account_invites (
+					id TEXT PRIMARY KEY,
+					profile_id TEXT NOT NULL,
+					token_hash TEXT NOT NULL UNIQUE,
+					code_hash TEXT NOT NULL UNIQUE,
+					purpose TEXT NOT NULL DEFAULT 'invite',
+					created_at INTEGER NOT NULL,
+					expires_at INTEGER NOT NULL,
+					used_at INTEGER,
+					FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+				);
+				CREATE INDEX IF NOT EXISTS idx_account_invites_profile
+					ON account_invites(profile_id);
+				CREATE TABLE IF NOT EXISTS account_services (
+					id TEXT PRIMARY KEY,
+					profile_id TEXT NOT NULL,
+					service_type TEXT NOT NULL,
+					name TEXT NOT NULL DEFAULT '',
+					base_url TEXT NOT NULL,
+					login_kind TEXT NOT NULL,
+					credentials TEXT,
+					priority INTEGER NOT NULL DEFAULT 0,
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL,
+					FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE
+				);
+				CREATE INDEX IF NOT EXISTS idx_account_services_profile
+					ON account_services(profile_id, priority);
+				CREATE TABLE IF NOT EXISTS account_device_keys (
+					token_id TEXT PRIMARY KEY,
+					public_key TEXT NOT NULL,
+					created_at INTEGER NOT NULL,
+					FOREIGN KEY (token_id) REFERENCES profile_tokens(id) ON DELETE CASCADE
+				);
+			`,
+		},
 	}
 
 	for _, m := range migrations {

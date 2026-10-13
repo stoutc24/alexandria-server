@@ -1,0 +1,10 @@
+{
+  "alg": "x25519-hkdf-sha256-aes256gcm-v1",
+  "ct": "nOKHxxD7JJHzBEkkdiNpwEjRp9yqwgAdulqKnnq8yDOIM69r+xzMHz0O8bNE6ck+kh4bUlk/woJ81htrgJ7Ka1K1VHxV7OoFtd91qTO8GTd8m/DHdVhGGRNfqkcI3c0woDaHPm6mVKQtDE45gUM8XmhdriXMVJ9KJEkMvg==",
+  "devicePrivateKey": "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=",
+  "devicePublicKey": "D6poTtKIZ7l/Smot7l34zpdOdrcBjj8iocTPJnhXDyA=",
+  "ephemeralPrivateKey": "ERERERERERERERERERERERERERERERERERERERERERE=",
+  "epk": "e06Qm75//kTEZaIgA31gjuNYl9Me+XLwf3SJLLD3PxM=",
+  "nonce": "MzMzMzMzMzMzMzMz",
+  "plaintext": "{\"services\":[{\"type\":\"abs\",\"baseUrl\":\"http://abs.local:13378\",\"username\":\"sam\",\"password\":\"correct horse\"}]}"
+}

@@ -232,6 +232,12 @@ func (r *ProfileRepository) ListTokens(profileID string) ([]DeviceToken, error) 
 // RevokeToken unlinks ONE device — a lost phone, without disturbing the
 // watch or the TV.
 func (r *ProfileRepository) RevokeToken(tokenID string) error {
+	// Its Alexandria Accounts key goes with it, explicitly, as everything
+	// a deletion removes here does.
+	if _, err := database.DB.Exec(
+		`DELETE FROM account_device_keys WHERE token_id = ?`, tokenID); err != nil {
+		return err
+	}
 	res, err := database.DB.Exec(
 		`DELETE FROM profile_tokens WHERE id = ?`, tokenID)
 	if err != nil {
@@ -316,6 +322,13 @@ func (r *ProfileRepository) Delete(id string) error {
 
 	for _, q := range []string{
 		`DELETE FROM stats_events WHERE profile_id = ?`,
+		// Alexandria Accounts: the device keys first, while the tokens
+		// they belong to can still be found.
+		`DELETE FROM account_device_keys WHERE token_id IN
+			(SELECT id FROM profile_tokens WHERE profile_id = ?)`,
+		`DELETE FROM account_services WHERE profile_id = ?`,
+		`DELETE FROM account_invites WHERE profile_id = ?`,
+		`DELETE FROM account_logins WHERE profile_id = ?`,
 		`DELETE FROM profile_tokens WHERE profile_id = ?`,
 		`DELETE FROM link_requests WHERE profile_id = ?`,
 	} {

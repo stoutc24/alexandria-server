@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/stoutsolutions/alexandria-server/internal/vault"
 )
 
 // Config is the whole configuration surface. It is deliberately small:
@@ -42,6 +44,17 @@ type Config struct {
 	// a proxy not named here every visitor looks like the proxy and
 	// shares one limit (see middleware.ClientKey). Empty when unset.
 	TrustedProxies []netip.Prefix
+
+	// SecretsKey opens the service logins Alexandria Accounts keeps for
+	// each person (internal/vault): 32 random bytes from
+	// ALEXANDRIA_SECRETS_KEY, or from the file ALEXANDRIA_SECRETS_KEY_FILE
+	// names. It is never written to the database, so neither the database
+	// file nor a backup can open those logins.
+	//
+	// nil when neither is set. Accounts still sign people in and link their
+	// devices; storing service logins is what stays off. A server that never
+	// uses accounts boots exactly as before.
+	SecretsKey []byte
 }
 
 // defaultToken is the placeholder shipped in .env.example and the
@@ -73,7 +86,67 @@ func Load() *Config {
 			"characters (openssl rand -hex 32).")
 	}
 
+	key, problem := secretsKey(
+		os.Getenv("ALEXANDRIA_SECRETS_KEY"),
+		os.Getenv("ALEXANDRIA_SECRETS_KEY_FILE"),
+		cfg.APIToken,
+		os.ReadFile,
+	)
+	if problem != "" {
+		// Set but unusable is refused, never quietly ignored: a typo here
+		// would otherwise look like "accounts lost everyone's logins".
+		log.Fatal(problem)
+	}
+	if key == nil {
+		log.Printf("ALEXANDRIA_SECRETS_KEY is not set: Alexandria Accounts " +
+			"can sign people in, but cannot keep their service logins. " +
+			"Generate one with:  openssl rand -base64 32")
+	}
+	cfg.SecretsKey = key
+
 	return cfg
+}
+
+// secretsKey reads the accounts' secrets key from the variable, or from
+// the file the second variable names. It returns nil and no problem when
+// neither is set (accounts' stored logins stay off), and a problem — the
+// reason to refuse to boot — for a key that is set but unusable: the
+// wrong size, the shipped placeholder, or the admin token reused. A key
+// shared with the admin token would let whoever holds the .env's one
+// secret open every stored login with no second thought; the 2025 vault
+// this replaces fell to exactly that kind of shortcut.
+func secretsKey(
+	inline, file, apiToken string,
+	readFile func(string) ([]byte, error),
+) ([]byte, string) {
+	raw := strings.TrimSpace(inline)
+	if raw == "" && strings.TrimSpace(file) != "" {
+		b, err := readFile(strings.TrimSpace(file))
+		if err != nil {
+			return nil, "ALEXANDRIA_SECRETS_KEY_FILE could not be read: " + err.Error()
+		}
+		raw = strings.TrimSpace(string(b))
+		if raw == "" {
+			return nil, "ALEXANDRIA_SECRETS_KEY_FILE is empty"
+		}
+	}
+	if raw == "" {
+		return nil, ""
+	}
+	if raw == defaultToken {
+		return nil, "ALEXANDRIA_SECRETS_KEY is still the placeholder. " +
+			"Generate one with:  openssl rand -base64 32"
+	}
+	if raw == strings.TrimSpace(apiToken) {
+		return nil, "ALEXANDRIA_SECRETS_KEY must not be the same as " +
+			"ALEXANDRIA_API_TOKEN. Generate its own with:  openssl rand -base64 32"
+	}
+	key, err := vault.ParseKey(raw)
+	if err != nil {
+		return nil, "ALEXANDRIA_SECRETS_KEY must be 32 random bytes, base64 " +
+			"or hex. Generate one with:  openssl rand -base64 32"
+	}
+	return key, ""
 }
 
 // publicURL is ALEXANDRIA_PUBLIC_URL as /health publishes it: a plain
