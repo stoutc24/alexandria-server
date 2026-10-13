@@ -185,6 +185,7 @@ All settings are environment variables, set in `.env` or with `-e`.
 | `ALEXANDRIA_SERVER_NAME` | the machine's hostname | The name devices see when they find the server. Set it under Docker: inside a container the hostname is the container id, so without a name the server looks like a new machine after every recreate. |
 | `ALEXANDRIA_PUBLIC_URL` | empty | The `https://` address the server is reached at through a reverse proxy. See [Reaching it from outside your home](#reaching-it-from-outside-your-home). |
 | `ALEXANDRIA_TRUSTED_PROXIES` | empty | The address your reverse proxy connects from, if you use one (one address or range, or several, comma-separated). The sign-in and linking limits then count each visitor separately instead of everyone as the proxy. See [Reaching it from outside your home](#reaching-it-from-outside-your-home). |
+| `ALEXANDRIA_SECRETS_KEY` | empty | Lets [Alexandria accounts](docs/ACCOUNTS.md) store each person's service logins, sealed, so their devices sign in by themselves. Make one with `openssl rand -base64 32` and keep it out of your backups. Without it, people can still sign in and link devices. `ALEXANDRIA_SECRETS_KEY_FILE` reads it from a file instead. |
 | `TZ` | `UTC` | Timezone for the logs. |
 | `PORT` | `4000` | In the installer's `.env`, the port on this machine. Keep 4000: the apps search your network on it. |
 | `DB_PATH` | `/data/alexandria.db` | Where the database lives inside the container. Leave it unless you know why. |

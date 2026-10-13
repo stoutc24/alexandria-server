@@ -51,6 +51,13 @@ services:
       # means unset.
       - ALEXANDRIA_TRUSTED_PROXIES=${ALEXANDRIA_TRUSTED_PROXIES:-}
 
+      # Optional: lets Alexandria accounts store each person's service logins
+      # (sealed). Generate with:  openssl rand -base64 32
+      # Keep it out of backups of the data volume — that is what protects
+      # them. Empty means unset: accounts still work, without stored logins.
+      # See docs/ACCOUNTS.md.
+      - ALEXANDRIA_SECRETS_KEY=${ALEXANDRIA_SECRETS_KEY:-}
+
       # Timezone
       - TZ=${TZ:-UTC}
 
