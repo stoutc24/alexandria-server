@@ -1299,6 +1299,8 @@
         'this service themselves.</p>' +
       '<p class="meta" id="sf-keep" hidden>A login is saved. Leave the box empty to ' +
         'keep it, or type a new one to replace it.</p>' +
+      '<p class="meta" id="sf-moved" hidden>A new address (or a different service) ' +
+        'needs the login typed again: a saved login never moves.</p>' +
       '<p class="bad" id="sf-lost" hidden>The server key changed since this was ' +
         'saved — enter it again.</p>' +
       '</div>' +
@@ -1326,11 +1328,48 @@
       g.hidden = g.dataset.kind !== kind;
     });
     var same = !!s && kind === s.loginKind && kind !== "none";
-    $("sf-keep").hidden = !(same && s.hasSecret && !s.unreadable);
     $("sf-lost").hidden = !(same && s.unreadable);
+    syncMoved();
     // Moving off Plex ends a Plex sign-in rather than keeping it unseen.
     if (type !== "plex") dropPlexPick();
     renderPlexBox();
+  }
+
+  // Mirrors the server's sameServiceAddress: scheme and host without case,
+  // the path and query exactly, a trailing slash ignored.
+  function sameAddress(a, b) {
+    var re = /^([a-z][a-z0-9+.\-]*):\/\/([^\/?#]*)([^?#]*)(\?[^#]*)?/i;
+    var pa = re.exec(String(a || "").trim()), pb = re.exec(String(b || "").trim());
+    if (!pa || !pb) return String(a || "").trim() === String(b || "").trim();
+    return pa[1].toLowerCase() === pb[1].toLowerCase() &&
+      pa[2].toLowerCase() === pb[2].toLowerCase() &&
+      pa[3].replace(/\/+$/, "") === pb[3].replace(/\/+$/, "") &&
+      (pa[4] || "") === (pb[4] || "");
+  }
+
+  // Whether the edit open in the form moves its service: a new address, or
+  // a different kind of service. A saved login never moves with it (the
+  // server refuses, login-required), so the boxes ask for it again.
+  function formMoves(s) {
+    if (!s || s.loginKind === "plexuser") return false;
+    return $("sf-type").value !== s.type || !sameAddress($("sf-url").value, s.baseUrl);
+  }
+
+  // The "leave it empty to keep it" promise, only while it holds: it goes
+  // the moment the address or the service changes. Runs on every keystroke
+  // in the address box as well.
+  function syncMoved() {
+    var s = acct.form && acct.form.mode === "edit" ? findService(acct.form.id) : null;
+    var kind = $("sf-kind").value;
+    var same = !!s && kind === s.loginKind && kind !== "none";
+    var moved = formMoves(s);
+    var kept = same && s.hasSecret && !s.unreadable && !moved;
+    $("sf-keep").hidden = !kept;
+    $("sf-moved").hidden = !(moved && s.hasSecret && kind !== "none");
+    [["sf-pass", "Password"], ["sf-token", "Token"], ["sf-key", "API key"]].forEach(function (p) {
+      var box = $(p[0]);
+      if (box) box.placeholder = kept ? "Saved — leave empty to keep it" : p[1];
+    });
   }
 
   function saveService() {
@@ -1348,16 +1387,20 @@
     if (!/^https?:\/\/\S+$/i.test(url)) {
       return complain("The address must start with http:// or https://", "sf-url");
     }
-    // A secret is needed when adding, when changing how they sign in, or
-    // when nothing usable is stored. Otherwise an empty box keeps it.
-    var need = !s || kind !== s.loginKind || s.unreadable || !s.hasSecret;
+    // A secret is needed when adding, when changing how they sign in, when
+    // nothing usable is stored, or when the service moves (a new address or
+    // a different service: a saved login never moves with it). Otherwise an
+    // empty box keeps it.
+    var moved = formMoves(s);
+    var need = !s || kind !== s.loginKind || s.unreadable || !s.hasSecret || moved;
+    var again = moved && s.hasSecret ? " A saved login never moves to a new address." : "";
     if (kind === "password") {
       if (!user) return complain("Enter their username.", "sf-user");
-      if (!pass && need) return complain("Enter their password.", "sf-pass");
+      if (!pass && need) return complain("Enter their password." + again, "sf-pass");
     } else if (kind === "token" && !tok && need) {
-      return complain("Enter the token.", "sf-token");
+      return complain("Enter the token." + again, "sf-token");
     } else if (kind === "apikey" && !key && need) {
-      return complain("Enter the API key.", "sf-key");
+      return complain("Enter the API key." + again, "sf-key");
     }
 
     // Blank name: send the service's own name, because on an edit the
@@ -2301,6 +2344,9 @@
     if (t.id === "sf-type" || t.id === "sf-kind") syncForm();
     else if (t.name === "sf-plex-server") plexServerPicked(Number(t.value));
     else if (t.name === "sf-plex-person") plexPersonPicked(Number(t.value));
+  });
+  $("acct").addEventListener("input", function (e) {
+    if (e.target.id === "sf-url") syncMoved();
   });
   // Leaving the page, or its going into the back-forward cache, ends a Plex
   // sign-in: the admin's Plex token does not outlive the visit.

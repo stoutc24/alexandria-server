@@ -21,7 +21,8 @@ func TestContentSecurityPolicyIsPinned(t *testing.T) {
 	for path, want := range map[string]string{
 		"/admin": "default-src 'self'; style-src 'self' 'unsafe-inline'; " +
 			"script-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
-			"connect-src 'self' https://plex.tv",
+			"connect-src 'self' https://plex.tv; " +
+			"frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
 		"/invite": "default-src 'none'; style-src 'unsafe-inline'; " +
 			"script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; " +
 			"frame-ancestors 'none'",
@@ -39,6 +40,15 @@ func TestContentSecurityPolicyIsPinned(t *testing.T) {
 		if got := resp.Header.Get("Referrer-Policy"); got != "no-referrer" {
 			t.Errorf("GET %s Referrer-Policy %q", path, got)
 		}
+	}
+
+	// The admin page, framed by nobody — old browsers included.
+	resp, err := app.Test(httptest.NewRequest("GET", "/admin", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Header.Get("X-Frame-Options"); got != "DENY" {
+		t.Errorf("GET /admin X-Frame-Options %q, want DENY", got)
 	}
 }
 

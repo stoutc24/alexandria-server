@@ -526,3 +526,112 @@ func TestAccountsAPickedPlexPersonReachesTheirDevice(t *testing.T) {
 		t.Fatalf("the device's Plex %+v plex %+v", got, got.Plex)
 	}
 }
+
+// A saved login never follows a service somewhere new (security sweep
+// 2026-10, S1). A phone's admin sign-in — no code asked here, 180 days if
+// it stays — once pointed a person's service at another address with the
+// password kept, and the person's devices signed in there with it. Moving
+// a service (a new address, or another kind of service) now needs the
+// login typed again; until it is, nothing changes. Edits that move
+// nothing keep the saved login as before.
+func TestAccountsAMovedServiceNeedsItsLoginAgain(t *testing.T) {
+	s := newTestServer(t, withSecretsKey)
+	profileID, invite := setUpSam(t, s) // with the env token, before enrolment
+	r := s.do("POST", "/api/v1/admin/profiles", map[string]any{"name": "Grandma"}, bearer(testAPIToken))
+	grandmaID := r.body["profile"].(map[string]any)["id"].(string)
+	r = s.do("POST", "/api/v1/admin/profiles/"+grandmaID+"/services", map[string]any{
+		"type": "plex", "loginKind": "plexuser", "token": "key-grandma", "plex": map[string]any{
+			"serverId": "5d776825e9c9b9b6e8f1a2b3c4d5e6f708192a3b", "serverName": "StoutOffice",
+			"userId": 42, "userTitle": "Grandma",
+			"connections": []map[string]any{{"uri": "https://203-0-113-7.abc123.plex.direct:32400"}},
+		},
+	}, bearer(testAPIToken))
+	if r.status != 201 {
+		t.Fatalf("add plex person: %d %s", r.status, r)
+	}
+	plexPath := "/api/v1/admin/profiles/" + grandmaID + "/services/" +
+		r.body["service"].(map[string]any)["id"].(string)
+
+	phone := newTestDevice(t)
+	r = s.do("POST", "/api/v1/accounts/invite/accept", map[string]any{
+		"invite": invite["token"], "username": "sam", "password": "a long enough one",
+		"device": phone.body("Sam's iPhone"),
+	}, nil)
+	if r.status != 201 {
+		t.Fatalf("accept: %d %s", r.status, r)
+	}
+	sam := bearer(r.str("deviceToken"))
+	abs := func() (baseURL, kind, username, password string) {
+		t.Helper()
+		mine := openServices(t, phone, s.do("GET", "/api/v1/accounts/services", nil, sam))
+		for _, svc := range mine.Services {
+			if svc.Type == "abs" || svc.Type == "jellyfin" {
+				return svc.BaseURL, svc.LoginKind, svc.Username, svc.Password
+			}
+		}
+		t.Fatalf("no abs service: %+v", mine)
+		return
+	}
+	if u, _, user, pw := abs(); u != "http://abs.local:13378" || user != "sam" || pw != "correct horse" {
+		t.Fatalf("before: %s %s %s", u, user, pw)
+	}
+
+	// The lost phone: signed in to manage the server, no code in hand.
+	e := enrollDirect(t)
+	lost := bearer(s.signIn(e, true, nil).token)
+	r = s.do("GET", "/api/v1/admin/profiles/"+profileID+"/services", nil, lost)
+	absPath := "/api/v1/admin/profiles/" + profileID + "/services/" +
+		r.body["services"].([]any)[0].(map[string]any)["id"].(string)
+
+	for _, move := range []map[string]any{
+		{"baseUrl": "https://attacker.example"},                    // somewhere else
+		{"baseUrl": "https://attacker.example", "username": "sam"}, // a username is no login
+		{"baseUrl": "http://abs.local:13379"},                      // another port
+		{"baseUrl": "http://abs.local:13378/other"},                // another path
+		{"type": "jellyfin"},                                       // another kind of service, same place
+		{"baseUrl": "https://attacker.example", "loginKind": "token"},
+	} {
+		s.refused(400, "login-required", "PATCH", absPath, move, lost)
+	}
+	if u, _, user, pw := abs(); u != "http://abs.local:13378" || user != "sam" || pw != "correct horse" {
+		t.Fatalf("a refused move changed something: %s %s %s", u, user, pw)
+	}
+
+	// Edits that move nothing keep the saved login: a name, the same
+	// place written another way.
+	s.expectStatus(200, "PATCH", absPath, map[string]any{"name": "Sam's books"}, lost)
+	s.expectStatus(200, "PATCH", absPath, map[string]any{"baseUrl": "HTTP://ABS.local:13378/"}, lost)
+	if _, _, user, pw := abs(); user != "sam" || pw != "correct horse" {
+		t.Fatalf("an edit that moved nothing lost the login: %s %s", user, pw)
+	}
+
+	// Moved with the login typed again: the new one goes, the old one is gone.
+	s.expectStatus(200, "PATCH", absPath, map[string]any{
+		"baseUrl": "https://abs.example.com", "password": "new pass"}, lost)
+	if u, _, user, pw := abs(); u != "https://abs.example.com" || user != "sam" || pw != "new pass" {
+		t.Fatalf("moved with a new password: %s %s %s", u, user, pw)
+	}
+
+	// Moved to a kind that keeps no login: everything saved is dropped, so
+	// switching back to a password later brings nothing back with it.
+	s.expectStatus(200, "PATCH", absPath, map[string]any{
+		"baseUrl": "https://attacker.example", "loginKind": "none"}, lost)
+	s.expectStatus(200, "PATCH", absPath, map[string]any{"loginKind": "password"}, lost)
+	if u, kind, user, pw := abs(); u != "https://attacker.example" || kind != "password" || user != "" || pw != "" {
+		t.Fatalf("a login came back after a move through none: %s %s %q %q", u, kind, user, pw)
+	}
+	raw := string(s.do("GET", "/api/v1/accounts/services", nil, sam).raw)
+	if strings.Contains(raw, "correct horse") || strings.Contains(raw, "new pass") {
+		t.Fatal("a password crossed the wire unsealed")
+	}
+
+	// A picked Plex person: the address goes with the pick. A new address
+	// without picking again is a move; a new name is not.
+	s.refused(400, "login-required", "PATCH", plexPath,
+		map[string]any{"baseUrl": "https://attacker.example"}, lost)
+	r = s.expectStatus(200, "PATCH", plexPath, map[string]any{"name": "Nana"}, lost)
+	svc := r.body["service"].(map[string]any)
+	if svc["baseUrl"] != "https://203-0-113-7.abc123.plex.direct:32400" || svc["hasSecret"] != true {
+		t.Fatalf("a renamed Plex person: %v", svc)
+	}
+}

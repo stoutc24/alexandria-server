@@ -390,6 +390,34 @@
          { type: "abs", name: "Audiobookshelf", baseUrl: "http://abs.local:13378", loginKind: "password",
            username: "grandma", password: CFG.absPassword });
 
+    // M. A saved login never moves to a new address (security sweep
+    // 2026-10, S1): the form says so as the address changes, and Save asks
+    // for the password before sending anything. Nothing is saved here.
+    step = "M";
+    press(document.querySelector('#acct-services [data-act="edit"]'));
+    await waitFor("the ABS edit form", function () { return $("sf-type") && $("sf-type").value === "abs"; });
+    ok("M1 editing in place: an empty box keeps the saved login",
+       visible($("sf-keep")) && !visible($("sf-moved")) &&
+       $("sf-pass").placeholder === "Saved — leave empty to keep it", $("sf-pass").placeholder);
+    $("sf-url").value = "https://somewhere-else.example";
+    $("sf-url").dispatchEvent(new Event("input", { bubbles: true }));
+    ok("M2 a new address: the keep promise goes, the box asks for the password",
+       !visible($("sf-keep")) && visible($("sf-moved")) && $("sf-pass").placeholder === "Password",
+       $("sf-pass").placeholder);
+    from = rec.same.length;
+    press(act("save"));
+    await sleep(300);
+    ok("M3 Save without it: asked for the password, nothing sent",
+       $("toast").textContent === "Enter their password. A saved login never moves to a new address." &&
+       !sent("PATCH", "/services/", from), $("toast").textContent);
+    $("sf-url").value = "HTTP://ABS.local:13378/";
+    $("sf-url").dispatchEvent(new Event("input", { bubbles: true }));
+    ok("M4 the same place written another way: the keep promise is back",
+       visible($("sf-keep")) && !visible($("sf-moved")) &&
+       $("sf-pass").placeholder === "Saved — leave empty to keep it", $("sf-pass").placeholder);
+    press(act("cancel-form"));
+    await waitFor("the form closed", function () { return !$("sf-type"); });
+
     // B. Add Plex by picking the person.
     step = "B";
     await openForm();

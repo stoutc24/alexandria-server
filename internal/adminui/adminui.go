@@ -49,14 +49,21 @@ func InviteHandler(c *fiber.Ctx) error {
 // nothing external and talks to this origin — and, for the Plex picker,
 // to https://plex.tv, from the admin's browser. Nothing broader:
 // adminui_test.go pins it.
+//
+// No other site may frame it (frame-ancestors; X-Frame-Options for old
+// browsers): a page that shows the admin page inside its own could steer
+// the admin's clicks onto Remove and Revoke (security sweep 2026-10, S2).
+// The page has no <base> and its forms never leave it.
 const adminCSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; " +
 	"script-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
-	"connect-src 'self' https://plex.tv"
+	"connect-src 'self' https://plex.tv; " +
+	"frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
 // Handler serves the admin page.
 func Handler(c *fiber.Ctx) error {
 	c.Set("Content-Type", "text/html; charset=utf-8")
 	c.Set("Content-Security-Policy", adminCSP)
+	c.Set("X-Frame-Options", "DENY")
 	c.Set("Referrer-Policy", "no-referrer")
 	c.Set("X-Content-Type-Options", "nosniff")
 	return c.SendString(indexHTML)
