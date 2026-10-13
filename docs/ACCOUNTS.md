@@ -59,10 +59,20 @@ People → **Sign-in & services**:
 1. **Add their services**, in priority order (first = kept first on the free
    app). For each service, pick how they sign in:
    - **Username + password**: their own login on that service.
-   - **Token** (Plex): a Plex Home user's token.
    - **API key** (Kavita).
-   - **Address only**: they sign in themselves on the device. This is right
-     for a Plex friend with their own plex.tv account.
+   - **Address only**: they sign in themselves on the device.
+   - **Plex: pick the person.** Nobody types an address or digs out a token.
+     *Sign in with Plex* (your own Plex account, on Plex's own page), pick
+     your server, then the person: anyone you share it with, Plex Home users
+     and friends alike. Your browser (or, in the phone app, your phone) asks
+     plex.tv for that person's key to your server and hands it to this
+     server, sealed like a password. Their devices then open your server as
+     them — their history, playlists and library limits — with no Plex
+     sign-in of their own. Your own Plex sign-in stays in the browser tab
+     and is dropped when you're done.
+
+     **This server never contacts plex.tv**; only the admin's browser or
+     phone does, at that moment.
 
    Advice per service:
    - **Jellyfin**: use their own Jellyfin login, never a dashboard API key
@@ -176,14 +186,27 @@ Limits: 10 a minute per client, a shared allowance across every visitor
 {"revision": "…", "services": [
   {"id": "…", "type": "abs", "name": "Audiobooks", "baseUrl": "https://abs.example",
    "loginKind": "password", "priority": 0, "username": "sam", "password": "…"},
-  {"id": "…", "type": "plex", "name": "Plex", "baseUrl": "https://plex.example",
-   "loginKind": "none", "priority": 1}
+  {"id": "…", "type": "plex", "name": "Plex",
+   "baseUrl": "https://203-0-113-7.abc123.plex.direct:32400",
+   "loginKind": "plexuser", "priority": 1, "token": "…",
+   "plex": {"serverId": "5d77…2a3b", "serverName": "StoutOffice",
+            "userId": 42, "userTitle": "Grandma",
+            "connections": [
+              {"uri": "http://192.168.1.9:32400", "local": true},
+              {"uri": "https://203-0-113-7.abc123.plex.direct:32400"},
+              {"uri": "https://relay-1.abc123.plex.direct:8443", "relay": true}]}}
 ]}
 ```
 
 - **Types:** `abs`, `jellyfin`, `plex`, `kavita`, `komga`, `navidrome`,
   `booklore` (shown as Grimmory), `calibre`, `calibreweb`, `storyteller`.
-- **Login kinds:** `password`, `token`, `apikey`, `none`.
+- **Login kinds:** `password`, `token`, `apikey`, `none`, `plexuser`.
+- **`plexuser`** (Plex only): `token` is the person's key to that one server
+  (plex.tv's `shared_servers` access token for them). `plex` says which
+  server (`serverId` = its machine identifier), who (`userTitle`), and every
+  address plex.tv listed for it; the device picks one the way Plex's own apps
+  do (local first on Wi-Fi). `baseUrl` is filled from them (remote https
+  first) for display and for older apps.
 - `unreadable: true` marks a login the server could not open (its key
   changed). The device keeps what it already has.
 
@@ -195,8 +218,8 @@ Limits: 10 a minute per client, a shared allowance across every visitor
 | `POST /admin/profiles/:id/invite` | `{invite: {token, code, purpose, expiresAt, profileName}, serverUrl, webLink, link, serverUrlWarning?}`. `webLink` (`…/invite#invite=…`) is the one to share; `link` (`alexandria://…`) is what the page opens. A phone's admin sign-in adds a fresh code (`totpCode` or `recoveryCode`), as link approvals do |
 | `DELETE /admin/profiles/:id/invite` | Cancel the waiting invite |
 | `DELETE /admin/profiles/:id/account` | Remove the sign-in. Devices stay linked; services stay set up |
-| `GET` / `POST /admin/profiles/:id/services` | List / add `{type, name?, baseUrl, loginKind, username?, password?, token?, apiKey?}` |
-| `PATCH /admin/profiles/:id/services/:sid` | Edit. A secret left out keeps its value; an empty one clears it |
+| `GET` / `POST /admin/profiles/:id/services` | List / add `{type, name?, baseUrl, loginKind, username?, password?, token?, apiKey?, plex?}`. A `plexuser` needs `token` and `plex`, and no `baseUrl` |
+| `PATCH /admin/profiles/:id/services/:sid` | Edit. A secret left out keeps its value; an empty one clears it. `plex` left out keeps the pick; a new `plex` (a person picked again) needs its `token` |
 | `DELETE /admin/profiles/:id/services/:sid` | Devices sign out of it at their next check |
 | `PUT /admin/profiles/:id/services/order` `{ids}` | Every id once, first to last |
 

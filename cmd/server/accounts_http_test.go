@@ -60,6 +60,17 @@ type openedServices struct {
 		Username  string `json:"username"`
 		Password  string `json:"password"`
 		Token     string `json:"token"`
+		Plex      *struct {
+			ServerID    string `json:"serverId"`
+			ServerName  string `json:"serverName"`
+			UserID      int64  `json:"userId"`
+			UserTitle   string `json:"userTitle"`
+			Connections []struct {
+				URI   string `json:"uri"`
+				Local bool   `json:"local"`
+				Relay bool   `json:"relay"`
+			} `json:"connections"`
+		} `json:"plex"`
 	} `json:"services"`
 }
 
@@ -445,5 +456,73 @@ func TestAccountsInviteLinkToShareOpensTheInvitePage(t *testing.T) {
 	// The page only hands over well-formed invites.
 	if !strings.Contains(string(page.raw), `alxi_[0-9a-f]{16,128}`) {
 		t.Fatal("the page no longer checks the invite's shape")
+	}
+}
+
+// A Plex person the admin picked (in their browser or on their phone)
+// reaches the person's device whole: the key, sealed, and where the
+// server is — with no address typed by anyone.
+func TestAccountsAPickedPlexPersonReachesTheirDevice(t *testing.T) {
+	s := newTestServer(t, withSecretsKey)
+	admin := bearer(testAPIToken)
+	r := s.do("POST", "/api/v1/admin/profiles", map[string]any{"name": "Grandma"}, admin)
+	if r.status != 201 {
+		t.Fatalf("create profile: %d %s", r.status, r)
+	}
+	profileID := r.body["profile"].(map[string]any)["id"].(string)
+	pick := map[string]any{
+		"serverId": "5d776825e9c9b9b6e8f1a2b3c4d5e6f708192a3b", "serverName": "StoutOffice",
+		"userId": 42, "userTitle": "Grandma",
+		"connections": []map[string]any{
+			{"uri": "http://192.168.1.9:32400", "local": true},
+			{"uri": "https://203-0-113-7.abc123.plex.direct:32400"},
+			{"uri": "https://relay-1.abc123.plex.direct:8443", "relay": true},
+		},
+	}
+	r = s.do("POST", "/api/v1/admin/profiles/"+profileID+"/services", map[string]any{
+		"type": "plex", "loginKind": "plexuser", "plex": pick,
+	}, admin)
+	if r.status != 400 || r.str("reason") != "bad-service" {
+		t.Fatalf("a pick without its key: %d %s", r.status, r)
+	}
+	r = s.do("POST", "/api/v1/admin/profiles/"+profileID+"/services", map[string]any{
+		"type": "plex", "loginKind": "plexuser", "token": "key-grandma", "plex": pick,
+	}, admin)
+	if r.status != 201 {
+		t.Fatalf("add plex person: %d %s", r.status, r)
+	}
+	// The admin sees who and where, never the key.
+	r = s.do("GET", "/api/v1/admin/profiles/"+profileID+"/services", nil, admin)
+	if r.status != 200 || strings.Contains(string(r.raw), "key-grandma") ||
+		!strings.Contains(string(r.raw), `"userTitle":"Grandma"`) {
+		t.Fatalf("admin list: %d %s", r.status, r)
+	}
+
+	r = s.do("POST", "/api/v1/admin/profiles/"+profileID+"/invite", nil, admin)
+	if r.status != 201 {
+		t.Fatalf("invite: %d %s", r.status, r)
+	}
+	token := r.body["invite"].(map[string]any)["token"].(string)
+	phone := newTestDevice(t)
+	r = s.do("POST", "/api/v1/accounts/invite/accept", map[string]any{
+		"invite": token, "username": "grandma", "password": "a long enough one", "device": phone.body("Grandma's iPad"),
+	}, nil)
+	if r.status != 201 {
+		t.Fatalf("accept: %d %s", r.status, r)
+	}
+	r = s.do("GET", "/api/v1/accounts/services", nil, bearer(r.str("deviceToken")))
+	if r.status != 200 || strings.Contains(string(r.raw), "key-grandma") {
+		t.Fatalf("services: %d %s", r.status, r)
+	}
+	mine := openServices(t, phone, r)
+	if len(mine.Services) != 1 {
+		t.Fatalf("services %+v", mine)
+	}
+	got := mine.Services[0]
+	if got.LoginKind != "plexuser" || got.Token != "key-grandma" || got.Plex == nil ||
+		got.Plex.ServerID != "5d776825e9c9b9b6e8f1a2b3c4d5e6f708192a3b" || got.Plex.UserTitle != "Grandma" ||
+		got.Plex.UserID != 42 || len(got.Plex.Connections) != 3 || !got.Plex.Connections[0].Local ||
+		!got.Plex.Connections[2].Relay || got.BaseURL != "https://203-0-113-7.abc123.plex.direct:32400" {
+		t.Fatalf("the device's Plex %+v plex %+v", got, got.Plex)
 	}
 }
