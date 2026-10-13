@@ -56,12 +56,12 @@
   }
   h2 { margin: 0 0 4px; font-size: 15px; }
   .hint { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
-  input[type=text], input[type=password] {
+  input[type=text], input[type=password], select {
     width: 100%; padding: 10px 12px; font-size: 14px;
     border: 1px solid var(--border); border-radius: 8px;
     background: var(--bg); color: var(--text); font-family: inherit;
   }
-  input:focus-visible, button:focus-visible {
+  input:focus-visible, button:focus-visible, select:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 1px;
   }
   button {
@@ -82,7 +82,7 @@
     border: 1px solid var(--border); border-radius: 8px;
     padding: 13px 14px; margin-bottom: 10px;
   }
-  .card h3 { margin: 0 0 2px; font-size: 15px; }
+  .card h3, .card h4 { margin: 0 0 2px; font-size: 15px; }
   .meta { color: var(--muted); font-size: 13px; }
   .code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -112,7 +112,31 @@
     font-size: 12.5px; color: var(--muted); border-left: 3px solid var(--gold);
     padding: 8px 0 8px 11px; margin-top: 14px;
   }
-  #app[hidden], #login[hidden] { display: none; }
+  .note code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  }
+  #app[hidden], #login[hidden], #acct[hidden] { display: none; }
+
+  /* Sign-in & services panel */
+  #acct { scroll-margin-top: 12px; }
+  /* One change at a time: dim the buttons while a request is out. */
+  #acct.busy button { opacity: .55; pointer-events: none; }
+  button[aria-expanded="true"] {
+    border-color: var(--accent); background: var(--accent-soft);
+  }
+  h3.sub { margin: 22px 0 4px; font-size: 14px; }
+  label.field {
+    display: block; margin: 13px 0 5px; font-size: 13px; color: var(--muted);
+  }
+  .wrap { min-width: 0; overflow-wrap: anywhere; }
+  .bad { color: var(--danger); font-size: 13px; margin-top: 6px; }
+  .card.invite { border-color: var(--accent); }
+  .code.pick { -webkit-user-select: all; user-select: all; }
+  .svc-num {
+    display: inline-block; min-width: 22px; margin-right: 7px; padding: 1px 6px;
+    border-radius: 11px; text-align: center; font-size: 12px; font-weight: 700;
+    color: var(--accent); background: var(--accent-soft);
+  }
 </style>
 </head>
 <body>
@@ -177,6 +201,28 @@
       <div id="profiles"></div>
     </section>
 
+    <!-- Opened from a person's "Sign-in & services" button. A section of
+         its own, not part of their card: the People list rebuilds on every
+         poll and would wipe a half-typed form. -->
+    <section id="acct" hidden aria-labelledby="acct-title">
+      <div class="row" style="justify-content:space-between">
+        <h2 id="acct-title" tabindex="-1"></h2>
+        <button data-act="close">Close</button>
+      </div>
+      <p class="hint">One username and password for every Alexandria app. Set up
+        their services here once, send an invite, and each service signs in
+        for them.</p>
+      <div id="acct-notice"></div>
+      <h3 class="sub">Sign-in</h3>
+      <div id="acct-status"></div>
+      <h3 class="sub">Services</h3>
+      <p class="hint" style="margin-bottom:10px">Each one signs in for them
+        automatically. The free plan keeps the first 2, so the order
+        matters.</p>
+      <div id="acct-services"></div>
+      <div id="acct-form" style="margin-top:12px"></div>
+    </section>
+
     <section>
       <h2>Library index</h2>
       <div id="catalog" class="stat"></div>
@@ -206,7 +252,7 @@
   </div>
 </main>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 (function () {
@@ -240,6 +286,9 @@
         return res.json().catch(function () { return {}; }).then(function (b) {
           var err = new Error(b.error || ("Request failed (" + res.status + ")"));
           err.status = res.status;
+          // The short cause the account routes add next to the sentence
+          // (e.g. "secrets-key-missing"), so a caller can act on it.
+          err.reason = b.reason;
           throw err;
         });
       }
@@ -353,13 +402,18 @@
   }
 
   // ---- profiles ------------------------------------------------------
+  var profilesHTML = null;
+  var lastProfiles = [];
+
   function renderProfiles(list) {
+    lastProfiles = list;
     var el = $("profiles");
     if (!list.length) {
+      profilesHTML = null;
       el.innerHTML = '<p class="empty">Nobody is connected yet.</p>';
       return;
     }
-    el.innerHTML = list.map(function (p) {
+    var html = list.map(function (p) {
       var devices = (p.devices || []).map(function (d) {
         return '<div class="device">' +
           '<span>' + esc(d.label || "unnamed device") +
@@ -376,11 +430,24 @@
           '<div><h3>' + esc(p.name) + '</h3>' +
             '<span class="meta">' + hours(p.totalSeconds) + ' hours · ' +
               p.eventCount + ' sessions</span></div>' +
-          '<button class="danger" data-delete="' + esc(p.id) + '" ' +
-            'data-pname="' + esc(p.name) + '">Remove</button>' +
+          '<div class="row">' +
+            '<button data-signin="' + esc(p.id) + '" ' +
+              'data-pname="' + esc(p.name) + '" aria-controls="acct" ' +
+              'aria-expanded="' + (p.id === acct.id) + '" ' +
+              'aria-label="Sign-in &amp; services for ' + esc(p.name) + '">' +
+              'Sign-in &amp; services</button>' +
+            '<button class="danger" data-delete="' + esc(p.id) + '" ' +
+              'data-pname="' + esc(p.name) + '">Remove</button>' +
+          '</div>' +
         '</div>' + devices +
       '</div>';
     }).join("");
+    // Rebuilt only when the text changed (the ages tick over about once a
+    // minute), so a keyboard user's focus on a button here is not thrown
+    // away by every 5 s poll. Same guard as the signed-in phones list.
+    if (html === profilesHTML) return;
+    profilesHTML = html;
+    el.innerHTML = html;
   }
 
   function revoke(id, label) {
@@ -544,6 +611,628 @@
       .catch(function (e) { toast(e.message, true); });
   }
 
+  // ---- sign-in & services --------------------------------------------
+  //
+  // A person's Alexandria Account: one username and password that signs
+  // them into every app, plus the service logins the admin sets up once so
+  // each service signs in for them.
+  //
+  // One person at a time, in a section of its own: the People list rebuilds
+  // on the 5 s poll, which would wipe a half-typed form and close an open
+  // drop-down under the admin's hands. Nothing in load() touches this panel.
+  //
+  // The server never returns a stored secret, so none is ever shown: a
+  // service says "login saved", and an edit leaves its secret boxes empty.
+  // A box left empty is not sent, which the server reads as "keep what is
+  // stored". The one exception is changing HOW they sign in, which clears
+  // what the old way stored (see saveService).
+  var KIND_LABELS = {
+    password: "Username + password",
+    token: "Token",
+    apikey: "API key",
+    none: "Address only — they sign in themselves (e.g. a Plex friend)"
+  };
+  // One short line under the service picker. Only the services where the
+  // wrong login is a real mistake get one.
+  var TYPE_HINTS = {
+    jellyfin: "Use their own Jellyfin login, never a dashboard API key " +
+              "(those are admin-wide).",
+    abs: "An API key you create for them in Audiobookshelf " +
+         "(Settings › API Keys, 2.26+) is better than storing a password.",
+    plex: "Plex Home users: a token; friends with their own plex.tv " +
+          "account: Address only."
+  };
+  var NO_KEY = "This server has no secrets key, so it can't keep service " +
+    "logins. People can still sign in and link devices. Set " +
+    "<code>ALEXANDRIA_SECRETS_KEY</code> (<code>openssl rand -base64 32</code>) " +
+    "and restart.";
+
+  // acct is the open panel's whole state. A new object per open, so a slow
+  // answer that arrives after the admin has moved to someone else can see
+  // it is not theirs (acct !== the object they started with) and drop it.
+  var acct = newAcct(null, "");
+
+  function newAcct(id, name) {
+    return { id: id, name: name, data: null, reveal: null, form: null,
+             busy: false, seq: 0 };
+  }
+
+  // Writes only when the markup changed, so a rebuild that would change
+  // nothing cannot throw away a keyboard user's focus.
+  function setHTML(el, html) {
+    if (el._html === html) return;
+    el._html = html;
+    el.innerHTML = html;
+  }
+
+  // These routes send UNIX SECONDS where the rest of the API sends ISO
+  // strings. The wrappers feed ago() / until() instead of changing them.
+  function isoOf(secs) {
+    var t = new Date(Number(secs) * 1000);
+    return isNaN(t.getTime()) ? "" : t.toISOString();
+  }
+  function agoUnix(secs) { return ago(isoOf(secs)); }
+  function untilUnix(secs) { return until(isoOf(secs)); }
+
+  function acctPath(tail) {
+    return "/admin/profiles/" + encodeURIComponent(acct.id) + tail;
+  }
+
+  function findService(sid) {
+    var list = (acct.data && acct.data.services) || [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === sid) return list[i];
+    }
+    return null;
+  }
+
+  function blankAcct() {
+    // Emptied, not just hidden: a one-time invite code or a typed password
+    // must not sit in the page after the panel is closed.
+    ["acct-notice", "acct-status", "acct-services", "acct-form"].forEach(function (id) {
+      var el = $(id);
+      el._html = null;
+      el.innerHTML = "";
+    });
+    $("acct").classList.remove("busy");
+  }
+
+  function openAcct(id, name) {
+    acct = newAcct(id, name);
+    blankAcct();
+    $("acct-title").textContent = "Sign-in & services — " + name;
+    setHTML($("acct-status"), '<p class="empty">Loading…</p>');
+    $("acct").hidden = false;
+    renderProfiles(lastProfiles);   // marks this person's button as open
+    var calm = window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    $("acct").scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "start" });
+    $("acct-title").focus({ preventScroll: true });
+    acctLoad();
+  }
+
+  function closeAcct() {
+    var id = acct.id;
+    acct = newAcct(null, "");
+    blankAcct();
+    $("acct").hidden = true;
+    renderProfiles(lastProfiles);
+    var back = id && document.querySelector('[data-signin="' + id + '"]');
+    if (back) back.focus();
+  }
+
+  function toggleAcct(id, name) {
+    if (acct.id === id) closeAcct(); else openAcct(id, name);
+  }
+
+  // The person was removed (here or in another tab): nothing left to edit.
+  function acctSync(list) {
+    if (acct.id && !list.some(function (p) { return p.id === acct.id; })) {
+      closeAcct();
+    }
+  }
+
+  function acctLoad() {
+    var st = acct, seq = ++st.seq;
+    if (!st.id) return Promise.resolve();
+    return api(acctPath("/account")).then(function (d) {
+      if (acct !== st || seq !== st.seq) return;   // the admin moved on
+      st.data = d;
+      // An invite the server no longer lists was used, cancelled or has
+      // expired, so its code is dead: stop showing it.
+      if (!d.invite) st.reveal = null;
+      renderAcct();
+    }).catch(function (e) {
+      if (acct !== st || seq !== st.seq) return;
+      if (e.reason === "profile-not-found") { acctFail(e); return; }
+      if (!st.data) {
+        setHTML($("acct-status"), '<p class="empty">Couldn\'t load this. ' +
+          '<button data-act="reload">Try again</button></p>');
+      }
+      toast(e.message, true);
+    });
+  }
+
+  // Says what went wrong in plain words, and refreshes when the screen is
+  // now out of date (the thing was changed or removed somewhere else).
+  function acctFail(e) {
+    switch (e && e.reason) {
+      case "secrets-key-missing":
+        toast("No secrets key on this server, so it can't keep that login.", true);
+        break;
+      case "profile-not-found":
+        toast("That person has been removed.", true);
+        closeAcct();
+        load();
+        break;
+      case "service-not-found":
+        toast("That service is already gone.", true);
+        acctLoad();
+        break;
+      case "no-login":
+        toast("They have no sign-in.", true);
+        acctLoad();
+        break;
+      case "bad-order":
+        toast("The list changed. Showing the latest.", true);
+        acctLoad();
+        break;
+      default:
+        toast((e && e.message) || "Something went wrong.", true);
+    }
+  }
+
+  // One change at a time, so a double click cannot send two invites or add
+  // a service twice. make() starts the request; done() runs on success and
+  // may return a promise (a reload) to hold the panel busy until it lands.
+  // However it ends, even by an error in this page's own code, the panel is
+  // released: a stuck "busy" would leave every button dead.
+  function run(make, done) {
+    var st = acct;
+    if (st.busy) return;
+    st.busy = true;
+    $("acct").classList.add("busy");
+    function release() {
+      st.busy = false;
+      if (acct === st) $("acct").classList.remove("busy");
+    }
+    Promise.resolve().then(make).then(function (r) {
+      if (acct === st) return done(r);
+    }).catch(function (e) {
+      if (acct === st) acctFail(e); else toast(e.message, true);
+    }).then(release, release);
+  }
+
+  // ---- the panel's two read-only parts ----
+  function renderAcct() {
+    var d = acct.data;
+    if (!d) return;
+    setHTML($("acct-notice"), d.secretsKeyConfigured ? "" :
+      '<div class="note" style="margin:0 0 4px">' + NO_KEY + '</div>');
+    setHTML($("acct-status"), statusHTML(d));
+    setHTML($("acct-services"), servicesHTML(d));
+    // The service being edited was removed elsewhere: nothing to save to.
+    if (acct.form && acct.form.mode === "edit" && !findService(acct.form.id)) {
+      acct.form = null;
+    }
+    renderAcctForm();
+  }
+
+  function statusHTML(d) {
+    var login = d.login, inv = d.invite;
+    var html = '<div class="card">';
+    if (login) {
+      html += '<div><strong>Signed in as ' + esc(login.username) + '</strong> ' +
+        '<span class="meta">· last sign-in ' +
+        (login.lastLoginAt ? agoUnix(login.lastLoginAt) : "never") +
+        ' · two-step ' + (login.totpEnabled ? "on" : "off") + '</span></div>';
+      if (login.locked) {
+        html += '<div class="bad">Paused after wrong attempts. It lifts by itself.</div>';
+      }
+    } else {
+      html += '<div><strong>No sign-in yet</strong> <span class="meta">' +
+        '· an invite lets them choose a username and password</span></div>';
+    }
+    if (inv) {
+      html += '<div class="row" style="justify-content:space-between;margin-top:11px">' +
+        '<span>' + (inv.purpose === "reset" ? "New-password invite" : "Invite") +
+          ' waiting, expires ' + untilUnix(inv.expiresAt) + '</span>' +
+        '<button class="danger" data-act="cancel-invite">Cancel invite</button>' +
+      '</div>';
+      if (!acct.reveal) {
+        // The code is stored hashed; this page cannot read it back.
+        html += '<div class="meta">The code was shown once. Lost it? Send a ' +
+          'new invite — it replaces this one.</div>';
+      }
+    }
+    html += '<div class="row" style="margin-top:11px">' +
+      '<button' + (login || inv ? '' : ' class="primary"') + ' data-act="invite">' +
+        (login ? "Send a new-password invite" : "Invite to sign in") + '</button>' +
+      (login ? '<button class="danger" data-act="remove-login">Remove sign-in</button>' : '') +
+    '</div></div>';
+    // Only while the server still has that invite waiting (see acctLoad).
+    if (acct.reveal && inv) html += revealHTML(acct.reveal);
+    return html;
+  }
+
+  function revealHTML(r) {
+    return '<div class="card invite">' +
+      '<h4 id="inv-title" tabindex="-1">' +
+        (r.purpose === "reset" ? "New-password invite" : "Invite") +
+        ' for ' + esc(acct.name) + '</h4>' +
+      '<p style="margin:6px 0 12px"><strong>Shown once.</strong> Copy it now — ' +
+        'once you leave this panel it can\'t be shown again.</p>' +
+      '<div class="row">' +
+        '<span class="code pick" id="inv-code">' + esc(r.code) + '</span>' +
+        '<button data-act="copy-code">Copy code</button>' +
+      '</div>' +
+      '<p class="meta" style="margin:6px 0 0">To read out, or type into Alexandria ' +
+        'on their device.</p>' +
+      '<label class="field" for="inv-link">Link — the app opens it</label>' +
+      '<div class="row">' +
+        '<input class="grow" type="text" id="inv-link" readonly spellcheck="false" ' +
+          'value="' + esc(r.link) + '">' +
+        '<button data-act="copy-link">Copy link</button>' +
+      '</div>' +
+      '<p class="meta" style="margin:8px 0 12px">Works once. Expires ' +
+        untilUnix(r.expiresAt) + ' (' + esc(day(isoOf(r.expiresAt))) + ').</p>' +
+      '<button data-act="invite-done">I\'ve sent it</button>' +
+    '</div>';
+  }
+
+  function servicesHTML(d) {
+    var list = d.services || [], types = d.serviceTypes || {};
+    var vaultOn = !!d.secretsKeyConfigured;
+    if (!list.length) {
+      return '<p class="empty">No services yet. Add the ones they use.</p>';
+    }
+    return list.map(function (s, i) {
+      var tn = types[s.type] || s.type;
+      var how;
+      if (s.loginKind === "none") {
+        how = "Address only — they sign in themselves";
+      } else if (s.unreadable) {
+        // No "login saved": it is, but nobody can open it. The red line
+        // below says what to do.
+        how = KIND_LABELS[s.loginKind] || s.loginKind;
+      } else {
+        how = (s.loginKind === "password"
+                ? (s.username ? "Username " + s.username : "No username")
+                : KIND_LABELS[s.loginKind] || s.loginKind) +
+              " · " + (s.hasSecret ? "login saved" : "nothing saved yet");
+      }
+      var warn = "";
+      if (s.unreadable) {
+        warn = vaultOn
+          ? "The server key changed since this was saved — enter it again."
+          : "A login is saved, but this server has no secrets key right now.";
+      }
+      // With no secrets key the server cannot open the saved login, and an
+      // edit would overwrite it with nothing. Leave it alone until the key
+      // is back; reordering and removing are still safe.
+      var frozen = !vaultOn && (s.hasSecret || s.unreadable);
+      var id = esc(s.id), label = esc(s.name);
+      return '<div class="card">' +
+        '<div class="wrap"><span class="svc-num">' + (i + 1) + '</span>' +
+          '<strong>' + esc(s.name) + '</strong>' +
+          (s.name !== tn ? ' <span class="meta">· ' + esc(tn) + '</span>' : '') +
+          '<div class="meta">' + esc(s.baseUrl) + '</div>' +
+          '<div class="meta">' + esc(how) + '</div>' +
+          (warn ? '<div class="bad">' + esc(warn) + '</div>' : '') +
+          (frozen ? '<div class="meta">Edit is off until the key is back, so ' +
+            'the saved login isn\'t lost.</div>' : '') +
+        '</div>' +
+        '<div class="row" style="margin-top:11px">' +
+          '<button data-act="up" data-sid="' + id + '" aria-label="Move ' + label +
+            ' up"' + (i === 0 ? ' disabled' : '') + '>Move up</button>' +
+          '<button data-act="down" data-sid="' + id + '" aria-label="Move ' + label +
+            ' down"' + (i === list.length - 1 ? ' disabled' : '') + '>Move down</button>' +
+          '<button data-act="edit" data-sid="' + id + '" aria-label="Edit ' + label +
+            '"' + (frozen ? ' disabled' : '') + '>Edit</button>' +
+          '<button class="danger" data-act="delete-svc" data-sid="' + id +
+            '" aria-label="Remove ' + label + '">Remove</button>' +
+        '</div>' +
+      '</div>';
+    }).join("");
+  }
+
+  // ---- sign-in actions ----
+  function makeInvite() {
+    var path = acctPath("/invite");
+    run(function () {
+      return api(path, { method: "POST" });
+    }, function (r) {
+      var inv = r.invite || {};
+      // Kept in memory only, never stored: the server keeps just a hash.
+      acct.reveal = { code: inv.code, link: r.link || "",
+                      purpose: inv.purpose, expiresAt: inv.expiresAt };
+      toast("Invite ready. It is shown once.");
+      return acctLoad().then(function () {
+        var h = $("inv-title");
+        if (h) h.focus();
+      });
+    });
+  }
+
+  function cancelInvite() {
+    var path = acctPath("/invite");
+    run(function () {
+      return api(path, { method: "DELETE" });
+    }, function () {
+      acct.reveal = null;
+      toast("Invite cancelled.");
+      return acctLoad();
+    });
+  }
+
+  function removeLogin() {
+    if (!confirm("Remove " + acct.name + "'s sign-in?\n\nTheir devices stay " +
+                 "linked and their services stay set up. They just can't " +
+                 "sign in on a new device until you send another invite.")) return;
+    var path = acctPath("/account");
+    run(function () {
+      return api(path, { method: "DELETE" });
+    }, function () {
+      acct.reveal = null;
+      toast("Sign-in removed.");
+      return acctLoad();
+    });
+  }
+
+  // Copy needs a secure page (https:// or localhost); the admin page is
+  // often a plain http:// address on a home network, where the browser
+  // hides the clipboard. The fallback selects the text so Ctrl/Cmd+C does
+  // the rest.
+  function copyText(text, el, what) {
+    function selectIt() {
+      var ok = false;
+      try {
+        if (el.select) {
+          el.focus();
+          el.select();
+          el.setSelectionRange(0, text.length);
+        } else {
+          var range = document.createRange();
+          range.selectNodeContents(el);
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+        ok = document.execCommand("copy");
+      } catch (x) { ok = false; }
+      toast(ok ? what + " copied."
+               : "Selected — press Ctrl+C (Cmd+C on a Mac) to copy it.");
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        navigator.clipboard.writeText(text).then(function () {
+          toast(what + " copied.");
+        }, selectIt);
+        return;
+      } catch (x) { /* fall through to selecting */ }
+    }
+    selectIt();
+  }
+
+  // ---- service actions ----
+  function moveService(sid, dir) {
+    var ids = ((acct.data && acct.data.services) || []).map(function (s) { return s.id; });
+    var i = ids.indexOf(sid), j = i + dir;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    ids[i] = ids[j];
+    ids[j] = sid;
+    var path = acctPath("/services/order");
+    run(function () {
+      return api(path, { method: "PUT", body: JSON.stringify({ ids: ids }) });
+    }, function (r) {
+      if (r && r.services) acct.data.services = r.services;
+      renderAcct();
+      // The list was rebuilt: put the keyboard back on the button just
+      // used, or on its twin when the service has reached an end.
+      var mine = dir < 0 ? "up" : "down", twin = dir < 0 ? "down" : "up";
+      var box = $("acct-services");
+      var b = box.querySelector('[data-sid="' + sid + '"][data-act="' + mine + '"]');
+      if (!b || b.disabled) {
+        b = box.querySelector('[data-sid="' + sid + '"][data-act="' + twin + '"]');
+      }
+      if (b && !b.disabled) b.focus();
+    });
+  }
+
+  function removeService(s) {
+    if (!confirm('Remove "' + s.name + '" for ' + acct.name + '?\n\nTheir devices ' +
+                 'sign out of it. Anything they downloaded is kept.')) return;
+    var path = acctPath("/services/" + encodeURIComponent(s.id));
+    run(function () {
+      return api(path, { method: "DELETE" });
+    }, function () {
+      toast("Service removed.");
+      return acctLoad();
+    });
+  }
+
+  // ---- the add / edit form ----
+  function renderAcctForm() {
+    var el = $("acct-form");
+    if (!acct.data) { setHTML(el, ""); return; }
+    if (!acct.form) {
+      setHTML(el, '<button class="primary" data-act="add">Add a service</button>');
+      return;
+    }
+    setHTML(el, formHTML());
+    syncForm();
+  }
+
+  function openForm(mode, sid) {
+    acct.form = { mode: mode, id: sid };
+    renderAcctForm();
+    var first = $("sf-type");
+    if (first) first.focus();
+  }
+
+  function closeForm() {
+    var was = acct.form;
+    acct.form = null;
+    renderAcctForm();
+    var back = was && was.mode === "edit"
+      ? $("acct-services").querySelector('[data-act="edit"][data-sid="' + was.id + '"]')
+      : $("acct-form").querySelector('[data-act="add"]');
+    if (back) back.focus();
+  }
+
+  function formHTML() {
+    var d = acct.data, f = acct.form;
+    var vaultOn = !!d.secretsKeyConfigured;
+    var s = f.mode === "edit" ? findService(f.id) : null;
+    var types = d.serviceTypes || {};
+    var keys = Object.keys(types).sort(function (a, b) {
+      return String(types[a]).localeCompare(String(types[b]));
+    });
+    var type = s ? s.type : (types.abs ? "abs" : keys[0]);
+    // With no secrets key an address is all the server can keep.
+    var kind = !vaultOn ? "none" : (s ? s.loginKind : "password");
+    var kept = !!s && s.hasSecret && !s.unreadable;
+    var off = vaultOn ? "" : " disabled";
+    // data-1p-ignore / data-lpignore: keep password managers from offering
+    // to save a SERVICE's login as if it were this page's own.
+    var secret = function (id, blank) {
+      return '<input type="password" id="' + id + '" autocomplete="new-password" ' +
+        'spellcheck="false" data-1p-ignore data-lpignore="true"' + off +
+        ' placeholder="' + (kept ? "Saved — leave empty to keep it" : blank) + '">';
+    };
+    var typeOpts = keys.map(function (k) {
+      return '<option value="' + esc(k) + '"' + (k === type ? " selected" : "") +
+        '>' + esc(types[k]) + '</option>';
+    }).join("");
+    var kindOpts = ["password", "token", "apikey", "none"].map(function (k) {
+      var no = !vaultOn && k !== "none";
+      return '<option value="' + k + '"' + (k === kind ? " selected" : "") +
+        (no ? " disabled" : "") + '>' + esc(KIND_LABELS[k]) +
+        (no ? " (needs the secrets key)" : "") + '</option>';
+    }).join("");
+    // Blank means "the service's own name", for whichever service is picked.
+    var nameVal = s && s.name !== types[s.type] ? s.name : "";
+
+    return '<div class="card">' +
+      '<h4>' + (s ? "Edit " + esc(s.name) : "Add a service") + '</h4>' +
+      '<label class="field" for="sf-type">Service</label>' +
+      '<select id="sf-type" aria-describedby="sf-hint">' + typeOpts + '</select>' +
+      '<p class="meta" id="sf-hint" style="margin:6px 0 0" hidden></p>' +
+      '<label class="field" for="sf-name">Name <span class="meta">(optional)</span></label>' +
+      '<input type="text" id="sf-name" maxlength="80" autocomplete="off" ' +
+        'spellcheck="false" placeholder="Defaults to the service name" ' +
+        'value="' + esc(nameVal) + '">' +
+      '<label class="field" for="sf-url">Address</label>' +
+      '<input type="text" id="sf-url" inputmode="url" autocomplete="off" ' +
+        'autocapitalize="off" spellcheck="false" ' +
+        'placeholder="https://abs.example.com" value="' + esc(s ? s.baseUrl : "") + '">' +
+      '<label class="field" for="sf-kind">How they sign in</label>' +
+      '<select id="sf-kind">' + kindOpts + '</select>' +
+      '<div data-kind="password" hidden>' +
+        '<label class="field" for="sf-user">Username</label>' +
+        '<input type="text" id="sf-user" autocomplete="off" autocapitalize="off" ' +
+          'spellcheck="false"' + off + ' value="' + esc(s ? s.username : "") + '">' +
+        '<label class="field" for="sf-pass">Password</label>' + secret("sf-pass", "Password") +
+      '</div>' +
+      '<div data-kind="token" hidden>' +
+        '<label class="field" for="sf-token">Token</label>' + secret("sf-token", "Token") +
+      '</div>' +
+      '<div data-kind="apikey" hidden>' +
+        '<label class="field" for="sf-key">API key</label>' + secret("sf-key", "API key") +
+      '</div>' +
+      '<p class="meta" data-kind="none" hidden>Nothing is stored. They sign in to ' +
+        'this service themselves.</p>' +
+      '<p class="meta" id="sf-keep" hidden>A login is saved. Leave the box empty to ' +
+        'keep it, or type a new one to replace it.</p>' +
+      '<p class="bad" id="sf-lost" hidden>The server key changed since this was ' +
+        'saved — enter it again.</p>' +
+      '<div class="row" style="margin-top:16px">' +
+        '<button class="primary" data-act="save">Save</button>' +
+        '<button data-act="cancel-form">Cancel</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // Shows only what the chosen service and login kind need. The boxes are
+  // hidden, not rebuilt, so flipping the kind back does not lose what was typed.
+  function syncForm() {
+    var type = $("sf-type").value, kind = $("sf-kind").value;
+    var s = acct.form && acct.form.mode === "edit" ? findService(acct.form.id) : null;
+    var hint = TYPE_HINTS[type] || "";
+    $("sf-hint").textContent = hint;
+    $("sf-hint").hidden = !hint;
+    $("acct-form").querySelectorAll("[data-kind]").forEach(function (g) {
+      g.hidden = g.dataset.kind !== kind;
+    });
+    var same = !!s && kind === s.loginKind && kind !== "none";
+    $("sf-keep").hidden = !(same && s.hasSecret && !s.unreadable);
+    $("sf-lost").hidden = !(same && s.unreadable);
+  }
+
+  function saveService() {
+    if (acct.busy || !acct.form) return;
+    var f = acct.form;
+    var s = f.mode === "edit" ? findService(f.id) : null;
+    var types = acct.data.serviceTypes || {};
+    var type = $("sf-type").value, kind = $("sf-kind").value;
+    var url = $("sf-url").value.trim();
+    var user = $("sf-user").value.trim(), pass = $("sf-pass").value;
+    var tok = $("sf-token").value.trim(), key = $("sf-key").value.trim();
+
+    function complain(msg, id) { toast(msg, true); $(id).focus(); }
+    if (!/^https?:\/\/\S+$/i.test(url)) {
+      return complain("The address must start with http:// or https://", "sf-url");
+    }
+    // A secret is needed when adding, when changing how they sign in, or
+    // when nothing usable is stored. Otherwise an empty box keeps it.
+    var need = !s || kind !== s.loginKind || s.unreadable || !s.hasSecret;
+    if (kind === "password") {
+      if (!user) return complain("Enter their username.", "sf-user");
+      if (!pass && need) return complain("Enter their password.", "sf-pass");
+    } else if (kind === "token" && !tok && need) {
+      return complain("Enter the token.", "sf-token");
+    } else if (kind === "apikey" && !key && need) {
+      return complain("Enter the API key.", "sf-key");
+    }
+
+    // Blank name: send the service's own name, because on an edit the
+    // server reads a blank as "keep the current one".
+    var body = { type: type, name: $("sf-name").value.trim() || types[type] || "",
+                 baseUrl: url, loginKind: kind };
+    var send = {};
+    if (kind === "password") {
+      send.username = user;
+      if (pass) send.password = pass;
+    } else if (kind === "token") {
+      if (tok) send.token = tok;
+    } else if (kind === "apikey") {
+      if (key) send.apiKey = key;
+    }
+    // A different way to sign in: nothing from the old way may stay stored
+    // (an API key would otherwise sit behind a password it replaced).
+    if (s && kind !== s.loginKind) {
+      ["username", "password", "token", "apiKey"].forEach(function (k) {
+        if (!(k in send)) send[k] = "";
+      });
+    }
+    Object.keys(send).forEach(function (k) { body[k] = send[k]; });
+
+    var path = acctPath("/services" + (s ? "/" + encodeURIComponent(s.id) : ""));
+    run(function () {
+      return api(path, { method: s ? "PATCH" : "POST", body: JSON.stringify(body) });
+    }, function () {
+      acct.form = null;
+      renderAcctForm();
+      toast(s ? "Saved." : "Service added.");
+      return acctLoad().then(function () {
+        var back = s
+          ? $("acct-services").querySelector('[data-act="edit"][data-sid="' + s.id + '"]')
+          : $("acct-form").querySelector('[data-act="add"]');
+        if (back) back.focus();
+      });
+    });
+  }
+
   // ---- load / auth ---------------------------------------------------
   function load() {
     return Promise.all([
@@ -554,12 +1243,16 @@
     ]).then(function (r) {
       renderPending(r[0].pending || []);
       renderProfiles(r[1].profiles || []);
+      acctSync(r[1].profiles || []);
       renderCatalog(r[2] || {});
       renderAdminDevices((r[3] || {}).devices || []);
     }).catch(function (e) { toast(e.message, true); });
   }
 
   function showLogin() {
+    // Signed out or timed out: drop any open panel, and with it any invite
+    // code or typed password it was holding.
+    if (acct.id) closeAcct();
     $("app").hidden = true;
     $("enroll").hidden = true;
     $("login").hidden = false;
@@ -681,6 +1374,47 @@
     else if (t.dataset.revokeAdmin) {
       revokeAdminDevice(t.dataset.revokeAdmin, t.dataset.adlabel);
     }
+    else if (t.dataset.signin) toggleAcct(t.dataset.signin, t.dataset.pname);
+  });
+
+  // The panel's own buttons. Delegated, like the list above, because its
+  // parts are rebuilt after every change.
+  $("acct").addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("button");
+    if (!b || b.disabled || !b.dataset.act) return;
+    var sid = b.dataset.sid;
+    switch (b.dataset.act) {
+      case "close": closeAcct(); break;
+      case "reload": acctLoad(); break;
+      case "invite": makeInvite(); break;
+      case "cancel-invite": cancelInvite(); break;
+      case "remove-login": removeLogin(); break;
+      case "copy-code":
+        if (acct.reveal) copyText(acct.reveal.code, $("inv-code"), "Code");
+        break;
+      case "copy-link":
+        if (acct.reveal) copyText(acct.reveal.link, $("inv-link"), "Link");
+        break;
+      case "invite-done": acct.reveal = null; renderAcct(); break;
+      case "up": moveService(sid, -1); break;
+      case "down": moveService(sid, 1); break;
+      case "add": openForm("add", null); break;
+      case "edit": if (findService(sid)) openForm("edit", sid); break;
+      case "delete-svc":
+        if (findService(sid)) removeService(findService(sid));
+        break;
+      case "save": saveService(); break;
+      case "cancel-form": closeForm(); break;
+    }
+  });
+  $("acct").addEventListener("change", function (e) {
+    if (e.target.id === "sf-type" || e.target.id === "sf-kind") syncForm();
+  });
+  $("acct-form").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.isComposing && e.target.tagName === "INPUT") {
+      e.preventDefault();
+      saveService();
+    }
   });
 
   $("signin").addEventListener("click", signIn);
@@ -709,6 +1443,7 @@
       : "Use a recovery code";
   });
   $("refresh").addEventListener("click", function () {
+    if (acct.id) acctLoad();
     load().then(function () { toast("Refreshed."); });
   });
   $("signout").addEventListener("click", signOut);
