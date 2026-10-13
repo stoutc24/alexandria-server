@@ -286,7 +286,15 @@ At `/admin`. It shows:
 - how many sessions and hours each person has;
 - the library index: distinct titles, duplicates and servers;
 - each person's **Sign-in & services** (Alexandria accounts): their
-  sign-in, a waiting invite, and the servers set up for them, in order.
+  sign-in, a waiting invite, and the servers set up for them, in order;
+- **Server Admin sign-ins**: your own admin sign-in to each server you
+  run, so Server Admin on your phones can manage all of them, including
+  ones you do not play from. Save one per service (Audiobookshelf,
+  Jellyfin, Kavita, Komga, Navidrome, Grimmory, Storyteller, Stump,
+  Calibre-Web); a phone signed in to **Manage server** fetches them once,
+  with a fresh authenticator code. Passwords are never shown again. Plex
+  is not kept: its admin sign-in is your whole Plex account, so each
+  phone signs in with Plex itself.
 
 You can approve or revoke a device, remove a person entirely, download a
 backup, and sign out any phone that is signed in to manage the server.
@@ -389,8 +397,9 @@ The whole server is one SQLite file. Either:
 - run `docker cp alexandria-server:/data/alexandria.db ./backup.db`.
 
 A backup taken from a phone (**Manage server › Back up**) asks for a fresh
-authenticator code and leaves the admin login out of the file. Restoring
-one means setting the login up again with your admin token.
+authenticator code and leaves the admin login out of the file, and the
+Server Admin sign-ins with it. Restoring one means setting the login up
+again with your admin token, and saving those sign-ins again.
 
 The library index rebuilds itself from the app. What is really worth
 backing up is people, their devices and their stats.
@@ -491,6 +500,12 @@ every person, device and statistic.** Take a backup first.
   stolen device token alone opens nothing. No admin screen or API returns
   one. People's own passwords are stored only as slow hashes (argon2id).
   See [docs/ACCOUNTS.md](docs/ACCOUNTS.md) for who can see what.
+- **Server Admin sign-ins are sealed the same way**, each bound to its
+  service. The admin page saves and lists them but never shows a
+  password. Only a phone signed in to Manage server reads them back, and
+  only with a fresh authenticator code (sharing the sign-in rate limit),
+  sealed to a key it made for that one request. Each phone then signs in
+  to each server itself. A phone's backup leaves them out.
 - **These routes answer without a token**, by necessity:
   - `/health` reports the name, version and capabilities, never library
     contents.
