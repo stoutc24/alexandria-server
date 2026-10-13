@@ -48,6 +48,10 @@ var (
 	ErrVaultOff        = errors.New("this server has no secrets key, so it cannot keep service logins (set ALEXANDRIA_SECRETS_KEY)")
 	ErrDeviceKeyExists = errors.New("this device already has a key")
 	ErrNoDeviceKey     = errors.New("this device has no key")
+	// ErrLoginMustBeRetyped: an edit moves a service (a new address, or a
+	// different kind of service) and leaves its saved login out. See
+	// UpdateService.
+	ErrLoginMustBeRetyped = errors.New("type the login again: a saved login never moves to a new address or a different service")
 )
 
 // MinAccountPasswordLength is the only password rule for a person's
@@ -710,6 +714,40 @@ func (in ServiceInput) clearsSecret() bool {
 	return in.setsSecret()
 }
 
+// bringsLogin is whether an edit types the secret its login kind signs in
+// with — or names a kind that keeps none — so nothing saved has to come
+// along with it. A password is taken as typed (spaces and all), as
+// applyInput stores it.
+func (in ServiceInput) bringsLogin() bool {
+	typed := func(p *string) bool { return p != nil && strings.TrimSpace(*p) != "" }
+	switch in.LoginKind {
+	case "password":
+		return in.Password != nil && *in.Password != ""
+	case "token", "plexuser":
+		return typed(in.Token)
+	case "apikey":
+		return typed(in.APIKey)
+	default: // "none"
+		return true
+	}
+}
+
+// sameServiceAddress is whether two normalized service addresses name the
+// same place: scheme and host (with its port) compared without case, the
+// path and query exactly. Anything else — another host, port or path —
+// is somewhere new.
+func sameServiceAddress(a, b string) bool {
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) &&
+		strings.EqualFold(ua.Host, ub.Host) &&
+		strings.TrimRight(ua.EscapedPath(), "/") == strings.TrimRight(ub.EscapedPath(), "/") &&
+		ua.RawQuery == ub.RawQuery
+}
+
 // plexColumn is how a service's PlexService is stored: JSON, or NULL for
 // every service that is not a picked Plex person.
 func plexColumn(p *PlexService) (sql.NullString, error) {
@@ -884,7 +922,15 @@ func (r *AccountRepository) service(profileID, id string) (*AccountService, erro
 	return nil, ErrServiceNotFound
 }
 
-// UpdateService edits a service. Secret fields left nil keep their value.
+// UpdateService edits a service. Secret fields left nil keep their value —
+// unless the edit moves the service: a new address, or a different kind of
+// service. Then nothing saved comes along but the username (no secret):
+// the edit must type the login again (ErrLoginMustBeRetyped), or name a
+// kind that keeps none. Otherwise whoever can edit a service — the web
+// page's session, or a phone's admin sign-in, which lasts 180 days and asks
+// no code here — could point it at a server they run, and the person's
+// devices would sign in there with the password the admin can never read
+// back (security sweep 2026-10, S1).
 func (r *AccountRepository) UpdateService(profileID, id string, in ServiceInput, now time.Time) (*AccountService, error) {
 	var sealed, curPlex sql.NullString
 	var cur ServiceInput
@@ -924,6 +970,10 @@ func (r *AccountRepository) UpdateService(profileID, id string, in ServiceInput,
 	if err := validateInput(&in); err != nil {
 		return nil, err
 	}
+	moved := in.Type != cur.Type || !sameServiceAddress(in.BaseURL, cur.BaseURL)
+	if moved && sealed.Valid && sealed.String != "" && !in.bringsLogin() {
+		return nil, ErrLoginMustBeRetyped
+	}
 	plex, err := plexColumn(in.Plex)
 	if err != nil {
 		return nil, err
@@ -931,6 +981,18 @@ func (r *AccountRepository) UpdateService(profileID, id string, in ServiceInput,
 	newSealed := sealed
 	c, err := r.openCredentials(profileID, id, sealed)
 	switch {
+	case moved:
+		// Only what this edit typed goes with it, and the username when
+		// the edit leaves it out. A login that will not open (a changed
+		// key) has no username to keep: the edit's own stand alone.
+		var fresh ServiceCredentials
+		if err == nil && in.LoginKind == "password" {
+			fresh.Username = c.Username
+		}
+		applyInput(&fresh, in)
+		if newSealed, err = r.sealCredentials(profileID, id, fresh); err != nil {
+			return nil, err
+		}
 	case err == nil:
 		applyInput(c, in)
 		if newSealed, err = r.sealCredentials(profileID, id, *c); err != nil {

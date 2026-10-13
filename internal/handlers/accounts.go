@@ -772,6 +772,8 @@ func (h *AccountsHandler) serviceError(c *fiber.Ctx, err error) error {
 	case errors.Is(err, repository.ErrBadService), errors.Is(err, repository.ErrBadServiceURL),
 		errors.Is(err, repository.ErrBadPlex):
 		return refuse(c, fiber.StatusBadRequest, "bad-service", err.Error())
+	case errors.Is(err, repository.ErrLoginMustBeRetyped):
+		return refuse(c, fiber.StatusBadRequest, "login-required", err.Error())
 	case errors.Is(err, repository.ErrVaultOff):
 		return refuse(c, fiber.StatusServiceUnavailable, "secrets-key-missing", err.Error())
 	case errors.Is(err, repository.ErrProfileNotFound):

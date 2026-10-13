@@ -94,7 +94,11 @@ People → **Sign-in & services**:
    their next check. Downloads stay.
 
 The admin can set a login but never read one back. No admin answer carries a
-stored secret.
+stored secret, and a saved login never moves: changing a service's address,
+or what kind of service it is, needs the login typed again. Otherwise
+whoever can edit a service (the admin page, or a phone signed in to manage
+the server) could point it at a server they run and have the person's
+devices sign in there with it.
 
 > **Invite links carry the address you opened the admin page at.** Opened at
 > `localhost` on the server itself, the link would point phones at their own
@@ -219,7 +223,7 @@ Limits: 10 a minute per client, a shared allowance across every visitor
 | `DELETE /admin/profiles/:id/invite` | Cancel the waiting invite |
 | `DELETE /admin/profiles/:id/account` | Remove the sign-in. Devices stay linked; services stay set up |
 | `GET` / `POST /admin/profiles/:id/services` | List / add `{type, name?, baseUrl, loginKind, username?, password?, token?, apiKey?, plex?}`. A `plexuser` needs `token` and `plex`, and no `baseUrl` |
-| `PATCH /admin/profiles/:id/services/:sid` | Edit. A secret left out keeps its value; an empty one clears it. `plex` left out keeps the pick; a new `plex` (a person picked again) needs its `token` |
+| `PATCH /admin/profiles/:id/services/:sid` | Edit. A secret left out keeps its value; an empty one clears it. `plex` left out keeps the pick; a new `plex` (a person picked again) needs its `token`. An edit that moves the service (another address, or another `type`) keeps no saved secret: it must carry the login's own (`password`, `token` or `apiKey`), or name `loginKind: none`, else 400 `login-required` and nothing changes |
 | `DELETE /admin/profiles/:id/services/:sid` | Devices sign out of it at their next check |
 | `PUT /admin/profiles/:id/services/order` `{ids}` | Every id once, first to last |
 
