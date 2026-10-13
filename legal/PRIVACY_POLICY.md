@@ -39,6 +39,17 @@ authenticator secret used to check its codes, and hashes of the one-time
 recovery codes, of browser sessions and of phones signed in to manage the
 server.
 
+**Alexandria accounts, only if you invite people.** For each person the
+administrator invites: a username, a slow hash (argon2id) of their
+password, their two-step secret if they turn it on (sealed, below), and a
+public key for each of their signed-in devices. And the media-server
+logins the administrator sets up for them — usernames, passwords, tokens,
+API keys, or a Plex person's key to the administrator's own server —
+sealed with AES-256-GCM under a secrets key (`ALEXANDRIA_SECRETS_KEY`)
+that is not stored in the database and is kept out of its backups. A
+login is opened only to send it, sealed again, to that person's own
+device. Without accounts, none of this exists.
+
 **Party Play, in memory only.** While a party runs, the server holds what
 is playing (title, author, position and the queue) and which devices are
 in it. This is never written to the database, and it is gone when the
@@ -46,13 +57,15 @@ party ends or the server restarts.
 
 ## What it never stores
 
-- **Credentials for your media servers.** Plex, Audiobookshelf, Jellyfin
-  and the rest are authenticated by the app on your device, using its
-  keychain. Those credentials never reach this server.
+- **Credentials for your media servers, unless you use Alexandria
+  accounts.** Without accounts, Plex, Audiobookshelf, Jellyfin and the rest
+  are authenticated by the app on each device, using its keychain, and
+  those credentials never reach this server. With accounts, only the logins
+  the administrator sets up are kept, sealed as described above.
 - **Media files.** It keeps an index, not content.
-- **Email addresses or payment information, or passwords for your
-  household.** There are no accounts here. The only password is the
-  administrator's own, and it is stored only as a slow hash.
+- **Email addresses or payment information.** Passwords only for the
+  administrator and for people invited to an Alexandria account, each
+  stored only as a slow hash. Nobody can register themselves.
 - **Analytics or telemetry of any kind.**
 
 ## What leaves your machine
@@ -64,6 +77,11 @@ including us.
 The only traffic is between the server and the Alexandria apps on your
 own network that you have linked to it.
 
+When the administrator picks a Plex person for an Alexandria account,
+their own browser or phone asks plex.tv, with their own Plex sign-in, for
+that person's key to their server. The server takes no part in that and
+never contacts plex.tv.
+
 ---
 
 ## Who can see what
@@ -74,6 +92,10 @@ sessions each person has, and how many hours those add up to.
 
 **They cannot see, through the app or the API, what anyone listened to.**
 No endpoint returns another person's events, titles, or authors.
+
+**With Alexandria accounts,** they also see each invited person's username
+and which services are set up for them, and whether a login is saved —
+never the login itself. No screen or API reads a saved login back.
 
 **But be clear about the limit:** the person who runs the machine owns
 the database file and can open it with any SQLite client. Software
@@ -112,6 +134,10 @@ servers its operator configures.
 - The authenticator secret of the admin login is stored as it is (the
   server needs it to check codes). Guard backups and the data volume as
   you would the admin password.
+- Saved service logins (Alexandria accounts) are sealed with the secrets
+  key, which is not in the database or its backups: a stolen database
+  alone does not open them. Whoever holds both the database and the key —
+  the server's operator — can, the same trust boundary as above.
 - Run it behind HTTPS if it is reachable from outside your network. Over
   plain HTTP on a hostile network, tokens and codes in transit are
   readable.

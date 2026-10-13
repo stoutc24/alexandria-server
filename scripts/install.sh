@@ -73,6 +73,46 @@ generate_secret() {
     fi
 }
 
+# A secrets key for Alexandria accounts: 32 random bytes, base64 as the
+# README's `openssl rand -base64 32` (the server takes hex too).
+generate_secrets_key() {
+    if command -v openssl &> /dev/null; then
+        openssl rand -base64 32
+    else
+        head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
+    fi
+}
+
+# Alexandria accounts keep people's service logins sealed with
+# ALEXANDRIA_SECRETS_KEY. An .env from before accounts has none: add one,
+# once, and print it. A key already set is never touched.
+ensure_secrets_key() {
+    [ -f .env ] || return 0
+    if grep -Eq '^ALEXANDRIA_SECRETS_KEY=.+' .env; then
+        return 0
+    fi
+    local key
+    key=$(generate_secrets_key)
+    cp .env .env.backup
+    if grep -Eq '^ALEXANDRIA_SECRETS_KEY=$' .env; then
+        awk -v k="$key" '{ if ($0 ~ /^ALEXANDRIA_SECRETS_KEY=$/) print "ALEXANDRIA_SECRETS_KEY=" k; else print }' \
+            .env > .env.tmp && mv .env.tmp .env
+    else
+        {
+            echo ""
+            echo "# Secrets key for Alexandria accounts (added $(date))."
+            echo "# KEEP A COPY SOMEWHERE SAFE, apart from your backups: it seals the"
+            echo "# service logins accounts keep, which cannot be opened without it."
+            echo "# Never the same as the admin token."
+            echo "ALEXANDRIA_SECRETS_KEY=${key}"
+        } >> .env
+    fi
+    chmod 600 .env
+    echo -e "${GREEN}✓${NC} Added a secrets key for Alexandria accounts to .env."
+    echo "    Copy it somewhere safe, apart from your backups:"
+    echo -e "    ${key}"
+}
+
 # Main installation
 main() {
     echo -e "${YELLOW}Checking requirements...${NC}"
@@ -96,6 +136,7 @@ main() {
     if [ ! -f .env ]; then
         echo -e "${YELLOW}Generating configuration...${NC}"
         ALEXANDRIA_API_TOKEN=$(generate_secret)
+        ALEXANDRIA_SECRETS_KEY=$(generate_secrets_key)
         SERVER_NAME=$(hostname -s 2>/dev/null || hostname)
         cat > .env << EOF
 # Alexandria Server Configuration
@@ -110,6 +151,12 @@ PORT=4000
 # watches never use it: they link with a one-time code instead.
 # The server refuses to start without it (16 characters or more).
 ALEXANDRIA_API_TOKEN=${ALEXANDRIA_API_TOKEN}
+
+# Secrets key for Alexandria accounts - KEEP A COPY SOMEWHERE SAFE, apart
+# from your backups. It seals the service logins accounts keep for the
+# people you invite; without it they cannot be opened. Never the same as
+# the admin token.
+ALEXANDRIA_SECRETS_KEY=${ALEXANDRIA_SECRETS_KEY}
 
 # The name devices see when they find this server on the network.
 ALEXANDRIA_SERVER_NAME=${SERVER_NAME:-Alexandria Companion}
@@ -129,8 +176,12 @@ EOF
         chmod 600 .env
         echo -e "${GREEN}✓${NC} .env created with a new admin token (also saved in $INSTALL_DIR/.env):"
         echo -e "    ${ALEXANDRIA_API_TOKEN}"
+        echo -e "${GREEN}✓${NC} and a secrets key for Alexandria accounts. Copy it somewhere safe,"
+        echo "    apart from your backups:"
+        echo -e "    ${ALEXANDRIA_SECRETS_KEY}"
     else
         echo -e "${YELLOW}!${NC} .env file already exists, keeping it"
+        ensure_secrets_key
     fi
     echo ""
 
@@ -160,6 +211,9 @@ EOF
     echo "  2. In Alexandria: Settings > Companion Server > Find my server"
     echo "     on this network > Get a link code. Approve the code on the"
     echo "     admin page."
+    echo "  3. Optional: give someone one sign-in for every phone. On the"
+    echo "     admin page, open a person's Sign-in & services, add their"
+    echo "     servers, then Invite to sign in."
     echo ""
     echo "  Installation directory: $INSTALL_DIR"
     echo ""

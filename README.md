@@ -16,7 +16,15 @@ It is **optional**. Alexandria works fully without it.
 
 **People and devices.** Everyone in the house gets a profile. Each phone
 and Apple TV links to a person with a one-time code that you approve.
-There are no accounts and no passwords for your family.
+Nobody needs an account or a password for that.
+
+**One sign-in, if you want it (Alexandria accounts).** Optional. Invite a
+person to a username and password on this server, and set their media
+servers up for them once — their own logins, sealed with a key that stays
+out of the database and its backups; Plex people picked from your Plex,
+nothing typed. Every phone they sign in on is then set up for them, and a
+service you remove signs out everywhere. See
+[docs/ACCOUNTS.md](docs/ACCOUNTS.md).
 
 **Party Play.** Play music on a phone and every linked Apple TV, phone
 and watch in the house can join and play along in sync. The server keeps
@@ -42,10 +50,15 @@ server**.
 
 ## What it does not do
 
-- **It does not manage accounts.** No passwords for family members, no
-  registration, no email. Your media servers already do that.
-- **It does not hold your media-server credentials.** Those stay on each
-  device, in its keychain, exactly as they do without this server.
+- **It has no sign-up and no email.** Nobody can register themselves. A
+  person gets a sign-in only when you invite them (Alexandria accounts,
+  optional), and nothing here asks for an email address.
+- **It holds media-server logins only if you use Alexandria accounts.**
+  Without them, logins stay on each device, in its keychain, exactly as
+  they do without this server. With them, the logins you set up for
+  people are sealed with `ALEXANDRIA_SECRETS_KEY`, which never sits in the
+  database, and are opened only to travel, sealed again, to that person's
+  own devices. No screen or API ever reads one back.
 - **It does not decide what anyone is allowed to do.** Subscription status
   is checked on the device and nowhere else. Running this server does not
   unlock anything, and it never will. See
@@ -56,7 +69,9 @@ server**.
   server deletes media.
 - **It does not phone home.** It makes no outbound connections. It sends
   nothing to the developer and needs no internet access once its image is
-  downloaded. See [legal/PRIVACY_POLICY.md](legal/PRIVACY_POLICY.md).
+  downloaded. (Picking a Plex person for an account is done by your own
+  browser or phone talking to plex.tv, not by this server.) See
+  [legal/PRIVACY_POLICY.md](legal/PRIVACY_POLICY.md).
 
 ---
 
@@ -88,11 +103,13 @@ The installer:
 2. creates `~/alexandria-server` (set `INSTALL_DIR` to choose another
    folder);
 3. downloads `docker-compose.yml`;
-4. writes a `.env` with a new admin token and this machine's name;
+4. writes a `.env` with a new admin token, a new secrets key for
+   Alexandria accounts, and this machine's name;
 5. pulls the image and starts it.
 
-It prints the admin token once. The token is also kept in that folder's
-`.env`.
+It prints the admin token and the secrets key once. Both are also kept in
+that folder's `.env`. Copy the secrets key somewhere safe, apart from your
+backups: without it, the service logins accounts keep cannot be opened.
 
 ### Option 2: Docker Compose
 
@@ -115,18 +132,26 @@ services:
       - ALEXANDRIA_SERVER_NAME=${ALEXANDRIA_SERVER_NAME:-Alexandria Companion}
       - ALEXANDRIA_PUBLIC_URL=${ALEXANDRIA_PUBLIC_URL:-}
       - ALEXANDRIA_TRUSTED_PROXIES=${ALEXANDRIA_TRUSTED_PROXIES:-}
+      - ALEXANDRIA_SECRETS_KEY=${ALEXANDRIA_SECRETS_KEY:-}
       - TZ=${TZ:-UTC}
 
 volumes:
   alexandria-data:
 ```
 
-`.env` (make the token with `openssl rand -hex 32`):
+`.env` (make the token with `openssl rand -hex 32`, and the secrets key —
+a different value — with `openssl rand -base64 32`):
 
 ```bash
 ALEXANDRIA_API_TOKEN=<your token>
+ALEXANDRIA_SECRETS_KEY=<your secrets key>
 ALEXANDRIA_SERVER_NAME=Living Room NAS
 ```
+
+Keep a copy of the secrets key apart from your backups. A key that is set
+but malformed stops the server from starting, on purpose. Left out,
+Alexandria accounts still sign people in, but keep none of their service
+logins.
 
 Then:
 
@@ -143,13 +168,15 @@ docker run -d \
   -p 4000:4000 \
   -v alexandria-data:/data \
   -e ALEXANDRIA_API_TOKEN="$(openssl rand -hex 32)" \
+  -e ALEXANDRIA_SECRETS_KEY="$(openssl rand -base64 32)" \
   -e ALEXANDRIA_SERVER_NAME="Living Room NAS" \
   ghcr.io/stoutc24/alexandria-server:latest
 ```
 
-Read the token back with
-`docker inspect alexandria-server | grep ALEXANDRIA_API_TOKEN` and keep it
-somewhere safe.
+Read the token and the secrets key back with
+`docker inspect alexandria-server | grep -E 'ALEXANDRIA_(API_TOKEN|SECRETS_KEY)'`
+and keep both somewhere safe. Re-create the container with the **same**
+secrets key, or the service logins it keeps can no longer be opened.
 
 ### Check it is running
 
@@ -257,10 +284,15 @@ At `/admin`. It shows:
 - devices waiting to be approved;
 - who is connected, their devices, and when each was last used;
 - how many sessions and hours each person has;
-- the library index: distinct titles, duplicates and servers.
+- the library index: distinct titles, duplicates and servers;
+- each person's **Sign-in & services** (Alexandria accounts): their
+  sign-in, a waiting invite, and the servers set up for them, in order.
 
 You can approve or revoke a device, remove a person entirely, download a
 backup, and sign out any phone that is signed in to manage the server.
+For a person's account you can invite them, set up, reorder and remove
+their services, and pick their Plex from your Plex (your browser signs in
+to Plex for that, on Plex's own page).
 
 **It does not show what anyone listened to.** The management API returns
 counts and timestamps only, and the page can render nothing more.
@@ -363,6 +395,15 @@ one means setting the login up again with your admin token.
 The library index rebuilds itself from the app. What is really worth
 backing up is people, their devices and their stats.
 
+**The secrets key is not in any backup**, on purpose: a backup alone
+cannot open the service logins Alexandria accounts keep. Keep the key
+(`ALEXANDRIA_SECRETS_KEY` in your `.env`) somewhere safe of its own, such
+as a password manager. Restored on a server with a different key, people,
+devices and passwords come back, but two things the key sealed do not:
+each saved service login shows as unreadable until you enter it again,
+and anyone with two-step sign-in turned on cannot pass it until you
+remove their sign-in and invite them again.
+
 ---
 
 ## Updating
@@ -383,6 +424,13 @@ With `docker run`, pull the image, then remove and re-create the
 container with the same `-v alexandria-data:/data` and settings.
 
 Your data lives in the volume and survives updates.
+
+**Set up before Alexandria accounts?** The installer's update adds a
+secrets key to your `.env` and prints it once (copy it somewhere safe).
+With Compose, add the `ALEXANDRIA_SECRETS_KEY` line to the
+`environment:` list in `docker-compose.yml` and a key to `.env`
+(`openssl rand -base64 32`). With `docker run`, add
+`-e ALEXANDRIA_SECRETS_KEY=…` when you re-create the container.
 
 ## Uninstalling
 
@@ -436,6 +484,13 @@ every person, device and statistic.** Take a backup first.
   - Guard backups and the data volume as you would the password.
   - Set the login up again if a copy leaks; that issues a new secret.
   - A backup taken from the phone leaves the admin login out.
+- **Alexandria accounts' saved logins are sealed.** Each is encrypted
+  (AES-256-GCM) with `ALEXANDRIA_SECRETS_KEY`, which never sits in the
+  database, and bound to its own row. A login is opened only to send it,
+  sealed again, to a key the person's own device made at sign-in: a
+  stolen device token alone opens nothing. No admin screen or API returns
+  one. People's own passwords are stored only as slow hashes (argon2id).
+  See [docs/ACCOUNTS.md](docs/ACCOUNTS.md) for who can see what.
 - **These routes answer without a token**, by necessity:
   - `/health` reports the name, version and capabilities, never library
     contents.
@@ -443,6 +498,14 @@ every person, device and statistic.** Take a backup first.
   - `/api/v1/link/request` and `/api/v1/link/claim` serve devices being
     linked, which have no token yet. Both are rate limited to 30 requests
     a minute for each visitor.
+  - `/invite` is the page an account invite link opens; it only hands the
+    invite to the app.
+  - `/api/v1/accounts/login`, `/invite/check` and `/invite/accept` serve
+    people signing in to an Alexandria account. Each visitor gets 10 a
+    minute; all visitors together get 20 wrong answers a minute after a
+    first 60 (an allowance of their own, so a typo never spends the admin
+    login's); and 10 wrong answers in a row lock that person's sign-in for
+    15 minutes.
 
   Everything else requires a token.
 - **The container runs as a non-root user** (uid 1000), and its memory use
