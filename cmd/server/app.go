@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -15,6 +16,7 @@ import (
 	"github.com/stoutsolutions/alexandria-server/internal/middleware"
 	"github.com/stoutsolutions/alexandria-server/internal/nowplaying"
 	"github.com/stoutsolutions/alexandria-server/internal/repository"
+	"github.com/stoutsolutions/alexandria-server/internal/vault"
 )
 
 // buildApp wires every route onto a fresh Fiber app. It holds no
@@ -76,6 +78,21 @@ func buildApp(cfg *config.Config) *fiber.App {
 	adminAuthHandler := handlers.NewAdminAuthHandler(adminAuthRepo, cfg.PublicURL)
 	linkHandler := handlers.NewLinkHandler(linkRepo, profileRepo, adminAuthHandler.FreshCode)
 	adminDevicesHandler := handlers.NewAdminDevicesHandler(adminAuthRepo)
+
+	// Alexandria Accounts. The vault exists only when a secrets key is set
+	// (config.SecretsKey); without one, people can still sign in and link
+	// their devices, and stored service logins stay off.
+	var secrets *vault.Vault
+	if cfg.SecretsKey != nil {
+		v, err := vault.New(cfg.SecretsKey)
+		if err != nil {
+			log.Fatalf("accounts: the secrets key is unusable: %v", err)
+		}
+		secrets = v
+	}
+	accountRepo := repository.NewAccountRepository(secrets)
+	accountsHandler := handlers.NewAccountsHandler(accountRepo, profileRepo, adminAuthHandler.FreshCode)
+	handlers.SetAccountsServices(secrets != nil)
 
 	// Unauthenticated on purpose: the app needs to know whether a
 	// companion exists and what it can do before it has been given a
@@ -183,6 +200,21 @@ func buildApp(cfg *config.Config) *fiber.App {
 	admin.Post("/backup", authLimiter,
 		adminAuthHandler.RequireFreshCode, adminHandler.BackupForDevice)
 
+	// Alexandria Accounts, the admin's half: a person's sign-in, invite and
+	// services. An invite lets someone into a person's profile, so a
+	// phone's invites add a fresh code (handlers.AccountsHandler.
+	// CreateInvite) and share the sign-in rate limit, as link approvals do.
+	admin.Get("/profiles/:id/account", accountsHandler.Account)
+	admin.Delete("/profiles/:id/account", accountsHandler.RemoveLogin)
+	admin.Post("/profiles/:id/invite",
+		middleware.ForAdminDevices(authLimiter), accountsHandler.CreateInvite)
+	admin.Delete("/profiles/:id/invite", accountsHandler.CancelInvite)
+	admin.Get("/profiles/:id/services", accountsHandler.ListServices)
+	admin.Post("/profiles/:id/services", accountsHandler.AddService)
+	admin.Put("/profiles/:id/services/order", accountsHandler.OrderServices)
+	admin.Patch("/profiles/:id/services/:sid", accountsHandler.UpdateService)
+	admin.Delete("/profiles/:id/services/:sid", accountsHandler.DeleteService)
+
 	// Device linking, device half. Unauthenticated by necessity — the
 	// device has no token yet, which is the problem being solved. Rate
 	// limited so it cannot be used to churn codes or grind claim
@@ -216,6 +248,35 @@ func buildApp(cfg *config.Config) *fiber.App {
 	link := v1.Group("/link", linkLimiter)
 	link.Post("/request", linkRequestsEveryone, linkHandler.RequestLink)
 	link.Post("/claim", linkHandler.Claim)
+
+	// Alexandria Accounts, the person's half. Signing in IS the device
+	// link — no admin approval — and answers with an ordinary profile
+	// token. Unauthenticated by necessity, so rate limited: a limiter of
+	// its own (a household member's typos must never spend the admin
+	// sign-in's budget), on top of the handler's shared allowance and each
+	// sign-in's lockout.
+	accountLimiter := limiter.New(limiter.Config{
+		Max:          10,
+		Expiration:   time.Minute,
+		KeyGenerator: clientKey,
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error":  "too many sign-in attempts; wait a minute",
+				"reason": "rate-limited",
+			})
+		},
+	})
+	accounts := v1.Group("/accounts")
+	accounts.Post("/login", accountLimiter, accountsHandler.Login)
+	accounts.Post("/invite/check", accountLimiter, accountsHandler.CheckInvite)
+	accounts.Post("/invite/accept", accountLimiter, accountsHandler.AcceptInvite)
+	accounts.Get("/me", requireProfile, accountsHandler.Me)
+	accounts.Get("/services", requireProfile, accountsHandler.Services)
+	accounts.Put("/device-key", requireProfile, accountsHandler.SetDeviceKey)
+	accounts.Post("/password", requireProfile, accountLimiter, accountsHandler.ChangePassword)
+	accounts.Post("/totp/setup", requireProfile, accountsHandler.TOTPSetup)
+	accounts.Post("/totp/enable", requireProfile, accountLimiter, accountsHandler.TOTPEnable)
+	accounts.Post("/totp/disable", requireProfile, accountLimiter, accountsHandler.TOTPDisable)
 
 	// The library index describes the household's SERVERS, not any
 	// person, so anyone with a valid token may read it — and write it.

@@ -47,6 +47,21 @@ func HashPassword(password string) (string, error) {
 	if len([]rune(password)) < MinPasswordLength {
 		return "", ErrPasswordTooShort
 	}
+	return hashPassword(password)
+}
+
+// HashPasswordAtLeast is HashPassword with another floor: a household
+// member's Alexandria Accounts sign-in takes eight
+// (repository.MinAccountPasswordLength) behind its rate limit and
+// lockout, while the admin's own login keeps its twelve.
+func HashPasswordAtLeast(password string, minLength int) (string, error) {
+	if len([]rune(password)) < minLength {
+		return "", fmt.Errorf("password must be at least %d characters", minLength)
+	}
+	return hashPassword(password)
+}
+
+func hashPassword(password string) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err

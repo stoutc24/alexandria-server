@@ -99,7 +99,22 @@ var capabilities = []string{
 	// asking a phone for a fresh code ("totpCode" or "recoveryCode")
 	// with every approval, someone new included.
 	"admin.device-token",
+	// Alexandria Accounts (2026-10-12): POST /accounts/login and
+	// /accounts/invite/{check,accept}, GET /accounts/me and
+	// /accounts/services (sealed to the device), PUT /accounts/device-key,
+	// POST /accounts/password and /accounts/totp/{setup,enable,disable};
+	// for the admin, /admin/profiles/:id/{account,invite,services}.
+	// "accounts.services" is added at run time when a secrets key is set.
+	"accounts",
 }
+
+// accountsServicesOn is whether Alexandria Accounts can keep service
+// logins — set at startup from whether a secrets key is configured, and
+// published as "accounts.services" so the app knows before it asks.
+var accountsServicesOn bool
+
+// SetAccountsServices records whether stored service logins are on.
+func SetAccountsServices(on bool) { accountsServicesOn = on }
 
 // configuredName is the operator's chosen label, set at startup. Empty
 // falls back to the hostname — fine on a NAS, useless in Docker where
@@ -126,6 +141,10 @@ func Health(c *fiber.Ctx) error {
 	if host == "" {
 		host, _ = os.Hostname()
 	}
+	caps := capabilities
+	if accountsServicesOn {
+		caps = append(append([]string{}, capabilities...), "accounts.services")
+	}
 	return c.JSON(HealthResponse{
 		App:       "alexandria-companion",
 		Name:      host,
@@ -135,7 +154,7 @@ func Health(c *fiber.Ctx) error {
 		GoVersion: runtime.Version(),
 		Version:   "0.3.0",
 
-		Capabilities: capabilities,
+		Capabilities: caps,
 		PublicURL:    configuredPublicURL,
 	})
 }
