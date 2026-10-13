@@ -261,6 +261,39 @@
       </div>
     </section>
 
+    <!-- Server Admin's sign-ins to the servers you run. The list rebuilds
+         on every poll; the form stays outside it, so typing survives. -->
+    <section>
+      <h2>Server Admin sign-ins</h2>
+      <p class="hint">Your admin sign-in to each server you run, so Server Admin
+        on your phones can manage all of them, even ones that are not in your
+        library. A phone signed in here fetches them once, with a code from
+        your authenticator. Passwords are locked with this server's secrets
+        key and never shown again. Plex is not kept here: sign in with Plex on
+        each phone.</p>
+      <div id="svc-admins"></div>
+      <form id="svc-admin-form" class="row" style="margin-top:11px" autocomplete="off" hidden>
+        <select id="svc-admin-type" aria-label="Service">
+          <option value="abs">Audiobookshelf</option>
+          <option value="jellyfin">Jellyfin</option>
+          <option value="kavita">Kavita</option>
+          <option value="komga">Komga (email)</option>
+          <option value="navidrome">Navidrome</option>
+          <option value="booklore">Grimmory</option>
+          <option value="storyteller">Storyteller</option>
+          <option value="stump">Stump</option>
+          <option value="calibreweb">Calibre-Web</option>
+        </select>
+        <input id="svc-admin-url" type="text" inputmode="url" spellcheck="false"
+          placeholder="https://server.example.com" aria-label="Server address" required>
+        <input id="svc-admin-user" type="text" spellcheck="false" autocomplete="off"
+          placeholder="Admin username" aria-label="Admin username" required>
+        <input id="svc-admin-pass" type="password" autocomplete="new-password"
+          placeholder="Admin password" aria-label="Admin password" required>
+        <button type="submit">Save</button>
+      </form>
+    </section>
+
     <section>
       <h2>Maintenance</h2>
       <div class="row">
@@ -629,6 +662,67 @@
         load();
       })
       .catch(function (e) { toast(e.message, true); });
+  }
+
+  // ---- Server Admin sign-ins ------------------------------------------
+  //
+  // The admin's own sign-in to each server, for Server Admin on their
+  // phones. Written here, never read back: the list has no passwords, and
+  // only a phone with a fresh code can fetch them.
+  var svcAdminsHTML = null;
+
+  function renderServiceAdmins(r) {
+    var html;
+    if (!r.available) {
+      html = '<p class="empty">This server has no secrets key, so it cannot ' +
+        'keep sign-ins. Set ALEXANDRIA_SECRETS_KEY (see the README).</p>';
+    } else if (!(r.admins || []).length) {
+      html = '<p class="empty">None kept yet.</p>';
+    } else {
+      html = r.admins.map(function (a) {
+        return '<div class="device"><div>' + esc(a.name) +
+          ' <span class="meta">· ' + esc(a.username) + '</span>' +
+          '<div class="meta">' + esc(a.baseUrl) + '</div></div>' +
+          '<button class="danger" data-remove-svc-admin="' + esc(a.id) + '" ' +
+            'data-svcname="' + esc(a.name) + '">Remove</button></div>';
+      }).join("");
+    }
+    $("svc-admin-form").hidden = !r.available;
+    if (html === svcAdminsHTML) return;
+    svcAdminsHTML = html;
+    $("svc-admins").innerHTML = html;
+  }
+
+  function saveServiceAdmin(e) {
+    e.preventDefault();
+    var pass = $("svc-admin-pass");
+    api("/admin/service-admins", {
+      method: "POST",
+      body: JSON.stringify({
+        type: $("svc-admin-type").value,
+        baseUrl: $("svc-admin-url").value.trim(),
+        username: $("svc-admin-user").value.trim(),
+        password: pass.value
+      })
+    }).then(function (a) {
+      // The password leaves the page with the request.
+      pass.value = "";
+      $("svc-admin-url").value = "";
+      $("svc-admin-user").value = "";
+      toast(a.name + " sign-in kept. Fetch it from Server Admin on your phone.");
+      load();
+    }).catch(function (err) { toast(err.message, true); });
+  }
+
+  function removeServiceAdmin(id, name) {
+    if (!confirm('Remove the ' + name + ' sign-in?\n\nPhones that already ' +
+                 'fetched it keep it until they sign out of it.')) return;
+    api("/admin/service-admins/" + encodeURIComponent(id), { method: "DELETE" })
+      .then(function () { toast(name + " sign-in removed."); load(); })
+      .catch(function (err) {
+        if (err.status === 404) { load(); return; }
+        toast(err.message, true);
+      });
   }
 
   // ---- sign-in & services --------------------------------------------
@@ -2026,13 +2120,15 @@
       api("/admin/links"),
       api("/admin/profiles"),
       api("/catalog/summary"),
-      api("/admin/admin-devices")
+      api("/admin/admin-devices"),
+      api("/admin/service-admins")
     ]).then(function (r) {
       renderPending(r[0].pending || []);
       renderProfiles(r[1].profiles || []);
       acctSync(r[1].profiles || []);
       renderCatalog(r[2] || {});
       renderAdminDevices((r[3] || {}).devices || []);
+      renderServiceAdmins(r[4] || {});
     }).catch(function (e) { toast(e.message, true); });
   }
 
@@ -2161,6 +2257,9 @@
     else if (t.dataset.revokeAdmin) {
       revokeAdminDevice(t.dataset.revokeAdmin, t.dataset.adlabel);
     }
+    else if (t.dataset.removeSvcAdmin) {
+      removeServiceAdmin(t.dataset.removeSvcAdmin, t.dataset.svcname);
+    }
     else if (t.dataset.signin) toggleAcct(t.dataset.signin, t.dataset.pname);
   });
 
@@ -2248,6 +2347,7 @@
   });
   $("signout").addEventListener("click", signOut);
   $("backup").addEventListener("click", backup);
+  $("svc-admin-form").addEventListener("submit", saveServiceAdmin);
   $("revoke-all-phones").addEventListener("click", revokeAllPhones);
 
   // Which screen to draw: set-up if nobody has enrolled, the app if the

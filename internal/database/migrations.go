@@ -329,6 +329,23 @@ func RunMigrations() error {
 				);
 			`,
 		},
+		{
+			// Server Admin's sign-ins to the household's servers, one per
+			// service, the password sealed with the secrets key (see
+			// repository.ServiceAdminRepository).
+			name: "service admin logins",
+			sql: `
+				CREATE TABLE IF NOT EXISTS service_admin_logins (
+					id TEXT PRIMARY KEY,
+					service_type TEXT NOT NULL UNIQUE,
+					base_url TEXT NOT NULL,
+					username TEXT NOT NULL,
+					secret TEXT NOT NULL,
+					created_at INTEGER NOT NULL,
+					updated_at INTEGER NOT NULL
+				);
+			`,
+		},
 	}
 
 	for _, m := range migrations {

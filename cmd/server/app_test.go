@@ -175,6 +175,7 @@ var wantRoutes = []string{
 	"DELETE /api/v1/admin/profiles/:id/account",
 	"DELETE /api/v1/admin/profiles/:id/invite",
 	"DELETE /api/v1/admin/profiles/:id/services/:sid",
+	"DELETE /api/v1/admin/service-admins/:id",
 	"DELETE /api/v1/nowplaying/",
 	"DELETE /api/v1/stats/",
 	"GET /admin",
@@ -189,6 +190,7 @@ var wantRoutes = []string{
 	"GET /api/v1/admin/profiles",
 	"GET /api/v1/admin/profiles/:id/account",
 	"GET /api/v1/admin/profiles/:id/services",
+	"GET /api/v1/admin/service-admins",
 	"GET /api/v1/catalog/duplicates",
 	"GET /api/v1/catalog/items",
 	"GET /api/v1/catalog/summary",
@@ -211,6 +213,7 @@ var wantRoutes = []string{
 	"HEAD /api/v1/admin/profiles",
 	"HEAD /api/v1/admin/profiles/:id/account",
 	"HEAD /api/v1/admin/profiles/:id/services",
+	"HEAD /api/v1/admin/service-admins",
 	"HEAD /api/v1/catalog/duplicates",
 	"HEAD /api/v1/catalog/items",
 	"HEAD /api/v1/catalog/summary",
@@ -239,6 +242,8 @@ var wantRoutes = []string{
 	"POST /api/v1/admin/profiles",
 	"POST /api/v1/admin/profiles/:id/invite",
 	"POST /api/v1/admin/profiles/:id/services",
+	"POST /api/v1/admin/service-admins",
+	"POST /api/v1/admin/service-admins/open",
 	"POST /api/v1/catalog/sync",
 	"POST /api/v1/devices",
 	"POST /api/v1/link/claim",
@@ -1569,7 +1574,7 @@ func TestBackupFromAPhoneNeedsAFreshCodeAndLeavesSecretsOut(t *testing.T) {
 	}
 	db := openBackup(t, r.raw)
 	for _, table := range []string{"admin_credentials", "admin_recovery_codes",
-		"admin_sessions", "admin_device_tokens"} {
+		"admin_sessions", "admin_device_tokens", "service_admin_logins"} {
 		if n := countRows(t, db, table); n != 0 {
 			t.Errorf("the phone's backup kept %d rows of %s", n, table)
 		}

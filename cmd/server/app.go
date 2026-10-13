@@ -93,6 +93,9 @@ func buildApp(cfg *config.Config) *fiber.App {
 	accountRepo := repository.NewAccountRepository(secrets)
 	accountsHandler := handlers.NewAccountsHandler(accountRepo, profileRepo, adminAuthHandler.FreshCode)
 	handlers.SetAccountsServices(secrets != nil)
+	// Server Admin's sign-ins to the household's servers: the same vault.
+	serviceAdminsHandler := handlers.NewServiceAdminsHandler(
+		repository.NewServiceAdminRepository(secrets), adminAuthHandler.FreshCode)
 
 	// Unauthenticated on purpose: the app needs to know whether a
 	// companion exists and what it can do before it has been given a
@@ -216,6 +219,15 @@ func buildApp(cfg *config.Config) *fiber.App {
 	admin.Put("/profiles/:id/services/order", accountsHandler.OrderServices)
 	admin.Patch("/profiles/:id/services/:sid", accountsHandler.UpdateService)
 	admin.Delete("/profiles/:id/services/:sid", accountsHandler.DeleteService)
+
+	// Server Admin's sign-ins to the household's servers (handlers.
+	// ServiceAdminsHandler): the page and admin phones list, save and
+	// remove them. Only an admin phone reads the passwords back, with a
+	// fresh code, through the SAME authLimiter instance as /admin/auth.
+	admin.Get("/service-admins", serviceAdminsHandler.List)
+	admin.Post("/service-admins", serviceAdminsHandler.Save)
+	admin.Post("/service-admins/open", authLimiter, serviceAdminsHandler.Open)
+	admin.Delete("/service-admins/:id", serviceAdminsHandler.Delete)
 
 	// Device linking, device half. Unauthenticated by necessity — the
 	// device has no token yet, which is the problem being solved. Rate

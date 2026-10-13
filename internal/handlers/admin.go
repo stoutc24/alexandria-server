@@ -223,12 +223,15 @@ func (h *AdminHandler) snapshot(scrub bool) ([]byte, *backupFailure) {
 }
 
 // signInTables hold the admin login. They are emptied in a phone's
-// backup copy.
+// backup copy. So do Server Admin's sign-ins to the household's servers:
+// a copy that leaves this machine carries no admin password of any server,
+// sealed or not (they are typed again after a restore from a phone's copy).
 var signInTables = []string{
 	"admin_credentials",
 	"admin_recovery_codes",
 	"admin_sessions",
 	"admin_device_tokens",
+	"service_admin_logins",
 }
 
 // scrubSignInSecrets empties the sign-in tables of a snapshot file so
