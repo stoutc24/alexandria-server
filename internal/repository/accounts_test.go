@@ -294,3 +294,87 @@ func TestDeletingAPersonRemovesTheirAccount(t *testing.T) {
 		}
 	}
 }
+
+// An edit that does not touch the login must never erase one it cannot
+// read: with no secrets key (the server restarted without it), and with a
+// key that changed since the login was saved. Found by the admin page's
+// browser tests: renaming a service with the key missing wiped its login.
+func TestAnEditNeverErasesALoginItCannotRead(t *testing.T) {
+	keyed, profiles := newAccountsDB(t, true)
+	sam, _ := profiles.Create("Sam")
+	now := time.Now()
+	add := func() *AccountService {
+		t.Helper()
+		s, err := keyed.AddService(sam.ID, ServiceInput{
+			Type: "jellyfin", BaseURL: "https://jf.example", LoginKind: "password",
+			Username: str("sam"), Password: str("pw"),
+		}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	secret := func(acc *AccountRepository, id string) (*ServiceCredentials, bool) {
+		t.Helper()
+		list, err := acc.ListServices(sam.ID, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range list {
+			if s.ID == id {
+				return s.Credentials, s.HasSecret
+			}
+		}
+		t.Fatalf("service %s gone", id)
+		return nil, false
+	}
+
+	// No key: a rename keeps the login, still openable once the key is back.
+	noKey := NewAccountRepository(nil)
+	s := add()
+	if _, err := noKey.UpdateService(sam.ID, s.ID, ServiceInput{Name: "Movies"}, now); err != nil {
+		t.Fatalf("rename without a key: %v", err)
+	}
+	if c, has := secret(keyed, s.ID); !has || c == nil || c.Password != "pw" {
+		t.Fatalf("rename without a key erased the login: %+v %v", c, has)
+	}
+	// No key: a new secret needs the key.
+	if _, err := noKey.UpdateService(sam.ID, s.ID, ServiceInput{Password: str("new")}, now); err != ErrVaultOff {
+		t.Fatalf("new secret without a key: %v", err)
+	}
+	// No key: clearing on purpose (the login kind changed) needs no key.
+	if _, err := noKey.UpdateService(sam.ID, s.ID, ServiceInput{
+		LoginKind: "none", Username: str(""), Password: str(""),
+	}, now); err != nil {
+		t.Fatalf("clear without a key: %v", err)
+	}
+	if _, has := secret(keyed, s.ID); has {
+		t.Fatal("the cleared login is still stored")
+	}
+
+	// A key that changed: a rename keeps the unreadable login, still flagged.
+	otherKey := make([]byte, vault.KeySize)
+	_, _ = rand.Read(otherKey)
+	v2, _ := vault.New(otherKey)
+	changed := NewAccountRepository(v2)
+	s = add()
+	if _, err := changed.UpdateService(sam.ID, s.ID, ServiceInput{Name: "Films"}, now); err != nil {
+		t.Fatalf("rename with a changed key: %v", err)
+	}
+	if c, has := secret(keyed, s.ID); !has || c == nil || c.Password != "pw" {
+		t.Fatalf("rename with a changed key erased the login: %+v %v", c, has)
+	}
+	list, _ := changed.ListServices(sam.ID, false)
+	for _, ls := range list {
+		if ls.ID == s.ID && !ls.Unreadable {
+			t.Fatal("the unreadable login lost its flag")
+		}
+	}
+	// ... and new secrets replace it, sealed with the new key.
+	if _, err := changed.UpdateService(sam.ID, s.ID, ServiceInput{Username: str("sam"), Password: str("fresh")}, now); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := secret(changed, s.ID); c == nil || c.Password != "fresh" {
+		t.Fatalf("replaced login: %+v", c)
+	}
+}

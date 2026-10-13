@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -387,5 +388,36 @@ func TestAccountsAdminRoutesNeedTheAdmin(t *testing.T) {
 	// And a person's routes refuse the admin token.
 	if r := s.do("GET", "/api/v1/accounts/services", nil, bearer(testAPIToken)); r.status != 401 {
 		t.Errorf("services with the admin token: %d", r.status)
+	}
+}
+
+func TestAccountsInviteWarnsWhenItsLinkPointsAtLoopback(t *testing.T) {
+	s := newTestServer(t, withSecretsKey)
+	admin := bearer(testAPIToken)
+	r := s.do("POST", "/api/v1/admin/profiles", map[string]any{"name": "Sam"}, admin)
+	profileID := r.body["profile"].(map[string]any)["id"].(string)
+
+	// The test transport asks as example.com: a reachable address, no warning.
+	r = s.do("POST", "/api/v1/admin/profiles/"+profileID+"/invite", nil, admin)
+	if r.status != 201 || r.body["serverUrlWarning"] != nil {
+		t.Fatalf("plain invite: %d %s", r.status, r)
+	}
+	// The page opened on the server itself (an absolute URL sets the Host
+	// the server sees).
+	for _, host := range []string{"localhost:4000", "127.0.0.1:4000", "[::1]:4000"} {
+		req := httptest.NewRequest("POST", "/api/v1/admin/profiles/"+profileID+"/invite", nil)
+		req.Host = host
+		req.Header.Set("Authorization", "Bearer "+testAPIToken)
+		resp, err := s.app.Test(req, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		resp.Body.Close()
+		warning, _ := body["serverUrlWarning"].(string)
+		if resp.StatusCode != 201 || !strings.Contains(warning, "can't reach") {
+			t.Fatalf("invite made at %s: %d %v", host, resp.StatusCode, body["serverUrl"])
+		}
 	}
 }

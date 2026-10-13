@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -673,7 +674,7 @@ func (h *AccountsHandler) CreateInvite(c *fiber.Ctx) error {
 	q.Set("server", server)
 	q.Set("invite", token)
 	log.Printf("account %s created for %q%s", purpose, p.Name, callerForLog(c))
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+	out := fiber.Map{
 		"invite": fiber.Map{
 			"token":       token,
 			"code":        code,
@@ -684,7 +685,30 @@ func (h *AccountsHandler) CreateInvite(c *fiber.Ctx) error {
 		"serverUrl": server,
 		// The link the app opens; the QR code carries the same.
 		"link": "alexandria://accounts/invite?" + q.Encode(),
-	})
+	}
+	if w := unreachableLinkWarning(server); w != "" {
+		out["serverUrlWarning"] = w
+	}
+	return c.Status(fiber.StatusCreated).JSON(out)
+}
+
+// unreachableLinkWarning: the link carries the address the admin reached
+// this page at, and one opened on the server itself (localhost) sends every
+// phone to its OWN loopback.
+func unreachableLinkWarning(server string) string {
+	u, err := url.Parse(server)
+	if err != nil {
+		return ""
+	}
+	host := u.Hostname()
+	ip := net.ParseIP(host)
+	if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+		return ""
+	}
+	return "This link points at " + host + ", which their phone can't reach. Open " +
+		"this page at the server's network address (or set ALEXANDRIA_PUBLIC_URL) " +
+		"and make the invite again — or give them the code to type with the " +
+		"server's address."
 }
 
 // CancelInvite withdraws a person's waiting invite.

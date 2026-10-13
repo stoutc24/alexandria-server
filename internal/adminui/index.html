@@ -874,6 +874,7 @@
           'value="' + esc(r.link) + '">' +
         '<button data-act="copy-link">Copy link</button>' +
       '</div>' +
+      (r.warning ? '<p class="bad" style="margin:8px 0 0">' + esc(r.warning) + '</p>' : '') +
       '<p class="meta" style="margin:8px 0 12px">Works once. Expires ' +
         untilUnix(r.expiresAt) + ' (' + esc(day(isoOf(r.expiresAt))) + ').</p>' +
       '<button data-act="invite-done">I\'ve sent it</button>' +
@@ -907,9 +908,10 @@
           ? "The server key changed since this was saved — enter it again."
           : "A login is saved, but this server has no secrets key right now.";
       }
-      // With no secrets key the server cannot open the saved login, and an
-      // edit would overwrite it with nothing. Leave it alone until the key
-      // is back; reordering and removing are still safe.
+      // With no secrets key the server cannot open the saved login or save a
+      // new one. It keeps the stored login through any edit
+      // (UpdateService), but the form would only lead to a refusal, so
+      // editing waits for the key; reordering and removing still work.
       var frozen = !vaultOn && (s.hasSecret || s.unreadable);
       var id = esc(s.id), label = esc(s.name);
       return '<div class="card">' +
@@ -919,8 +921,8 @@
           '<div class="meta">' + esc(s.baseUrl) + '</div>' +
           '<div class="meta">' + esc(how) + '</div>' +
           (warn ? '<div class="bad">' + esc(warn) + '</div>' : '') +
-          (frozen ? '<div class="meta">Edit is off until the key is back, so ' +
-            'the saved login isn\'t lost.</div>' : '') +
+          (frozen ? '<div class="meta">Edit is off until the key is back. ' +
+            'The saved login is kept.</div>' : '') +
         '</div>' +
         '<div class="row" style="margin-top:11px">' +
           '<button data-act="up" data-sid="' + id + '" aria-label="Move ' + label +
@@ -945,7 +947,8 @@
       var inv = r.invite || {};
       // Kept in memory only, never stored: the server keeps just a hash.
       acct.reveal = { code: inv.code, link: r.link || "",
-                      purpose: inv.purpose, expiresAt: inv.expiresAt };
+                      purpose: inv.purpose, expiresAt: inv.expiresAt,
+                      warning: r.serverUrlWarning || "" };
       toast("Invite ready. It is shown once.");
       return acctLoad().then(function () {
         var h = $("inv-title");

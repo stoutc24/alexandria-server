@@ -596,6 +596,21 @@ func (r *AccountRepository) openCredentials(profileID, id string, sealed sql.Nul
 	return &c, nil
 }
 
+// setsSecret is whether the input names any login field at all.
+func (in ServiceInput) setsSecret() bool {
+	return in.Username != nil || in.Password != nil || in.Token != nil || in.APIKey != nil
+}
+
+// clearsSecret is whether it names login fields and every one is empty.
+func (in ServiceInput) clearsSecret() bool {
+	for _, p := range []*string{in.Username, in.Password, in.Token, in.APIKey} {
+		if p != nil && strings.TrimSpace(*p) != "" {
+			return false
+		}
+	}
+	return in.setsSecret()
+}
+
 func applyInput(c *ServiceCredentials, in ServiceInput) {
 	if in.Username != nil {
 		c.Username = strings.TrimSpace(*in.Username)
@@ -744,16 +759,33 @@ func (r *AccountRepository) UpdateService(profileID, id string, in ServiceInput,
 	if err := validateInput(&in); err != nil {
 		return nil, err
 	}
+	newSealed := sealed
 	c, err := r.openCredentials(profileID, id, sealed)
-	if err != nil {
-		// A login that will not open (the key changed) is replaced
-		// wholesale by whatever the admin sends now.
-		c = &ServiceCredentials{}
-	}
-	applyInput(c, in)
-	newSealed, err := r.sealCredentials(profileID, id, *c)
-	if err != nil {
-		return nil, err
+	switch {
+	case err == nil:
+		applyInput(c, in)
+		if newSealed, err = r.sealCredentials(profileID, id, *c); err != nil {
+			return nil, err
+		}
+	case !in.setsSecret():
+		// The login cannot be read here — no secrets key, or a key that
+		// changed since it was saved — and this edit does not touch it (a
+		// new name, a new address). It stays exactly as stored: there when
+		// the key comes back, still flagged for the admin to enter again if
+		// the key changed. Writing back what could be read — nothing —
+		// erased it.
+	case in.clearsSecret():
+		// Cleared on purpose (the login kind changed): forgetting it needs
+		// no key.
+		newSealed = sql.NullString{}
+	default:
+		// New secrets over a login that will not open replace it whole,
+		// which needs the key.
+		var fresh ServiceCredentials
+		applyInput(&fresh, in)
+		if newSealed, err = r.sealCredentials(profileID, id, fresh); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := database.DB.Exec(`
 		UPDATE account_services SET service_type = ?, name = ?, base_url = ?, login_kind = ?,
