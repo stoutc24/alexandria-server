@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stoutsolutions/alexandria-server/internal/database"
 	"github.com/stoutsolutions/alexandria-server/internal/vault"
@@ -506,5 +507,33 @@ func TestAPlexPickMustBeWhole(t *testing.T) {
 	if _, err := noKey.AddService(gran.ID, ServiceInput{Type: "plex", LoginKind: "plexuser", Token: str("k"),
 		Plex: pickedGrandma()}, now); err != ErrVaultOff {
 		t.Fatalf("no secrets key: %v", err)
+	}
+}
+
+// Long names are cut between characters, never inside one.
+func TestLongNamesAreCutBetweenCharacters(t *testing.T) {
+	long := strings.Repeat("a", 79) + "é" + "xyz" // é straddles byte 80
+	if got := clip(long, 80); got != strings.Repeat("a", 79) || !utf8.ValidString(got) {
+		t.Fatalf("clip split a character: %q", got)
+	}
+	if got := clip("Grand-mère", 80); got != "Grand-mère" {
+		t.Fatalf("short name changed: %q", got)
+	}
+	acc, profiles := newAccountsDB(t, true)
+	gran, _ := profiles.Create("Grandma")
+	pick := pickedGrandma()
+	pick.UserTitle = strings.Repeat("ü", 41) // 82 bytes
+	pick.ServerName = strings.Repeat("ß", 41)
+	s, err := acc.AddService(gran.ID, ServiceInput{
+		Type: "plex", Name: strings.Repeat("é", 45), LoginKind: "plexuser",
+		Token: str("k"), Plex: pick,
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{s.Name, s.Plex.UserTitle, s.Plex.ServerName} {
+		if !utf8.ValidString(v) || len(v) > 80 {
+			t.Fatalf("stored name %q (%d bytes)", v, len(v))
+		}
 	}
 }

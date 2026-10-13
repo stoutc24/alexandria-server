@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/stoutsolutions/alexandria-server/internal/database"
@@ -547,11 +548,17 @@ var plexServerIDRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 // relay, IPv6); a dozen is room for all of them and no more.
 const maxPlexConnections = 12
 
+// clip keeps at most n bytes of s, cut between characters: Plex names
+// and the names an admin types are often not ASCII, and a byte cut could
+// split one ("Grand-mère") into invalid UTF-8.
 func clip(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
+	if len(s) <= n {
+		return s
 	}
-	return s
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // normalize checks a picked Plex person and tidies it: addresses that are
@@ -821,7 +828,7 @@ func validateInput(in *ServiceInput) error {
 		in.Name = ServiceTypes[in.Type]
 	}
 	if len(in.Name) > 80 {
-		in.Name = in.Name[:80]
+		in.Name = clip(in.Name, 80)
 	}
 	return nil
 }
