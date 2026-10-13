@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Plex picker helpers: browser test</title>
+</head>
+<body>
+<!--
+  Tests the admin page's Plex picker helpers (the "plex-pure" block in
+  ../index.html) in a real browser, against fixtures shaped like plex.tv's
+  answers. It reads ../index.html itself, so it always tests the page as it
+  is now. From the repository root:
+
+    internal/adminui/testdata/run_plex_picker_test.sh
+
+  which runs headless Chrome with --allow-file-access-from-files (so this
+  file may read ../index.html) and --dump-dom, and checks the RESULT line.
+-->
+<pre id="result">RUNNING</pre>
+<script>
+(function () {
+  "use strict";
+  var lines = [], passed = 0, failed = 0;
+
+  function check(name, ok, detail) {
+    if (ok) {
+      passed++;
+      lines.push("PASS " + name);
+    } else {
+      failed++;
+      lines.push("FAIL " + name + (detail === undefined ? "" : " :: " + detail));
+    }
+  }
+  function same(name, got, want) {
+    var g = JSON.stringify(got), w = JSON.stringify(want);
+    check(name, g === w, "got " + g + " want " + w);
+  }
+  function throwsPlain(name, fn, want) {
+    try {
+      fn();
+      check(name, false, "did not throw");
+    } catch (e) {
+      check(name, !!e && e.plain === true && (want === undefined || e.message === want),
+            "threw " + (e && e.message) + " (plain: " + (e && e.plain) + ")");
+    }
+  }
+  function byKey(list, key, value) {
+    for (var i = 0; i < list.length; i++) if (list[i][key] === value) return list[i];
+    return null;
+  }
+
+  // Anything that runs a hostile name as markup trips this.
+  window.alert = function (m) { check("no alert ever fires", false, String(m)); };
+  var HOSTILE = "<img src=x onerror=alert(1)>";
+  var SERVER_ID = "5d776825e9c9b9b6e8f1a2b3c4d5e6f708192a3b";
+  var HOSTILE_ID = "aaaa1111bbbb2222cccc3333dddd4444eeee5555";
+
+  // ---- fixtures, shaped like plex.tv's answers ----------------------
+  // GET https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1
+  var RESOURCES = [
+    { name: "StoutOffice", product: "Plex Media Server", productVersion: "1.41.3.9314-a0bfb8370",
+      platform: "Linux", platformVersion: "6.8.0-45-generic", device: "PC",
+      clientIdentifier: SERVER_ID, createdAt: "2019-03-02T18:21:40Z",
+      lastSeenAt: "2026-10-13T15:02:11Z", provides: "server", ownerId: null,
+      sourceTitle: null, publicAddress: "203.0.113.7",
+      accessToken: "OWNER-SERVER-TOKEN-never-kept", owned: true, home: false,
+      synced: false, relay: true, presence: true, httpsRequired: false,
+      publicAddressMatches: true, dnsRebindingProtection: false, natLoopbackSupported: false,
+      connections: [
+        { protocol: "https", address: "192.168.1.9", port: 32400,
+          uri: "https://192-168-1-9.abc123.plex.direct:32400", local: true, relay: false, IPv6: false },
+        { protocol: "https", address: "203.0.113.7", port: 32400,
+          uri: "https://203-0-113-7.abc123.plex.direct:32400", local: false, relay: false, IPv6: false },
+        { protocol: "https", address: "2001:db8::9", port: 32400,
+          uri: "https://2001-db8--9.abc123.plex.direct:32400", local: false, relay: false, IPv6: true },
+        { protocol: "https", address: "198.51.100.20", port: 8443,
+          uri: "https://198-51-100-20.def456.plex.direct:8443", local: false, relay: true, IPv6: false },
+        { protocol: "http", address: "192.168.1.9", port: 32400,
+          uri: "http://192.168.1.9:32400", local: true, relay: false, IPv6: false }
+      ] },
+    // A server shared WITH the admin by someone else: not theirs to share.
+    { name: "Dad's Server", product: "Plex Media Server", provides: "server", owned: false,
+      clientIdentifier: "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+      accessToken: "FRIEND-SERVER-TOKEN", sourceTitle: "dad",
+      connections: [{ uri: "https://10-0-0-5.fff000.plex.direct:32400", local: false, relay: false }] },
+    // Players and apps signed in to the admin's account.
+    { name: "Living Room", product: "Plex for Apple TV", provides: "client,player,pubsub-player",
+      owned: true, clientIdentifier: "tv-0001", connections: [] },
+    { name: "Chris's iPhone", product: "Plexamp", provides: "client,player", owned: true,
+      clientIdentifier: "phone-0002", connections: [{ uri: "http://192.168.1.40:32500", local: true }] },
+    // A second owned server: a hostile name, "server" not first in provides,
+    // and addresses that are not http(s) or not addresses at all.
+    { name: HOSTILE, product: "Plex Media Server", provides: "client, server", owned: true,
+      clientIdentifier: HOSTILE_ID,
+      connections: [
+        { uri: "https://10-0-0-2.zzz999.plex.direct:32400", local: true, relay: false },
+        { uri: "javascript:alert(1)", local: false, relay: false },
+        { uri: "ftp://10.0.0.2/", local: true },
+        { local: true }, null, "https://not-an-object.example"
+      ] },
+    // Owned, but Plex lists no address for it.
+    { name: "Cabin", product: "Plex Media Server", provides: "server", owned: true,
+      clientIdentifier: "cabin-0003", connections: [] },
+    // owned must be the boolean true.
+    { name: "Truthy", provides: "server", owned: "1", clientIdentifier: "truthy-0004", connections: [] }
+  ];
+
+  // GET https://plex.tv/api/servers/<id>/shared_servers (XML). Attribute
+  // order differs from one element to the next on purpose.
+  var SHARED_XML =
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<MediaContainer friendlyName="myPlex" identifier="com.plexapp.plugins.myplex" ' +
+      'machineIdentifier="' + SERVER_ID + '" size="11">\n' +
+    // A Home user (managed: no username of their own).
+    '  <SharedServer id="9001" username="" email="" userID="42" accessToken="key-grandma" ' +
+      'name="StoutOffice" acceptedAt="1696000000" invitedAt="1695990000" allowSync="1" ' +
+      'allowCameraUpload="0" allowChannels="0" allowTuners="0" allowSubtitleAdmin="0" owned="0" ' +
+      'allLibraries="1" filterAll="" filterMovies="" filterMusic="" filterPhotos="" filterTelevision="">\n' +
+    '    <Section id="1" key="1" title="Movies" type="movie" shared="1"/>\n' +
+    '    <Section id="2" key="2" title="TV Shows" type="show" shared="1"/>\n' +
+    '  </SharedServer>\n' +
+    // A friend, attributes in another order.
+    '  <SharedServer acceptedAt="1697000000" accessToken="key-bob" userID="1002" ' +
+      'email="bob@example.com" username="bobsmith" id="9002" name="StoutOffice" owned="0" allowSync="0"/>\n' +
+    // Not accepted yet.
+    '  <SharedServer invitedAt="1697100000" id="9003" userID="1003" username="carol" ' +
+      'email="carol@example.com" accessToken="key-carol" acceptedAt="" name="StoutOffice"/>\n' +
+    // No key: left out.
+    '  <SharedServer id="9004" userID="1004" username="dave" email="dave@example.com" ' +
+      'acceptedAt="1697200000" name="StoutOffice"/>\n' +
+    // A Home user whose Home title is hostile.
+    '  <SharedServer name="StoutOffice" acceptedAt="1697300000" accessToken="key-hostile" ' +
+      'email="" username="" userID="43" id="9005"/>\n' +
+    // A friend known only by email.
+    '  <SharedServer id="9006" userID="1006" username="" email="erin@example.com" ' +
+      'accessToken="key-erin" acceptedAt="1697400000" name="StoutOffice"/>\n' +
+    // acceptedAt="0" is not an acceptance.
+    '  <SharedServer id="9007" userID="1007" username="frank" email="frank@example.com" ' +
+      'accessToken="key-frank" acceptedAt="0" name="StoutOffice"/>\n' +
+    // Not accepted AND no key: left out.
+    '  <SharedServer id="9008" userID="1008" username="gina" email="gina@example.com" ' +
+      'invitedAt="1697500000" name="StoutOffice"/>\n' +
+    // A user id that is not a number: left out.
+    '  <SharedServer id="9009" userID="not-a-number" username="mallory" ' +
+      'accessToken="key-mallory" acceptedAt="1697600000"/>\n' +
+    // A friend whose username is markup.
+    '  <SharedServer id="9010" userID="1010" username="&lt;b&gt;henry&lt;/b&gt;" ' +
+      'email="henry@example.com" accessToken="key-henry" acceptedAt="1697700000" name="StoutOffice"/>\n' +
+    // A Home user with a Plex account of their own: the Home title wins.
+    '  <SharedServer id="9011" userID="1011" username="teen_kid" email="teen@example.com" ' +
+      'accessToken="key-teen" acceptedAt="1697800000" name="StoutOffice"/>\n' +
+    '</MediaContainer>\n';
+
+  // GET https://plex.tv/api/home/users (XML)
+  var HOME_XML =
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<MediaContainer friendlyName="myPlex" identifier="com.plexapp.plugins.myplex" ' +
+      'machineIdentifier="' + SERVER_ID + '" totalSize="4" size="4">\n' +
+    '  <User id="1" uuid="a1b2c3d4e5f60718" admin="1" guest="0" restricted="0" protected="1" ' +
+      'title="Chris" username="chris" email="chris@example.com" ' +
+      'thumb="https://plex.tv/users/a1b2c3d4e5f60718/avatar?c=1"/>\n' +
+    '  <User title="Grandma" restricted="1" admin="0" id="42" uuid="b2c3d4e5f6071829" guest="0" ' +
+      'protected="0" username="" email=""/>\n' +
+    '  <User id="43" uuid="c3d4e5f60718293a" admin="0" guest="0" restricted="1" protected="0" ' +
+      'title="&lt;img src=x onerror=alert(1)&gt;" username="" email=""/>\n' +
+    '  <User email="teen@example.com" username="teen_kid" title="Teen Room" id="1011" ' +
+      'uuid="d4e5f60718293a4b" admin="0" guest="0" restricted="0" protected="1"/>\n' +
+    '</MediaContainer>\n';
+
+  try {
+    // ---- load the helpers from the page itself ----------------------
+    var x = new XMLHttpRequest();
+    x.open("GET", "../index.html", false);
+    x.send();
+    var page = x.responseText || "";
+    var begin = page.indexOf("// ==== plex-pure: begin ====");
+    var end = page.indexOf("// ==== plex-pure: end ====");
+    if (begin < 0 || end < begin) {
+      throw new Error("plex-pure markers not found in ../index.html " +
+                      "(run with --allow-file-access-from-files)");
+    }
+    var plexPure = new Function(page.slice(begin, end) + "\nreturn plexPure;")();
+
+    // ---- headers ----
+    same("headers without a token carry no X-Plex-Token",
+      plexPure.headers("cid-1", "", undefined),
+      { "Accept": "application/json", "X-Plex-Product": "Alexandria Companion",
+        "X-Plex-Version": "1.0", "X-Plex-Platform": "Web",
+        "X-Plex-Device-Name": "Alexandria admin page", "X-Plex-Client-Identifier": "cid-1" });
+    same("headers with a token, for XML",
+      plexPure.headers("cid-1", "TOK", "application/xml"),
+      { "Accept": "application/xml", "X-Plex-Product": "Alexandria Companion",
+        "X-Plex-Version": "1.0", "X-Plex-Platform": "Web",
+        "X-Plex-Device-Name": "Alexandria admin page", "X-Plex-Client-Identifier": "cid-1",
+        "X-Plex-Token": "TOK" });
+
+    // ---- the sign-in page address ----
+    same("authURL is Plex's page with the client id, code and product",
+      plexPure.authURL("2f1d0c9e-8a7b-4c6d-9e5f-0a1b2c3d4e5f", "k9X2mQ7pL4vR8sT1wY6zA3bC5"),
+      "https://app.plex.tv/auth#?clientID=2f1d0c9e-8a7b-4c6d-9e5f-0a1b2c3d4e5f" +
+      "&code=k9X2mQ7pL4vR8sT1wY6zA3bC5&context%5Bdevice%5D%5Bproduct%5D=Alexandria%20Companion");
+    same("authURL encodes what it is given",
+      plexPure.authURL("a b", "c&d=e#f"),
+      "https://app.plex.tv/auth#?clientID=a%20b&code=c%26d%3De%23f" +
+      "&context%5Bdevice%5D%5Bproduct%5D=Alexandria%20Companion");
+
+    // ---- client id ----
+    var zeros = new Uint8Array(16), ones = new Uint8Array(16);
+    for (var i = 0; i < 16; i++) ones[i] = 255;
+    same("uuid of zero bytes", plexPure.uuid(zeros), "00000000-0000-4000-8000-000000000000");
+    same("uuid of 0xff bytes", plexPure.uuid(ones), "ffffffff-ffff-4fff-bfff-ffffffffffff");
+    var v4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    var allV4 = true;
+    for (var n = 0; n < 50; n++) {
+      if (!v4.test(plexPure.uuid(crypto.getRandomValues(new Uint8Array(16))))) allV4 = false;
+    }
+    check("uuid of random bytes is always a version 4 UUID", allV4);
+
+    // ---- servers from resources ----
+    var servers = plexPure.servers(RESOURCES);
+    same("servers: only owned Plex Media Servers (no players, no shared-with-me, owned must be true)",
+      servers.map(function (s) { return s.id; }).slice().sort(),
+      [HOSTILE_ID, SERVER_ID, "cabin-0003"].sort());
+    var stout = byKey(servers, "id", SERVER_ID);
+    var hostileServer = byKey(servers, "id", HOSTILE_ID);
+    var cabin = byKey(servers, "id", "cabin-0003");
+    check("servers: sorted by name", servers.indexOf(cabin) < servers.indexOf(stout));
+    same("servers: every address, in Plex's order, with local and relay",
+      stout.connections,
+      [ { uri: "https://192-168-1-9.abc123.plex.direct:32400", local: true, relay: false },
+        { uri: "https://203-0-113-7.abc123.plex.direct:32400", local: false, relay: false },
+        { uri: "https://2001-db8--9.abc123.plex.direct:32400", local: false, relay: false },
+        { uri: "https://198-51-100-20.def456.plex.direct:8443", local: false, relay: true },
+        { uri: "http://192.168.1.9:32400", local: true, relay: false } ]);
+    same("servers: only http(s) addresses survive",
+      hostileServer.connections,
+      [ { uri: "https://10-0-0-2.zzz999.plex.direct:32400", local: true, relay: false } ]);
+    same("servers: a hostile name is kept as plain text", hostileServer.name, HOSTILE);
+    same("servers: an owned server with no address is still listed", cabin.connections, []);
+    check("servers: no resource access token is ever kept",
+      JSON.stringify(servers).indexOf("SERVER-TOKEN") < 0);
+    throwsPlain("servers: an answer that is not a list", function () {
+      plexPure.servers({ errors: [{ code: 1001, message: "User could not be authenticated" }] });
+    }, "Plex sent an answer this page can't read. Try again.");
+    throwsPlain("servers: no answer at all", function () { plexPure.servers(null); });
+
+    // ---- shared_servers and Home users XML ----
+    var shared = plexPure.shared(SHARED_XML);
+    same("shared: one entry per SharedServer", shared.length, 11);
+    same("shared: attributes read by name, whatever their order",
+      byKey(shared, "userId", "1002"),
+      { userId: "1002", username: "bobsmith", email: "bob@example.com",
+        accessToken: "key-bob", acceptedAt: "1697000000" });
+    same("shared: a missing attribute reads as empty",
+      byKey(shared, "userId", "1004").accessToken, "");
+    same("shared: escaped markup in XML reads back as plain text",
+      byKey(shared, "userId", "1010").username, "<b>henry</b>");
+    var home = plexPure.home(HOME_XML);
+    same("home: every Home user, read by name",
+      home, [ { id: "1", title: "Chris", username: "chris" },
+              { id: "42", title: "Grandma", username: "" },
+              { id: "43", title: HOSTILE, username: "" },
+              { id: "1011", title: "Teen Room", username: "teen_kid" } ]);
+    throwsPlain("shared: text that is not XML", function () { plexPure.shared("Gateway Timeout"); },
+      "Plex sent an answer this page can't read. Try again.");
+    throwsPlain("shared: an empty answer", function () { plexPure.shared(""); });
+    throwsPlain("home: text that is not XML", function () { plexPure.home("<MediaContainer"); });
+    same("shared: well-formed XML without SharedServer is nobody",
+      plexPure.shared("<html><body>Bad gateway</body></html>"), []);
+
+    // ---- the people list ----
+    var people = plexPure.people(shared, home);
+    same("people: who is listed (no key, no accepted share with no key, bad id: left out)",
+      people.map(function (p) { return p.userId; }).slice().sort(function (a, b) { return a - b; }),
+      [42, 43, 1002, 1003, 1006, 1007, 1010, 1011]);
+    same("people: Home first",
+      people.slice(0, 3).map(function (p) { return p.tag; }), ["Home", "Home", "Home"]);
+    same("people: then friends",
+      people.slice(3).map(function (p) { return p.tag; }),
+      ["Friend", "Friend", "Friend", "Friend", "Friend"]);
+    var homeNames = people.slice(0, 3).map(function (p) { return p.name; });
+    check("people: Home sorted by name", homeNames.indexOf("Grandma") < homeNames.indexOf("Teen Room"));
+    var friendNames = people.slice(3).map(function (p) { return p.name; });
+    same("people: friends sorted by name (letters)",
+      friendNames.filter(function (nm) { return /^[a-z]/i.test(nm); }),
+      ["bobsmith", "carol", "erin@example.com", "frank"]);
+    same("people: a Home user shows their Home title",
+      byKey(people, "userId", 42), { userId: 42, name: "Grandma", home: true, tag: "Home",
+                                      accepted: true, key: "key-grandma" });
+    same("people: the Home title wins over a username", byKey(people, "userId", 1011).name, "Teen Room");
+    same("people: a friend shows their username",
+      byKey(people, "userId", 1002), { userId: 1002, name: "bobsmith", home: false, tag: "Friend",
+                                        accepted: true, key: "key-bob" });
+    same("people: a friend with no username shows their email", byKey(people, "userId", 1006).name,
+      "erin@example.com");
+    same("people: a hostile Home title is kept as plain text", byKey(people, "userId", 43).name, HOSTILE);
+    same("people: markup in a username is kept as plain text", byKey(people, "userId", 1010).name,
+      "<b>henry</b>");
+    check("people: an empty acceptedAt is not accepted", byKey(people, "userId", 1003).accepted === false);
+    check("people: acceptedAt 0 is not accepted", byKey(people, "userId", 1007).accepted === false);
+    check("people: the owner is not listed", !byKey(people, "userId", 1));
+    var unlabelled = plexPure.people(shared, null);
+    same("people without the Home list: nobody labelled",
+      unlabelled.map(function (p) { return p.tag; }).filter(Boolean), []);
+    same("people without the Home list: a managed user falls back to their id",
+      byKey(unlabelled, "userId", 42).name, "Plex user 42");
+    same("people of nobody", plexPure.people([], []), []);
+
+    // ---- what this server is sent ----
+    var grandma = byKey(people, "userId", 42), bob = byKey(people, "userId", 1002);
+    var carol = byKey(people, "userId", 1003), hostile = byKey(people, "userId", 43);
+    var stoutPlex = function (userId, title) {
+      return { serverId: SERVER_ID, serverName: "StoutOffice", userId: userId, userTitle: title,
+               connections: stout.connections };
+    };
+    same("body add: the person's key and pick, no address",
+      plexPure.body("add", "", stout, grandma),
+      { type: "plex", name: "Plex", loginKind: "plexuser", token: "key-grandma",
+        plex: stoutPlex(42, "Grandma") });
+    same("body repick: just name, pick and key",
+      plexPure.body("repick", "  Grandma's Plex  ", stout, bob),
+      { name: "Grandma's Plex", plex: stoutPlex(1002, "bobsmith"), token: "key-bob" });
+    same("body convert: becomes a picked person, the old login cleared",
+      plexPure.body("convert", "Plex", hostileServer, hostile),
+      { type: "plex", name: "Plex", loginKind: "plexuser", token: "key-hostile",
+        plex: { serverId: HOSTILE_ID, serverName: HOSTILE, userId: 43, userTitle: HOSTILE,
+                connections: hostileServer.connections },
+        username: "", password: "", apiKey: "" });
+    check("body: never an address of its own",
+      !("baseUrl" in plexPure.body("add", "", stout, grandma)));
+    check("body: no resource token rides along",
+      JSON.stringify(plexPure.body("add", "", stout, grandma)).indexOf("SERVER-TOKEN") < 0);
+    throwsPlain("body: someone who hasn't accepted can't be picked",
+      function () { plexPure.body("add", "", stout, carol); }, "Pick who this is for first.");
+    throwsPlain("body: nobody picked", function () { plexPure.body("add", "", stout, null); });
+    throwsPlain("body: a person without a key",
+      function () { plexPure.body("add", "", stout, { userId: 5, name: "x", accepted: true, key: "" }); });
+    throwsPlain("body: a server with no address",
+      function () { plexPure.body("add", "", cabin, grandma); },
+      "Plex lists no address for this server. Make sure it's on and signed in to Plex, then try again.");
+
+    // ---- errors in plain words ----
+    var p = plexPure.problem;
+    same("problem 401", p({ plexStatus: 401 }), "Plex didn't accept that sign-in. Sign in again.");
+    same("problem 403", p({ plexStatus: 403 }), "Plex didn't accept that sign-in. Sign in again.");
+    same("problem 429", p({ plexStatus: 429 }), "Plex is busy. Wait a minute, then try again.");
+    same("problem 500", p({ plexStatus: 500 }), "Plex had a problem (error 500). Try again in a moment.");
+    same("problem 404", p({ plexStatus: 404 }), "Plex refused that (error 404). Try again.");
+    same("problem offline", p({ offline: true }),
+      "Couldn't reach plex.tv. Check this computer's internet connection, then try again.");
+    same("problem: a plain error says itself", p(plexPure.plain("Some words.")), "Some words.");
+    same("problem: a raw script error is never shown",
+      p(new TypeError("Cannot read properties of undefined (reading 'x')")),
+      "Something went wrong talking to Plex. Try again.");
+    same("problem: nothing at all", p(undefined), "Something went wrong talking to Plex. Try again.");
+  } catch (e) {
+    failed++;
+    lines.push("FAIL harness :: " + (e && (e.stack || e.message) || e));
+  }
+
+  document.getElementById("result").textContent = lines.join("\n") + "\nRESULT " +
+    (failed ? "FAIL" : "PASS") + " " + passed + "/" + (passed + failed);
+})();
+</script>
+</body>
+</html>

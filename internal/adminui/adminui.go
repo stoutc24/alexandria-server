@@ -9,7 +9,10 @@
 //
 // The page itself holds no secrets and is served unauthenticated: it is
 // inert markup until someone types the admin token into it. Every call
-// it makes goes to /api/v1/admin/*, which requires that token.
+// it makes to this server goes to /api/v1/admin/*, which requires that
+// token. The one call beyond this server is the Plex picker's: the
+// admin's BROWSER asks plex.tv who a Plex server is shared with. This
+// server itself never contacts plex.tv.
 package adminui
 
 import (
@@ -42,13 +45,18 @@ func InviteHandler(c *fiber.Ctx) error {
 	return c.SendString(inviteHTML)
 }
 
+// adminCSP is the admin page's Content-Security-Policy. The page loads
+// nothing external and talks to this origin — and, for the Plex picker,
+// to https://plex.tv, from the admin's browser. Nothing broader:
+// adminui_test.go pins it.
+const adminCSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; " +
+	"script-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+	"connect-src 'self' https://plex.tv"
+
 // Handler serves the admin page.
 func Handler(c *fiber.Ctx) error {
 	c.Set("Content-Type", "text/html; charset=utf-8")
-	// The page talks only to this origin and loads nothing external.
-	c.Set("Content-Security-Policy",
-		"default-src 'self'; style-src 'self' 'unsafe-inline'; "+
-			"script-src 'self' 'unsafe-inline'; img-src 'self' data:")
+	c.Set("Content-Security-Policy", adminCSP)
 	c.Set("Referrer-Policy", "no-referrer")
 	c.Set("X-Content-Type-Options", "nosniff")
 	return c.SendString(indexHTML)

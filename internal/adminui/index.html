@@ -137,6 +137,26 @@
     border-radius: 11px; text-align: center; font-size: 12px; font-weight: 700;
     color: var(--accent); background: var(--accent-soft);
   }
+
+  /* The Plex picker (renderPlexBox): built from nodes, never markup. */
+  #sf-classic[hidden], #sf-plex[hidden] { display: none; }
+  #sf-plex { margin-top: 13px; }
+  #sf-plex .row { margin-top: 11px; }
+  #sf-plex p { margin: 8px 0 0; }
+  fieldset.pick { border: 0; margin: 13px 0 0; padding: 0; min-width: 0; }
+  fieldset.pick legend { padding: 0; margin-bottom: 5px; font-size: 13px; color: var(--muted); }
+  label.choice {
+    display: flex; gap: 9px; align-items: baseline; padding: 7px 0;
+    border-top: 1px solid var(--border); cursor: pointer; min-width: 0;
+  }
+  label.choice.off { cursor: default; color: var(--muted); }
+  label.choice input { margin: 0; flex: none; }
+  .tag {
+    display: inline-block; margin-left: 7px; padding: 0 7px; border-radius: 10px;
+    font-size: 11.5px; font-weight: 600; color: var(--muted);
+    border: 1px solid var(--border); white-space: nowrap;
+  }
+  .tag.home { color: var(--accent); border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -630,19 +650,37 @@
     password: "Username + password",
     token: "Token",
     apikey: "API key",
-    none: "Address only — they sign in themselves (e.g. a Plex friend)"
+    none: "Address only — they sign in themselves",
+    plexuser: "Picked from your Plex"
   };
   // One short line under the service picker. Only the services where the
-  // wrong login is a real mistake get one.
+  // wrong login is a real mistake get one — and Plex, which is picked
+  // rather than typed (see "the Plex picker" below).
   var TYPE_HINTS = {
     jellyfin: "Use their own Jellyfin login, never a dashboard API key " +
               "(those are admin-wide).",
     // Not an ABS API key yet: the apps don't sign in with one.
     abs: "Their own Audiobookshelf username and password.",
     kavita: "Their login, or an API key they made in Kavita.",
-    plex: "Plex Home users: a token; friends with their own plex.tv " +
-          "account: Address only."
+    plex: "Sign in with Plex, pick your server, then the person: anyone you " +
+          "share it with, Home users and friends alike. No address or token to type."
   };
+  // The Address box's example, per service.
+  var URL_EXAMPLES = {
+    abs: "https://abs.example.com",
+    jellyfin: "https://jellyfin.example.com",
+    kavita: "https://kavita.example.com",
+    komga: "https://komga.example.com",
+    navidrome: "https://navidrome.example.com",
+    booklore: "https://grimmory.example.com",
+    calibre: "https://calibre.example.com",
+    calibreweb: "https://calibre-web.example.com",
+    storyteller: "https://storyteller.example.com"
+  };
+  function urlExample(type) {
+    return Object.prototype.hasOwnProperty.call(URL_EXAMPLES, type)
+      ? URL_EXAMPLES[type] : "https://server.example.com";
+  }
   var NO_KEY = "This server has no secrets key, so it can't keep service " +
     "logins. People can still sign in and link devices. Set " +
     "<code>ALEXANDRIA_SECRETS_KEY</code> (<code>openssl rand -base64 32</code>) " +
@@ -689,7 +727,9 @@
 
   function blankAcct() {
     // Emptied, not just hidden: a one-time invite code or a typed password
-    // must not sit in the page after the panel is closed.
+    // must not sit in the page after the panel is closed — nor a Plex
+    // sign-in in memory.
+    dropPlexPick();
     ["acct-notice", "acct-status", "acct-services", "acct-form"].forEach(function (id) {
       var el = $(id);
       el._html = null;
@@ -812,6 +852,7 @@
       '<div class="note" style="margin:0 0 4px">' + NO_KEY + '</div>');
     setHTML($("acct-status"), statusHTML(d));
     setHTML($("acct-services"), servicesHTML(d));
+    fillPlexLines(d.services || []);
     // The service being edited was removed elsewhere: nothing to save to.
     if (acct.form && acct.form.mode === "edit" && !findService(acct.form.id)) {
       acct.form = null;
@@ -905,9 +946,11 @@
       }
       var warn = "";
       if (s.unreadable) {
-        warn = vaultOn
-          ? "The server key changed since this was saved — enter it again."
-          : "A login is saved, but this server has no secrets key right now.";
+        warn = !vaultOn
+          ? "A login is saved, but this server has no secrets key right now."
+          : s.loginKind === "plexuser"
+            ? "The server key changed since this was saved — edit it and pick the person again."
+            : "The server key changed since this was saved — enter it again.";
       }
       // With no secrets key the server cannot open the saved login or save a
       // new one. It keeps the stored login through any edit
@@ -915,12 +958,17 @@
       // editing waits for the key; reordering and removing still work.
       var frozen = !vaultOn && (s.hasSecret || s.unreadable);
       var id = esc(s.id), label = esc(s.name);
-      return '<div class="card">' +
+      // A picked Plex person's name, server and address came from plex.tv:
+      // empty slots here, filled as text by fillPlexLines, never as markup.
+      var plexed = s.loginKind === "plexuser";
+      return '<div class="card"' + (plexed ? ' data-plex-card="' + id + '"' : '') + '>' +
         '<div class="wrap"><span class="svc-num">' + (i + 1) + '</span>' +
           '<strong>' + esc(s.name) + '</strong>' +
           (s.name !== tn ? ' <span class="meta">· ' + esc(tn) + '</span>' : '') +
-          '<div class="meta">' + esc(s.baseUrl) + '</div>' +
-          '<div class="meta">' + esc(how) + '</div>' +
+          (plexed ? '<div class="meta" data-plex="url"></div>' +
+                    '<div class="meta" data-plex="who"></div>'
+                  : '<div class="meta">' + esc(s.baseUrl) + '</div>' +
+                    '<div class="meta">' + esc(how) + '</div>') +
           (warn ? '<div class="bad">' + esc(warn) + '</div>' : '') +
           (frozen ? '<div class="meta">Edit is off until the key is back. ' +
             'The saved login is kept.</div>' : '') +
@@ -1060,6 +1108,8 @@
   // ---- the add / edit form ----
   function renderAcctForm() {
     var el = $("acct-form");
+    // A Plex picker belongs to one form: another form, or none, ends it.
+    if (plexPick && plexPick.form !== acct.form) dropPlexPick();
     if (!acct.data) { setHTML(el, ""); return; }
     if (!acct.form) {
       setHTML(el, '<button class="primary" data-act="add">Add a service</button>');
@@ -1118,6 +1168,9 @@
     }).join("");
     // Blank means "the service's own name", for whichever service is picked.
     var nameVal = s && s.name !== types[s.type] ? s.name : "";
+    // A picked Plex person's address came from plex.tv, so it is not put in
+    // this markup; Plex shows no address box anyway.
+    var urlVal = s && s.loginKind !== "plexuser" ? s.baseUrl : "";
 
     return '<div class="card">' +
       '<h4>' + (s ? "Edit " + esc(s.name) : "Add a service") + '</h4>' +
@@ -1128,10 +1181,12 @@
       '<input type="text" id="sf-name" maxlength="80" autocomplete="off" ' +
         'spellcheck="false" placeholder="Defaults to the service name" ' +
         'value="' + esc(nameVal) + '">' +
+      // Everything a typed service needs; hidden for Plex, which is picked.
+      '<div id="sf-classic">' +
       '<label class="field" for="sf-url">Address</label>' +
       '<input type="text" id="sf-url" inputmode="url" autocomplete="off" ' +
         'autocapitalize="off" spellcheck="false" ' +
-        'placeholder="https://abs.example.com" value="' + esc(s ? s.baseUrl : "") + '">' +
+        'placeholder="' + esc(urlExample(type)) + '" value="' + esc(urlVal) + '">' +
       '<label class="field" for="sf-kind">How they sign in</label>' +
       '<select id="sf-kind">' + kindOpts + '</select>' +
       '<div data-kind="password" hidden>' +
@@ -1152,6 +1207,9 @@
         'keep it, or type a new one to replace it.</p>' +
       '<p class="bad" id="sf-lost" hidden>The server key changed since this was ' +
         'saved — enter it again.</p>' +
+      '</div>' +
+      // The Plex picker, drawn by renderPlexBox.
+      '<div id="sf-plex" hidden></div>' +
       '<div class="row" style="margin-top:16px">' +
         '<button class="primary" data-act="save">Save</button>' +
         '<button data-act="cancel-form">Cancel</button>' +
@@ -1167,16 +1225,23 @@
     var hint = TYPE_HINTS[type] || "";
     $("sf-hint").textContent = hint;
     $("sf-hint").hidden = !hint;
+    // Plex is picked, not typed: no address, no way-to-sign-in, no boxes.
+    $("sf-classic").hidden = type === "plex";
+    $("sf-url").placeholder = urlExample(type);
     $("acct-form").querySelectorAll("[data-kind]").forEach(function (g) {
       g.hidden = g.dataset.kind !== kind;
     });
     var same = !!s && kind === s.loginKind && kind !== "none";
     $("sf-keep").hidden = !(same && s.hasSecret && !s.unreadable);
     $("sf-lost").hidden = !(same && s.unreadable);
+    // Moving off Plex ends a Plex sign-in rather than keeping it unseen.
+    if (type !== "plex") dropPlexPick();
+    renderPlexBox();
   }
 
   function saveService() {
     if (acct.busy || !acct.form) return;
+    if ($("sf-type").value === "plex") { savePlex(); return; }
     var f = acct.form;
     var s = f.mode === "edit" ? findService(f.id) : null;
     var types = acct.data.serviceTypes || {};
@@ -1236,6 +1301,722 @@
           : $("acct-form").querySelector('[data-act="add"]');
         if (back) back.focus();
       });
+    });
+  }
+
+  // ---- the Plex picker -----------------------------------------------
+  //
+  // Plex for a person is picked, not typed (owner, 2026-10-13): the admin
+  // signs in to their own Plex on Plex's page, picks their server, then the
+  // person, from everyone that server is shared with. This browser — never
+  // this server, which makes no outbound connections — asks plex.tv for
+  // that person's key to the server and sends it here, where it is sealed
+  // like a password. The page's Content-Security-Policy lets it reach
+  // https://plex.tv and nothing else beyond this server.
+  //
+  // The admin's own Plex sign-in is plexPick.adminToken and nowhere else:
+  // never in storage, the page, a log, or a request to this server. It, and
+  // every person's key, go with plexPick (dropPlexPick) on save, on cancel,
+  // when the form or panel closes, and when the page is hidden. What plex.tv
+  // says (names, emails, server names, addresses) reaches the page as text
+  // nodes only, never as markup.
+
+  // ==== plex-pure: begin ====
+  // The picker's pure half: reading what plex.tv answers and building what
+  // this server is sent. No page, no network, no storage, so
+  // testdata/plex_picker_test.html can lift this block out (between the two
+  // marker lines) and test it in a browser. Keep all it needs inside.
+  var plexPure = (function () {
+    function text(v) { return typeof v === "string" ? v.trim() : ""; }
+
+    // An error already in plain words: shown as it is.
+    function plain(msg) {
+      var e = new Error(msg);
+      e.plain = true;
+      return e;
+    }
+
+    function unreadable() {
+      return plain("Plex sent an answer this page can't read. Try again.");
+    }
+
+    function noAddress() {
+      return plain("Plex lists no address for this server. Make sure it's on " +
+                   "and signed in to Plex, then try again.");
+    }
+
+    function byName(a, b) {
+      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    }
+
+    // Every plex.tv call names this page as a Plex app. token is the
+    // admin's own Plex sign-in, sent as a header: never part of an
+    // address, which would leave it in logs and history.
+    function headers(clientId, token, accept) {
+      var h = {
+        "Accept": accept || "application/json",
+        "X-Plex-Product": "Alexandria Companion",
+        "X-Plex-Version": "1.0",
+        "X-Plex-Platform": "Web",
+        "X-Plex-Device-Name": "Alexandria admin page",
+        "X-Plex-Client-Identifier": clientId
+      };
+      if (token) h["X-Plex-Token"] = token;
+      return h;
+    }
+
+    // Plex's own sign-in page, for one PIN.
+    function authURL(clientId, code) {
+      return "https://app.plex.tv/auth#?clientID=" + encodeURIComponent(clientId) +
+        "&code=" + encodeURIComponent(code) +
+        "&context%5Bdevice%5D%5Bproduct%5D=Alexandria%20Companion";
+    }
+
+    // A random (version 4) UUID from 16 random bytes. Not
+    // crypto.randomUUID, which only https:// pages have; this page is
+    // often plain http:// at home.
+    function uuid(bytes) {
+      var b = Array.prototype.slice.call(bytes, 0, 16);
+      b[6] = (b[6] & 0x0f) | 0x40;
+      b[8] = (b[8] & 0x3f) | 0x80;
+      var h = b.map(function (x) { return (x + 0x100).toString(16).slice(1); }).join("");
+      return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" +
+        h.slice(16, 20) + "-" + h.slice(20, 32);
+    }
+
+    // GET /api/v2/resources (JSON): everything on the admin's Plex account.
+    // Kept: the Plex Media Servers they own, with every http(s) address
+    // Plex lists. Left out: players and apps, and servers other people
+    // share with them. A resource's own access token is never kept.
+    function servers(list) {
+      if (!Array.isArray(list)) throw unreadable();
+      var out = [];
+      list.forEach(function (r) {
+        if (!r || typeof r !== "object" || r.owned !== true) return;
+        var provides = text(r.provides).split(",").map(function (p) { return p.trim(); });
+        var id = text(r.clientIdentifier);
+        if (provides.indexOf("server") < 0 || !id) return;
+        var conns = [];
+        (Array.isArray(r.connections) ? r.connections : []).forEach(function (c) {
+          var uri = c ? text(c.uri) : "";
+          if (!/^https?:\/\/\S+$/i.test(uri)) return;
+          conns.push({ uri: uri, local: c.local === true, relay: c.relay === true });
+        });
+        out.push({ id: id, name: text(r.name) || "Plex Media Server", connections: conns });
+      });
+      return out.sort(byName);
+    }
+
+    // plex.tv's older routes answer in XML, read with DOMParser: the
+    // document it makes is inert, so nothing in it runs or loads.
+    function elements(xml, tag) {
+      var doc = new DOMParser().parseFromString(String(xml == null ? "" : xml),
+                                                "application/xml");
+      if (doc.getElementsByTagName("parsererror").length) throw unreadable();
+      return Array.prototype.slice.call(doc.getElementsByTagName(tag));
+    }
+
+    function attr(el, name) { return text(el.getAttribute(name)); }
+
+    // GET /api/servers/<id>/shared_servers: a SharedServer for each person
+    // the server is shared with, carrying their own key to it. Read by
+    // attribute name, so the order Plex writes them in does not matter.
+    function shared(xml) {
+      return elements(xml, "SharedServer").map(function (e) {
+        return { userId: attr(e, "userID"), username: attr(e, "username"),
+                 email: attr(e, "email"), accessToken: attr(e, "accessToken"),
+                 acceptedAt: attr(e, "acceptedAt") };
+      });
+    }
+
+    // GET /api/home/users: the people in the admin's Plex Home.
+    function home(xml) {
+      return elements(xml, "User").map(function (e) {
+        return { id: attr(e, "id"), title: attr(e, "title"), username: attr(e, "username") };
+      });
+    }
+
+    // Who can be picked: Home first, then by name. A share without a key
+    // is left out (there is nothing to hand over); one not accepted yet is
+    // listed but cannot be picked. The owner is never among them: Plex
+    // lists only the people a server is shared WITH. homeList null: the
+    // Home couldn't be read, so nobody is labelled Home or Friend.
+    function people(sharedList, homeList) {
+      var inHome = Object.create(null);
+      (homeList || []).forEach(function (u) { if (u.id) inHome[u.id] = u; });
+      var out = [];
+      (sharedList || []).forEach(function (s) {
+        if (!/^\d{1,15}$/.test(s.userId) || !s.accessToken) return;
+        var h = inHome[s.userId];
+        out.push({
+          userId: Number(s.userId),
+          name: (h && (h.title || h.username)) || s.username || s.email ||
+                "Plex user " + s.userId,
+          home: !!h,
+          tag: h ? "Home" : homeList ? "Friend" : "",
+          accepted: s.acceptedAt !== "" && s.acceptedAt !== "0",
+          key: s.accessToken
+        });
+      });
+      return out.sort(function (a, b) {
+        return (a.home === b.home ? 0 : a.home ? -1 : 1) || byName(a, b) ||
+          a.userId - b.userId;
+      });
+    }
+
+    // What this server is sent for a pick. mode "add": a new service;
+    // "repick": a picked person picked again; "convert": a service set up
+    // another way becomes a picked one, and nothing the old way stored
+    // stays. token is the PERSON's key to the server. The admin's own Plex
+    // sign-in is not an input here: it never leaves the browser.
+    function body(mode, name, server, person) {
+      if (!server || !person || !person.key || !person.accepted) {
+        throw plain("Pick who this is for first.");
+      }
+      if (!server.connections.length) throw noAddress();
+      var plex = {
+        serverId: server.id,
+        serverName: server.name,
+        userId: person.userId,
+        userTitle: person.name,
+        connections: server.connections.map(function (c) {
+          return { uri: c.uri, local: !!c.local, relay: !!c.relay };
+        })
+      };
+      name = text(name) || "Plex";
+      if (mode === "repick") return { name: name, plex: plex, token: person.key };
+      var b = { type: "plex", name: name, loginKind: "plexuser", token: person.key, plex: plex };
+      if (mode === "convert") {
+        b.username = "";
+        b.password = "";
+        b.apiKey = "";
+      }
+      return b;
+    }
+
+    // Plain words for what went wrong talking to plex.tv; never the raw
+    // error, which tells the admin nothing.
+    function problem(e) {
+      if (e && e.plain) return e.message;
+      if (e && e.offline) {
+        return "Couldn't reach plex.tv. Check this computer's internet connection, " +
+               "then try again.";
+      }
+      var s = (e && e.plexStatus) || 0;
+      if (s === 401 || s === 403) return "Plex didn't accept that sign-in. Sign in again.";
+      if (s === 429) return "Plex is busy. Wait a minute, then try again.";
+      if (s >= 500) return "Plex had a problem (error " + s + "). Try again in a moment.";
+      if (s) return "Plex refused that (error " + s + "). Try again.";
+      return "Something went wrong talking to Plex. Try again.";
+    }
+
+    return { headers: headers, authURL: authURL, uuid: uuid, servers: servers,
+             shared: shared, home: home, people: people, body: body,
+             problem: problem, plain: plain, unreadable: unreadable,
+             noAddress: noAddress };
+  })();
+  // ==== plex-pure: end ====
+
+  var PLEX_CLIENT_KEY = "alexandria-admin-plex-client-id";
+  var PLEX_POLL_MS = 2000;
+  var PLEX_WAIT_MS = 5 * 60 * 1000;
+  var plexPick = null;     // the sign-in under way: at most one, for one form
+  var plexClient = "";     // this browser's id as a Plex app, once read
+
+  // This browser's id as a Plex app. Kept (it is no secret), so the
+  // admin's Plex lists this page once rather than once per sign-in. With
+  // storage off (a private window) it lasts as long as the page.
+  function plexClientId() {
+    if (plexClient) return plexClient;
+    var id = "";
+    try { id = window.localStorage.getItem(PLEX_CLIENT_KEY) || ""; } catch (e) { id = ""; }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)) {
+      id = plexPure.uuid(window.crypto.getRandomValues(new Uint8Array(16)));
+      try { window.localStorage.setItem(PLEX_CLIENT_KEY, id); } catch (e) { /* this page only */ }
+    }
+    plexClient = id;
+    return id;
+  }
+
+  function newPlexPick(form) {
+    return {
+      form: form, step: "waiting", loading: "", adminToken: "",
+      ctl: new AbortController(), timer: 0, popup: null, authUrl: "", blocked: false,
+      servers: [], server: null, people: null, person: null, error: "", retry: ""
+    };
+  }
+
+  // Ends the sign-in: stops the waiting, closes Plex's window, and drops
+  // the admin's Plex token and every person's key.
+  function dropPlexPick() {
+    var ps = plexPick;
+    plexPick = null;
+    if (!ps) return;
+    clearTimeout(ps.timer);
+    try { ps.ctl.abort(); } catch (e) { /* already stopped */ }
+    plexClosePopup(ps);
+    ps.adminToken = "";
+    ps.authUrl = "";
+    ps.servers = [];
+    ps.server = null;
+    ps.people = null;
+    ps.person = null;
+  }
+
+  function plexClosePopup(ps) {
+    var w = ps.popup;
+    ps.popup = null;
+    if (w) {
+      try { w.close(); } catch (e) { /* already gone */ }
+    }
+  }
+
+  // A step whose sign-in was cancelled or replaced must not touch the page.
+  function plexLive(ps) { return plexPick === ps; }
+
+  // One call to plex.tv. A refusal carries plexStatus, an unreachable
+  // plex.tv offline; plexPure.problem() puts either into words.
+  function plexCall(ps, method, url, accept) {
+    return fetch(url, {
+      method: method,
+      headers: plexPure.headers(plexClientId(), ps.adminToken, accept),
+      credentials: "omit",
+      cache: "no-store",
+      referrerPolicy: "no-referrer",
+      signal: ps.ctl.signal
+    }).then(function (res) {
+      if (!res.ok) {
+        var e = new Error("plex.tv answered " + res.status);
+        e.plexStatus = res.status;
+        throw e;
+      }
+      if (accept === "application/xml") return res.text();
+      return res.json().catch(function () { throw plexPure.unreadable(); });
+    }, function (e) {
+      if (e && e.name === "AbortError") throw e;
+      var x = new Error("plex.tv could not be reached");
+      x.offline = true;
+      throw x;
+    });
+  }
+
+  function plexFail(ps, e, retry) {
+    if (!plexLive(ps) || (e && e.name === "AbortError")) return;
+    clearTimeout(ps.timer);
+    plexClosePopup(ps);
+    ps.step = "error";
+    ps.error = plexPure.problem(e);
+    // No Plex sign-in yet, or Plex refused it: the way on is signing in.
+    ps.retry = !ps.adminToken || (e && e.plexStatus === 401) ? "signin" : retry || "signin";
+    renderPlexBox();
+  }
+
+  // "Sign in with Plex", "Pick again", "Sign in again".
+  function plexSignIn() {
+    var f = acct.form;
+    if (!f || acct.busy) return;
+    dropPlexPick();
+    f.plexSay = "";
+    var ps = plexPick = newPlexPick(f);
+    // The window opens now, inside the click: a browser blocks one opened
+    // later, once the PIN is back. It starts blank and is cut off from this
+    // page before Plex's page loads in it.
+    var w = null;
+    try { w = window.open("about:blank", "alexandria-plex", "width=520,height=720"); } catch (e) { w = null; }
+    if (w) {
+      try { w.opener = null; } catch (e) { /* nothing to cut */ }
+    }
+    ps.popup = w;
+    renderPlexBox();
+    plexCall(ps, "POST", "https://plex.tv/api/v2/pins?strong=true", "application/json")
+      .then(function (pin) {
+        if (!plexLive(ps)) return;
+        if (!pin || pin.id == null || typeof pin.code !== "string" || !pin.code) {
+          throw plexPure.unreadable();
+        }
+        ps.authUrl = plexPure.authURL(plexClientId(), pin.code);
+        var shown = false;
+        if (w && !w.closed) {
+          try { w.location.href = ps.authUrl; shown = true; } catch (e) { shown = false; }
+        }
+        ps.blocked = !shown;
+        renderPlexBox();
+        var started = Date.now();
+        ps.timer = setTimeout(function () { plexPoll(ps, pin.id, started); }, PLEX_POLL_MS);
+      })
+      .catch(function (e) { plexFail(ps, e, "signin"); });
+  }
+
+  // Asks Plex every two seconds whether the admin has signed in, for five
+  // minutes at most.
+  function plexPoll(ps, pinId, started) {
+    if (!plexLive(ps)) return;
+    if (Date.now() - started >= PLEX_WAIT_MS) {
+      plexFail(ps, plexPure.plain("The Plex sign-in timed out. Start again when you're ready."));
+      return;
+    }
+    function again() {
+      ps.timer = setTimeout(function () { plexPoll(ps, pinId, started); }, PLEX_POLL_MS);
+    }
+    plexCall(ps, "GET", "https://plex.tv/api/v2/pins/" + encodeURIComponent(pinId),
+             "application/json")
+      .then(function (pin) {
+        if (!plexLive(ps)) return;
+        var token = pin && typeof pin.authToken === "string" ? pin.authToken : "";
+        if (!token) { again(); return; }
+        ps.adminToken = token;
+        plexClosePopup(ps);
+        plexLoadServers(ps);
+      }, function (e) {
+        if (!plexLive(ps) || (e && e.name === "AbortError")) return;
+        if (e.plexStatus === 404) {
+          plexFail(ps, plexPure.plain("That Plex sign-in expired. Start again."));
+        } else if (e.offline || e.plexStatus === 429 || e.plexStatus >= 500) {
+          again();   // a blip: keep waiting, within the five minutes
+        } else {
+          plexFail(ps, e);
+        }
+      })
+      .catch(function (e) { plexFail(ps, e); });
+  }
+
+  function plexLoadServers(ps) {
+    ps.step = "loading";
+    ps.loading = "servers";
+    renderPlexBox();
+    plexCall(ps, "GET", "https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1" +
+             "&includeIPv6=1", "application/json")
+      .then(function (list) {
+        if (!plexLive(ps)) return;
+        ps.servers = plexPure.servers(list);
+        if (!ps.servers.length) {
+          ps.step = "noserver";
+          renderPlexBox();
+        } else if (ps.servers.length === 1) {
+          plexChooseServer(ps, 0);
+        } else {
+          ps.step = "list";
+          renderPlexBox();
+        }
+      })
+      .catch(function (e) { plexFail(ps, e, "servers"); });
+  }
+
+  // The people one server is shared with: shared_servers carries each
+  // person's key; the Home list only says who is Home and who a friend.
+  function plexChooseServer(ps, i) {
+    var server = ps.servers[i];
+    if (!plexLive(ps) || !server) return;
+    ps.form.plexSay = "";
+    ps.server = server;
+    ps.people = null;
+    ps.person = null;
+    if (!server.connections.length) {
+      plexFail(ps, plexPure.noAddress(), "people");
+      return;
+    }
+    ps.step = "loading";
+    ps.loading = "people";
+    renderPlexBox();
+    var base = "https://plex.tv/api/";
+    Promise.all([
+      plexCall(ps, "GET", base + "servers/" + encodeURIComponent(server.id) + "/shared_servers",
+               "application/xml").then(plexPure.shared),
+      plexCall(ps, "GET", base + "home/users", "application/xml").then(plexPure.home)
+        .catch(function (e) {
+          if (e && e.name === "AbortError") throw e;
+          return null;   // no Home, or unreadable: nobody is labelled
+        })
+    ]).then(function (r) {
+      if (!plexLive(ps) || ps.server !== server) return;
+      ps.people = plexPure.people(r[0], r[1]);
+      ps.step = "list";
+      ps.retry = "people";
+      renderPlexBox();
+    }).catch(function (e) {
+      if (ps.server === server) plexFail(ps, e, "people");
+    });
+  }
+
+  function plexRetry() {
+    var ps = plexPick;
+    if (!ps || acct.busy) return;
+    if (ps.retry === "servers" && ps.adminToken) {
+      plexLoadServers(ps);
+    } else if (ps.retry === "people" && ps.adminToken && ps.server) {
+      plexChooseServer(ps, ps.servers.indexOf(ps.server));
+    } else {
+      plexSignIn();
+    }
+  }
+
+  // The picker's own Cancel: the Plex sign-in ends, the form stays open.
+  function plexCancel() {
+    if (acct.busy) return;
+    dropPlexPick();
+    if (acct.form) acct.form.plexSay = "";
+    renderPlexBox();
+    var b = $("sf-plex") && $("sf-plex").querySelector('[data-act="plex-signin"]');
+    if (b) b.focus();
+  }
+
+  function plexServerPicked(i) {
+    if (plexPick && !acct.busy) plexChooseServer(plexPick, i);
+  }
+
+  function plexPersonPicked(i) {
+    var ps = plexPick;
+    var p = ps && ps.people && ps.people[i];
+    if (!p || !p.accepted) return;
+    ps.person = p;
+    if (ps.form.plexSay) {
+      ps.form.plexSay = "";
+      renderPlexBox();
+    }
+  }
+
+  // A node from text and nodes. Strings become text nodes, never markup:
+  // this is how plex.tv's names reach the page.
+  function plexNode(tag, cls, kids) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    (kids || []).forEach(function (k) {
+      if (k != null) n.appendChild(typeof k === "string" ? document.createTextNode(k) : k);
+    });
+    return n;
+  }
+
+  function plexSays(cls, kids, role) {
+    var p = plexNode("p", cls, kids);
+    if (role) p.setAttribute("role", role);
+    return p;
+  }
+
+  function plexButton(act, label, primary) {
+    var b = plexNode("button", primary ? "primary" : "", [label]);
+    b.type = "button";
+    b.setAttribute("data-act", act);
+    b.setAttribute("data-fk", act);
+    return b;
+  }
+
+  function plexLink(href, label) {
+    var a = plexNode("a", "", [label]);
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    return a;
+  }
+
+  function plexChoice(name, i, checked, off, kids) {
+    var input = document.createElement("input");
+    input.type = "radio";
+    input.name = name;
+    input.value = String(i);
+    input.checked = !!checked;
+    input.disabled = !!off;
+    input.setAttribute("data-fk", name + "-" + i);
+    return plexNode("label", "choice" + (off ? " off" : ""),
+                    [input, plexNode("span", "wrap", kids)]);
+  }
+
+  // Draws the picker into #sf-plex, whole: from plexPick, or with no
+  // sign-in under way, from the service being edited. Nodes and text only.
+  // The keyboard stays on the same control when it still exists.
+  function renderPlexBox() {
+    var box = $("sf-plex"), type = $("sf-type");
+    if (!box) return;
+    var f = acct.form, d = acct.data;
+    var on = !!(f && d && type && type.value === "plex");
+    var active = document.activeElement;
+    var fk = active && box.contains(active) ? active.getAttribute("data-fk") : null;
+    while (box.firstChild) box.removeChild(box.firstChild);
+    box.hidden = !on;
+    if (!on) return;
+    var ps = plexPick && plexPick.form === f ? plexPick : null;
+    if (f.plexSay) box.appendChild(plexSays("bad", [f.plexSay], "alert"));
+    if (ps) {
+      plexStepView(box, ps);
+    } else {
+      plexIdleView(box, f.mode === "edit" ? findService(f.id) : null,
+                   !!d.secretsKeyConfigured);
+    }
+    if (fk) {
+      var back = box.querySelector('[data-fk="' + fk + '"]') ||
+        box.querySelector("input:not([disabled]), button:not([disabled])");
+      if (back) back.focus();
+    }
+  }
+
+  function plexIdleView(box, s, vaultOn) {
+    var picked = !!s && s.type === "plex" && s.loginKind === "plexuser";
+    if (picked && s.plex) {
+      box.appendChild(plexSays("meta", ["Signs in as ",
+        plexNode("strong", "", [s.plex.userTitle]), " on ",
+        plexNode("strong", "", [s.plex.serverName]), "."]));
+    } else if (s && s.type === "plex") {
+      box.appendChild(plexNode("div", "note", ["Set up the old way, with a typed " +
+        "address. Sign in with Plex to pick the person instead — or save to keep " +
+        "it as it is."]));
+    }
+    if (picked && s.unreadable) {
+      box.appendChild(plexSays("bad", ["The server key changed since this was saved — " +
+        "pick the person again."]));
+    }
+    if (!vaultOn) {
+      box.appendChild(plexSays("meta", ["Picking someone needs this server's secrets " +
+        "key (see above)."]));
+    }
+    var b = plexButton("plex-signin", picked ? "Pick again" : "Sign in with Plex", !picked);
+    b.disabled = !vaultOn;
+    box.appendChild(plexNode("div", "row", [b]));
+    if (vaultOn) {
+      box.appendChild(plexSays("meta", ["Your Plex sign-in stays in this tab and is " +
+        "dropped when you save or cancel. This server never contacts Plex."]));
+    }
+  }
+
+  function plexStepView(box, ps) {
+    var row = [];
+    if (ps.step === "waiting") {
+      if (!ps.authUrl) {
+        box.appendChild(plexSays("meta", ["Opening Plex…"], "status"));
+      } else if (ps.blocked) {
+        box.appendChild(plexSays("meta", ["Your browser blocked Plex's window. ",
+          plexLink(ps.authUrl, "Open Plex sign-in"),
+          ", sign in there, then come back here."], "status"));
+      } else {
+        box.appendChild(plexSays("meta", ["Waiting for you to sign in on Plex's page… " +
+          "Closed it? ", plexLink(ps.authUrl, "Open it again"), "."], "status"));
+      }
+    } else if (ps.step === "loading") {
+      box.appendChild(plexSays("meta", ps.loading === "people"
+        ? ["Loading who you share ", plexNode("strong", "", [ps.server.name]), " with…"]
+        : ["Signed in to Plex. Loading your servers…"], "status"));
+    } else if (ps.step === "noserver") {
+      box.appendChild(plexSays("bad", ["This Plex account owns no server. Sign in as " +
+        "the server's owner."], "alert"));
+      row.push(plexButton("plex-signin", "Sign in again"));
+    } else if (ps.step === "error") {
+      box.appendChild(plexSays("bad", [ps.error], "alert"));
+      row.push(plexButton("plex-retry", "Try again"));
+    }
+    var listing = ps.step === "list" ||
+      (ps.step === "loading" && ps.loading === "people") ||
+      (ps.step === "error" && ps.retry === "people");
+    if (listing && ps.servers.length > 1) box.appendChild(plexServerList(ps));
+    if (ps.step === "list" && ps.people) {
+      if (ps.people.length) {
+        box.appendChild(plexPeopleList(ps));
+      } else {
+        box.appendChild(plexSays("meta", [plexNode("strong", "", [ps.server.name]),
+          " isn't shared with anyone yet. Share it in Plex, then check again."]));
+        row.push(plexButton("plex-retry", "Check again"));
+      }
+      box.appendChild(plexSays("meta", ["You, the owner, aren't listed — sign in to " +
+        "Plex in the app as usual."]));
+    }
+    // Not just "Cancel": the form's own Cancel sits right below.
+    row.push(plexButton("plex-cancel", "Cancel Plex sign-in"));
+    box.appendChild(plexNode("div", "row", row));
+  }
+
+  function plexServerList(ps) {
+    var fs = plexNode("fieldset", "pick", [plexNode("legend", "", ["Which server?"])]);
+    ps.servers.forEach(function (srv, i) {
+      fs.appendChild(plexChoice("sf-plex-server", i, srv === ps.server, false, [srv.name]));
+    });
+    return fs;
+  }
+
+  function plexPeopleList(ps) {
+    var fs = plexNode("fieldset", "pick", [plexNode("legend", "", ["Who is this for?"])]);
+    ps.people.forEach(function (p, i) {
+      var kids = [p.name];
+      if (p.tag) kids.push(plexNode("span", "tag" + (p.home ? " home" : ""), [p.tag]));
+      if (!p.accepted) {
+        kids.push(plexNode("span", "meta", [" — hasn't accepted your share yet"]));
+      }
+      fs.appendChild(plexChoice("sf-plex-person", i, p === ps.person, !p.accepted, kids));
+    });
+    return fs;
+  }
+
+  // Save, for Plex: the person picked — or, for a Plex service already set
+  // up, just its name (the pick, or the old setup, stays as it is).
+  function savePlex() {
+    var f = acct.form, d = acct.data;
+    var s = f.mode === "edit" ? findService(f.id) : null;
+    var name = $("sf-name").value.trim() || (d.serviceTypes || {}).plex || "Plex";
+    var ps = plexPick && plexPick.form === f ? plexPick : null;
+    function say(msg) {
+      f.plexSay = msg;
+      renderPlexBox();
+      var box = $("sf-plex");
+      var to = box && (box.querySelector('input[name="sf-plex-person"]:not([disabled])') ||
+                       box.querySelector("button:not([disabled])"));
+      if (to) to.focus();
+    }
+    var body;
+    if (ps) {
+      if (!ps.person) {
+        say(ps.people ? "Pick who this is for first."
+                      : "Finish signing in to Plex and pick who this is for first.");
+        return;
+      }
+      var mode = !s ? "add"
+        : s.type === "plex" && s.loginKind === "plexuser" ? "repick" : "convert";
+      try {
+        body = plexPure.body(mode, name, ps.server, ps.person);
+      } catch (e) {
+        say(plexPure.problem(e));
+        return;
+      }
+    } else if (s && s.type === "plex") {
+      body = { name: name };
+    } else {
+      say("Sign in with Plex and pick who this is for first.");
+      return;
+    }
+    var path = acctPath("/services" + (s ? "/" + encodeURIComponent(s.id) : ""));
+    run(function () {
+      return api(path, { method: s ? "PATCH" : "POST", body: JSON.stringify(body) })
+        .catch(function (e) {
+          // Said where the admin is looking, in plain words; run() still
+          // adds acctFail's toast and any refresh.
+          if (acct.form === f) {
+            f.plexSay = e && (e.status || e.reason) ? e.message
+              : "Couldn't save that. Check the connection, then try again.";
+            renderPlexBox();
+          }
+          throw e;
+        });
+    }, function () {
+      dropPlexPick();
+      acct.form = null;
+      renderAcctForm();
+      toast(s ? "Saved." : "Service added.");
+      return acctLoad().then(function () {
+        var back = s
+          ? $("acct-services").querySelector('[data-act="edit"][data-sid="' + s.id + '"]')
+          : $("acct-form").querySelector('[data-act="add"]');
+        if (back) back.focus();
+      });
+    });
+  }
+
+  // A picked Plex person's name, server and address came from plex.tv:
+  // set as text in the slots servicesHTML leaves, never as markup.
+  function fillPlexLines(list) {
+    var box = $("acct-services");
+    list.forEach(function (s) {
+      if (s.loginKind !== "plexuser") return;
+      var card = box.querySelector('[data-plex-card="' + s.id + '"]');
+      if (!card) return;
+      card.querySelector('[data-plex="url"]').textContent = s.baseUrl;
+      card.querySelector('[data-plex="who"]').textContent = s.plex
+        ? "Plex: " + s.plex.userTitle + " on " + s.plex.serverName
+        : KIND_LABELS.plexuser;
     });
   }
 
@@ -1411,10 +2192,23 @@
         break;
       case "save": saveService(); break;
       case "cancel-form": closeForm(); break;
+      case "plex-signin": plexSignIn(); break;
+      case "plex-retry": plexRetry(); break;
+      case "plex-cancel": plexCancel(); break;
     }
   });
   $("acct").addEventListener("change", function (e) {
-    if (e.target.id === "sf-type" || e.target.id === "sf-kind") syncForm();
+    var t = e.target;
+    if (t.id === "sf-type" || t.id === "sf-kind") syncForm();
+    else if (t.name === "sf-plex-server") plexServerPicked(Number(t.value));
+    else if (t.name === "sf-plex-person") plexPersonPicked(Number(t.value));
+  });
+  // Leaving the page, or its going into the back-forward cache, ends a Plex
+  // sign-in: the admin's Plex token does not outlive the visit.
+  window.addEventListener("pagehide", function () {
+    if (!plexPick) return;
+    dropPlexPick();
+    renderPlexBox();
   });
   $("acct-form").addEventListener("keydown", function (e) {
     if (e.key === "Enter" && !e.isComposing && e.target.tagName === "INPUT") {
