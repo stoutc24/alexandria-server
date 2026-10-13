@@ -378,3 +378,133 @@ func TestAnEditNeverErasesALoginItCannotRead(t *testing.T) {
 		t.Fatalf("replaced login: %+v", c)
 	}
 }
+
+// pickedGrandma is a Plex person as the admin page or phone hands one over:
+// plex.tv's own address list for the server, untidied.
+func pickedGrandma() *PlexService {
+	return &PlexService{
+		ServerID:   "5d776825e9c9b9b6e8f1a2b3c4d5e6f708192a3b",
+		ServerName: "StoutOffice",
+		UserID:     42,
+		UserTitle:  "Grandma",
+		Connections: []PlexConnection{
+			{URI: "http://192.168.1.9:32400", Local: true},
+			{URI: "https://192-168-1-9.abc123.plex.direct:32400", Local: true},
+			{URI: "https://203-0-113-7.abc123.plex.direct:32400"},
+			{URI: "https://203-0-113-7.abc123.plex.direct:32400/"}, // the same, twice
+			{URI: "ftp://not-an-address"},
+			{URI: "https://relay-1.abc123.plex.direct:8443", Relay: true},
+		},
+	}
+}
+
+func TestAPlexPersonIsPickedNotTyped(t *testing.T) {
+	acc, profiles := newAccountsDB(t, true)
+	gran, _ := profiles.Create("Grandma")
+	now := time.Now()
+
+	// No address: Plex said where the server is, and the remote https one
+	// is the one that reaches it from anywhere.
+	s, err := acc.AddService(gran.ID, ServiceInput{
+		Type: "plex", LoginKind: "plexuser", Token: str("key-grandma"), Plex: pickedGrandma(),
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.BaseURL != "https://203-0-113-7.abc123.plex.direct:32400" || !s.HasSecret || s.Plex == nil ||
+		s.Plex.UserTitle != "Grandma" || s.Plex.ServerName != "StoutOffice" || len(s.Plex.Connections) != 4 {
+		t.Fatalf("added %+v plex %+v", s, s.Plex)
+	}
+	for _, c := range s.Plex.Connections {
+		if strings.HasSuffix(c.URI, "/") || strings.HasPrefix(c.URI, "ftp") {
+			t.Fatalf("untidy address kept: %+v", s.Plex.Connections)
+		}
+	}
+
+	// The key is sealed like a password: nowhere in the row, never in the
+	// admin's list, and on the device's.
+	var stored, plexJSON string
+	_ = database.DB.QueryRow(`SELECT credentials, plex FROM account_services WHERE id = ?`, s.ID).Scan(&stored, &plexJSON)
+	if strings.Contains(stored, "key-grandma") || strings.Contains(plexJSON, "key-grandma") {
+		t.Fatalf("the key is stored in the clear: %s / %s", stored, plexJSON)
+	}
+	list, _ := acc.ListServices(gran.ID, false)
+	if list[0].Credentials != nil || list[0].Plex == nil || list[0].Plex.ServerID != pickedGrandma().ServerID {
+		t.Fatalf("admin list %+v", list[0])
+	}
+	mine, _ := acc.ListServices(gran.ID, true)
+	if mine[0].Credentials.Token != "key-grandma" || mine[0].Plex.UserID != 42 {
+		t.Fatalf("device list %+v %+v", mine[0].Credentials, mine[0].Plex)
+	}
+
+	// A new name keeps the person, their addresses and their key.
+	edited, err := acc.UpdateService(gran.ID, s.ID, ServiceInput{Name: "Movies"}, now.Add(time.Second))
+	if err != nil || edited.Name != "Movies" || edited.Plex == nil || edited.Plex.UserTitle != "Grandma" ||
+		edited.BaseURL != s.BaseURL {
+		t.Fatalf("rename %+v %v", edited, err)
+	}
+	mine, _ = acc.ListServices(gran.ID, true)
+	if mine[0].Credentials.Token != "key-grandma" {
+		t.Fatal("the key was lost on a rename")
+	}
+
+	// Picking someone else brings their key and their server's addresses.
+	other := pickedGrandma()
+	other.UserID, other.UserTitle = 43, "Aker Family"
+	other.Connections = []PlexConnection{{URI: "https://198-51-100-2.abc123.plex.direct:32400"}}
+	if _, err := acc.UpdateService(gran.ID, s.ID, ServiceInput{Plex: other}, now.Add(2*time.Second)); err != ErrBadPlex {
+		t.Fatalf("a new pick without its key: %v", err)
+	}
+	repicked, err := acc.UpdateService(gran.ID, s.ID, ServiceInput{Plex: other, Token: str("key-aker")}, now.Add(2*time.Second))
+	if err != nil || repicked.Plex.UserTitle != "Aker Family" || repicked.BaseURL != "https://198-51-100-2.abc123.plex.direct:32400" {
+		t.Fatalf("re-pick %+v %v", repicked, err)
+	}
+	mine, _ = acc.ListServices(gran.ID, true)
+	if mine[0].Credentials.Token != "key-aker" {
+		t.Fatalf("re-pick key %+v", mine[0].Credentials)
+	}
+
+	// Another login kind drops the Plex pick.
+	addressOnly, err := acc.UpdateService(gran.ID, s.ID, ServiceInput{LoginKind: "none", BaseURL: "https://plex.example",
+		Token: str("")}, now.Add(3*time.Second))
+	if err != nil || addressOnly.Plex != nil || addressOnly.HasSecret {
+		t.Fatalf("to address-only %+v %v", addressOnly, err)
+	}
+}
+
+func TestAPlexPickMustBeWhole(t *testing.T) {
+	acc, profiles := newAccountsDB(t, true)
+	gran, _ := profiles.Create("Grandma")
+	now := time.Now()
+	noAddresses := pickedGrandma()
+	noAddresses.Connections = []PlexConnection{{URI: "ftp://x"}, {URI: "not a url"}}
+	badID := pickedGrandma()
+	badID.ServerID = "a server; DROP TABLE"
+	noName := pickedGrandma()
+	noName.UserTitle = "  "
+	for name, in := range map[string]ServiceInput{
+		"not plex":     {Type: "abs", LoginKind: "plexuser", Token: str("k"), Plex: pickedGrandma()},
+		"no pick":      {Type: "plex", LoginKind: "plexuser", Token: str("k")},
+		"no key":       {Type: "plex", LoginKind: "plexuser", Plex: pickedGrandma()},
+		"empty key":    {Type: "plex", LoginKind: "plexuser", Token: str(" "), Plex: pickedGrandma()},
+		"no addresses": {Type: "plex", LoginKind: "plexuser", Token: str("k"), Plex: noAddresses},
+		"bad id":       {Type: "plex", LoginKind: "plexuser", Token: str("k"), Plex: badID},
+		"no name":      {Type: "plex", LoginKind: "plexuser", Token: str("k"), Plex: noName},
+	} {
+		if _, err := acc.AddService(gran.ID, in, now); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// A pick on another kind is ignored, not stored.
+	s, err := acc.AddService(gran.ID, ServiceInput{Type: "plex", BaseURL: "https://plex.example", LoginKind: "none",
+		Plex: pickedGrandma()}, now)
+	if err != nil || s.Plex != nil {
+		t.Fatalf("address-only with a pick %+v %v", s, err)
+	}
+	// Without a secrets key there is nowhere to keep the key.
+	noKey, _ := newAccountsDB(t, false)
+	if _, err := noKey.AddService(gran.ID, ServiceInput{Type: "plex", LoginKind: "plexuser", Token: str("k"),
+		Plex: pickedGrandma()}, now); err != ErrVaultOff {
+		t.Fatalf("no secrets key: %v", err)
+	}
+}

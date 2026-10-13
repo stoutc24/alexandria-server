@@ -355,6 +355,10 @@ func RunMigrations() error {
 		// definition — no time arithmetic required. Temporal overlap
 		// remains the fallback for events that carry none.
 		`ALTER TABLE stats_events ADD COLUMN session_id TEXT`,
+		// A Plex person the admin picked from their own Plex (owner,
+		// 2026-10-13): the server's id, the person's name and Plex's
+		// addresses for it, as JSON. NULL for every other service.
+		`ALTER TABLE account_services ADD COLUMN plex TEXT`,
 	} {
 		if _, err := DB.Exec(alter); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {

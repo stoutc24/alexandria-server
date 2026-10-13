@@ -43,6 +43,7 @@ var (
 	ErrServiceNotFound = errors.New("service not found")
 	ErrBadService      = errors.New("unknown service type or login kind")
 	ErrBadServiceURL   = errors.New("the address must be an http:// or https:// address with a host")
+	ErrBadPlex         = errors.New("a Plex person needs their key, their server's id, their name and at least one address Plex gave for the server")
 	ErrVaultOff        = errors.New("this server has no secrets key, so it cannot keep service logins (set ALEXANDRIA_SECRETS_KEY)")
 	ErrDeviceKeyExists = errors.New("this device already has a key")
 	ErrNoDeviceKey     = errors.New("this device has no key")
@@ -82,11 +83,16 @@ var ServiceTypes = map[string]string{
 // LoginKinds: what the admin hands over for a service. "none" is the
 // address alone — a Plex friend with their own plex.tv account, who
 // approves Alexandria on Plex's own code screen the first time.
+// "plexuser" is a person the admin picked from their own Plex (owner,
+// 2026-10-13): Token is that person's key to the admin's server, which
+// the admin's browser or phone fetched from plex.tv, and Plex says which
+// server and where it is. The server itself never talks to plex.tv.
 var LoginKinds = map[string]bool{
 	"password": true,
 	"token":    true,
 	"apikey":   true,
 	"none":     true,
+	"plexuser": true,
 }
 
 type AccountRepository struct {
@@ -516,6 +522,87 @@ type ServiceCredentials struct {
 	APIKey   string `json:"apiKey,omitempty"`
 }
 
+// PlexService is the rest of a "plexuser" service: which of the admin's
+// Plex servers, who on it, and every address Plex gave for it (local,
+// remote, relay), so a device can reach it the way Plex's own apps do.
+// None of it is secret; the person's key is Credentials.Token.
+type PlexService struct {
+	ServerID    string           `json:"serverId"`
+	ServerName  string           `json:"serverName"`
+	UserID      int64            `json:"userId"`
+	UserTitle   string           `json:"userTitle"`
+	Connections []PlexConnection `json:"connections"`
+}
+
+// PlexConnection is one address of a Plex server, as plex.tv lists it.
+type PlexConnection struct {
+	URI   string `json:"uri"`
+	Local bool   `json:"local,omitempty"`
+	Relay bool   `json:"relay,omitempty"`
+}
+
+var plexServerIDRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+// maxPlexConnections: plex.tv lists a handful per server (LAN, plex.direct,
+// relay, IPv6); a dozen is room for all of them and no more.
+const maxPlexConnections = 12
+
+func clip(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+// normalize checks a picked Plex person and tidies it: addresses that are
+// not http(s) are dropped, duplicates once, and at least one must remain.
+func (p *PlexService) normalize() error {
+	p.ServerID = strings.TrimSpace(p.ServerID)
+	p.ServerName = clip(strings.TrimSpace(p.ServerName), 80)
+	p.UserTitle = clip(strings.TrimSpace(p.UserTitle), 80)
+	if !plexServerIDRe.MatchString(p.ServerID) || p.UserTitle == "" || p.UserID < 0 {
+		return ErrBadPlex
+	}
+	if p.ServerName == "" {
+		p.ServerName = "Plex"
+	}
+	seen := map[string]bool{}
+	conns := []PlexConnection{}
+	for _, c := range p.Connections {
+		u, err := NormalizeServiceURL(c.URI)
+		if err != nil || seen[u] {
+			continue
+		}
+		seen[u] = true
+		conns = append(conns, PlexConnection{URI: u, Local: c.Local, Relay: c.Relay})
+		if len(conns) == maxPlexConnections {
+			break
+		}
+	}
+	if len(conns) == 0 {
+		return ErrBadPlex
+	}
+	p.Connections = conns
+	return nil
+}
+
+// preferredURI is the address shown for a Plex service and the one an
+// older app, which knows nothing of the list, would use: a remote https
+// one reaches the server from anywhere, then any direct one, then a relay.
+func (p *PlexService) preferredURI() string {
+	for _, c := range p.Connections {
+		if !c.Local && !c.Relay && strings.HasPrefix(c.URI, "https://") {
+			return c.URI
+		}
+	}
+	for _, c := range p.Connections {
+		if !c.Relay {
+			return c.URI
+		}
+	}
+	return p.Connections[0].URI
+}
+
 // AccountService is one service set up for a person. Credentials is only
 // filled when a device asks for its own services; the admin's view shows
 // the username and whether a secret is set, never the secret.
@@ -527,6 +614,8 @@ type AccountService struct {
 	LoginKind string `json:"loginKind"`
 	Username  string `json:"username,omitempty"`
 	HasSecret bool   `json:"hasSecret"`
+	// Plex is the picked person's server and name ("plexuser" only).
+	Plex *PlexService `json:"plex,omitempty"`
 	// Unreadable is true when the stored login no longer opens — the
 	// server key changed since it was saved. The admin re-enters it.
 	Unreadable  bool                `json:"unreadable,omitempty"`
@@ -536,16 +625,19 @@ type AccountService struct {
 }
 
 // ServiceInput is an add or an edit. Nil secret fields are left as they
-// are on an edit; an empty string clears one.
+// are on an edit; an empty string clears one. Plex, likewise, is kept on
+// an edit that leaves it out, and replaced by one that names it (a Plex
+// person picked again).
 type ServiceInput struct {
-	Type      string  `json:"type"`
-	Name      string  `json:"name"`
-	BaseURL   string  `json:"baseUrl"`
-	LoginKind string  `json:"loginKind"`
-	Username  *string `json:"username"`
-	Password  *string `json:"password"`
-	Token     *string `json:"token"`
-	APIKey    *string `json:"apiKey"`
+	Type      string       `json:"type"`
+	Name      string       `json:"name"`
+	BaseURL   string       `json:"baseUrl"`
+	LoginKind string       `json:"loginKind"`
+	Username  *string      `json:"username"`
+	Password  *string      `json:"password"`
+	Token     *string      `json:"token"`
+	APIKey    *string      `json:"apiKey"`
+	Plex      *PlexService `json:"plex"`
 }
 
 func serviceAD(profileID, id string) string { return "account-service|" + profileID + "|" + id }
@@ -611,6 +703,36 @@ func (in ServiceInput) clearsSecret() bool {
 	return in.setsSecret()
 }
 
+// plexColumn is how a service's PlexService is stored: JSON, or NULL for
+// every service that is not a picked Plex person.
+func plexColumn(p *PlexService) (sql.NullString, error) {
+	if p == nil {
+		return sql.NullString{}, nil
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+	return sql.NullString{String: string(b), Valid: true}, nil
+}
+
+func readPlexColumn(v sql.NullString) *PlexService {
+	if !v.Valid || v.String == "" {
+		return nil
+	}
+	var p PlexService
+	if json.Unmarshal([]byte(v.String), &p) != nil {
+		return nil
+	}
+	return &p
+}
+
+// picksPlexPerson is whether an input hands over a Plex person's key: the
+// key is what makes the pick, and an add or a new pick always carries one.
+func (in ServiceInput) picksPlexPerson() bool {
+	return in.Token != nil && strings.TrimSpace(*in.Token) != ""
+}
+
 func applyInput(c *ServiceCredentials, in ServiceInput) {
 	if in.Username != nil {
 		c.Username = strings.TrimSpace(*in.Username)
@@ -631,7 +753,7 @@ func applyInput(c *ServiceCredentials, in ServiceInput) {
 // marked Unreadable rather than failing the whole list.
 func (r *AccountRepository) ListServices(profileID string, withSecrets bool) ([]AccountService, error) {
 	rows, err := database.DB.Query(`
-		SELECT id, service_type, name, base_url, login_kind, credentials, priority, updated_at
+		SELECT id, service_type, name, base_url, login_kind, credentials, plex, priority, updated_at
 		FROM account_services WHERE profile_id = ?
 		ORDER BY priority, created_at`, profileID)
 	if err != nil {
@@ -641,11 +763,12 @@ func (r *AccountRepository) ListServices(profileID string, withSecrets bool) ([]
 	out := []AccountService{}
 	for rows.Next() {
 		var s AccountService
-		var sealed sql.NullString
+		var sealed, plex sql.NullString
 		if err := rows.Scan(&s.ID, &s.Type, &s.Name, &s.BaseURL, &s.LoginKind,
-			&sealed, &s.Priority, &s.UpdatedAt); err != nil {
+			&sealed, &plex, &s.Priority, &s.UpdatedAt); err != nil {
 			return nil, err
 		}
+		s.Plex = readPlexColumn(plex)
 		s.HasSecret = sealed.Valid && sealed.String != ""
 		if s.HasSecret || withSecrets {
 			c, err := r.openCredentials(profileID, s.ID, sealed)
@@ -671,6 +794,23 @@ func validateInput(in *ServiceInput) error {
 	if _, ok := ServiceTypes[in.Type]; !ok || !LoginKinds[in.LoginKind] {
 		return ErrBadService
 	}
+	if in.LoginKind == "plexuser" {
+		if in.Type != "plex" {
+			return ErrBadService
+		}
+		if in.Plex == nil {
+			return ErrBadPlex
+		}
+		if err := in.Plex.normalize(); err != nil {
+			return err
+		}
+		// Plex says where the server is; nobody types it.
+		if strings.TrimSpace(in.BaseURL) == "" {
+			in.BaseURL = in.Plex.preferredURI()
+		}
+	} else {
+		in.Plex = nil
+	}
 	u, err := NormalizeServiceURL(in.BaseURL)
 	if err != nil {
 		return err
@@ -691,6 +831,13 @@ func (r *AccountRepository) AddService(profileID string, in ServiceInput, now ti
 	if err := validateInput(&in); err != nil {
 		return nil, err
 	}
+	if in.LoginKind == "plexuser" && !in.picksPlexPerson() {
+		return nil, ErrBadPlex
+	}
+	plex, err := plexColumn(in.Plex)
+	if err != nil {
+		return nil, err
+	}
 	id := uuid.New().String()
 	var c ServiceCredentials
 	applyInput(&c, in)
@@ -705,9 +852,9 @@ func (r *AccountRepository) AddService(profileID string, in ServiceInput, now ti
 	}
 	if _, err := database.DB.Exec(`
 		INSERT INTO account_services (id, profile_id, service_type, name, base_url, login_kind,
-			credentials, priority, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, profileID, in.Type, in.Name, in.BaseURL, in.LoginKind, sealed, next,
+			credentials, plex, priority, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, profileID, in.Type, in.Name, in.BaseURL, in.LoginKind, sealed, plex, next,
 		now.Unix(), now.Unix()); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "foreign key") {
 			return nil, ErrProfileNotFound
@@ -732,12 +879,12 @@ func (r *AccountRepository) service(profileID, id string) (*AccountService, erro
 
 // UpdateService edits a service. Secret fields left nil keep their value.
 func (r *AccountRepository) UpdateService(profileID, id string, in ServiceInput, now time.Time) (*AccountService, error) {
-	var sealed sql.NullString
+	var sealed, curPlex sql.NullString
 	var cur ServiceInput
 	err := database.DB.QueryRow(`
-		SELECT service_type, name, base_url, login_kind, credentials
+		SELECT service_type, name, base_url, login_kind, credentials, plex
 		FROM account_services WHERE profile_id = ? AND id = ?`, profileID, id).
-		Scan(&cur.Type, &cur.Name, &cur.BaseURL, &cur.LoginKind, &sealed)
+		Scan(&cur.Type, &cur.Name, &cur.BaseURL, &cur.LoginKind, &sealed, &curPlex)
 	if err == sql.ErrNoRows {
 		return nil, ErrServiceNotFound
 	}
@@ -747,16 +894,31 @@ func (r *AccountRepository) UpdateService(profileID, id string, in ServiceInput,
 	if strings.TrimSpace(in.Type) == "" {
 		in.Type = cur.Type
 	}
-	if strings.TrimSpace(in.BaseURL) == "" {
-		in.BaseURL = cur.BaseURL
-	}
 	if strings.TrimSpace(in.LoginKind) == "" {
 		in.LoginKind = cur.LoginKind
 	}
 	if strings.TrimSpace(in.Name) == "" {
 		in.Name = cur.Name
 	}
+	// A Plex person picked again brings their server, their addresses and
+	// their key together; an edit that leaves the pick out (a new name, a
+	// new place in the order) keeps the one stored.
+	repick := in.Plex != nil
+	if strings.ToLower(strings.TrimSpace(in.LoginKind)) == "plexuser" {
+		if !repick {
+			in.Plex = readPlexColumn(curPlex)
+		} else if !in.picksPlexPerson() {
+			return nil, ErrBadPlex
+		}
+	}
+	if strings.TrimSpace(in.BaseURL) == "" && !repick {
+		in.BaseURL = cur.BaseURL
+	}
 	if err := validateInput(&in); err != nil {
+		return nil, err
+	}
+	plex, err := plexColumn(in.Plex)
+	if err != nil {
 		return nil, err
 	}
 	newSealed := sealed
@@ -789,9 +951,9 @@ func (r *AccountRepository) UpdateService(profileID, id string, in ServiceInput,
 	}
 	if _, err := database.DB.Exec(`
 		UPDATE account_services SET service_type = ?, name = ?, base_url = ?, login_kind = ?,
-			credentials = ?, updated_at = ?
+			credentials = ?, plex = ?, updated_at = ?
 		WHERE profile_id = ? AND id = ?`,
-		in.Type, in.Name, in.BaseURL, in.LoginKind, newSealed, now.Unix(), profileID, id); err != nil {
+		in.Type, in.Name, in.BaseURL, in.LoginKind, newSealed, plex, now.Unix(), profileID, id); err != nil {
 		return nil, err
 	}
 	return r.service(profileID, id)

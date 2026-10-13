@@ -403,6 +403,9 @@ func (h *AccountsHandler) Services(c *fiber.Ctx) error {
 		Password  string `json:"password,omitempty"`
 		Token     string `json:"token,omitempty"`
 		APIKey    string `json:"apiKey,omitempty"`
+		// Plex: the picked person's server, name and addresses
+		// ("plexuser"); Token is their key to that server.
+		Plex *repository.PlexService `json:"plex,omitempty"`
 		// Unreadable: the server key changed since the admin saved this
 		// login; the device keeps whatever it already has.
 		Unreadable bool `json:"unreadable,omitempty"`
@@ -413,7 +416,7 @@ func (h *AccountsHandler) Services(c *fiber.Ctx) error {
 	}{Revision: revision, Services: []sealedService{}}
 	for _, s := range services {
 		out := sealedService{ID: s.ID, Type: s.Type, Name: s.Name, BaseURL: s.BaseURL,
-			LoginKind: s.LoginKind, Priority: s.Priority, Unreadable: s.Unreadable}
+			LoginKind: s.LoginKind, Priority: s.Priority, Plex: s.Plex, Unreadable: s.Unreadable}
 		if s.Credentials != nil {
 			out.Username = s.Credentials.Username
 			out.Password = s.Credentials.Password
@@ -766,7 +769,8 @@ func (h *AccountsHandler) serviceError(c *fiber.Ctx, err error) error {
 	switch {
 	case errors.Is(err, repository.ErrServiceNotFound):
 		return refuse(c, fiber.StatusNotFound, "service-not-found", err.Error())
-	case errors.Is(err, repository.ErrBadService), errors.Is(err, repository.ErrBadServiceURL):
+	case errors.Is(err, repository.ErrBadService), errors.Is(err, repository.ErrBadServiceURL),
+		errors.Is(err, repository.ErrBadPlex):
 		return refuse(c, fiber.StatusBadRequest, "bad-service", err.Error())
 	case errors.Is(err, repository.ErrVaultOff):
 		return refuse(c, fiber.StatusServiceUnavailable, "secrets-key-missing", err.Error())
