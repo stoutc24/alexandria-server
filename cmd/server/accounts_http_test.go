@@ -421,3 +421,29 @@ func TestAccountsInviteWarnsWhenItsLinkPointsAtLoopback(t *testing.T) {
 		}
 	}
 }
+
+func TestAccountsInviteLinkToShareOpensTheInvitePage(t *testing.T) {
+	s := newTestServer(t, withSecretsKey)
+	admin := bearer(testAPIToken)
+	r := s.do("POST", "/api/v1/admin/profiles", map[string]any{"name": "Sam"}, admin)
+	profileID := r.body["profile"].(map[string]any)["id"].(string)
+	r = s.do("POST", "/api/v1/admin/profiles/"+profileID+"/invite", nil, admin)
+	token := r.body["invite"].(map[string]any)["token"].(string)
+	web := r.str("webLink")
+	if !strings.HasPrefix(web, "http://example.com/invite#invite=") || !strings.HasSuffix(web, token) {
+		t.Fatalf("webLink %q", web)
+	}
+
+	page := s.do("GET", "/invite", nil, nil)
+	if page.status != 200 || !strings.Contains(string(page.raw), "Open Alexandria") {
+		t.Fatalf("invite page: %d", page.status)
+	}
+	csp := page.header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'none'") || page.header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("invite page headers: %q", csp)
+	}
+	// The page only hands over well-formed invites.
+	if !strings.Contains(string(page.raw), `alxi_[0-9a-f]{16,128}`) {
+		t.Fatal("the page no longer checks the invite's shape")
+	}
+}

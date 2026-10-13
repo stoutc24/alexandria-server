@@ -685,6 +685,11 @@ func (h *AccountsHandler) CreateInvite(c *fiber.Ctx) error {
 		"serverUrl": server,
 		// The link the app opens; the QR code carries the same.
 		"link": "alexandria://accounts/invite?" + q.Encode(),
+		// The link to SHARE: messaging apps make web links tappable, not
+		// alexandria:// ones. It opens this server's /invite page, which
+		// hands the invite to the app; the invite rides in the fragment, so
+		// it never reaches a log.
+		"webLink": strings.TrimRight(server, "/") + "/invite#invite=" + token,
 	}
 	if w := unreachableLinkWarning(server); w != "" {
 		out["serverUrlWarning"] = w

@@ -637,8 +637,9 @@
   var TYPE_HINTS = {
     jellyfin: "Use their own Jellyfin login, never a dashboard API key " +
               "(those are admin-wide).",
-    abs: "An API key you create for them in Audiobookshelf " +
-         "(Settings › API Keys, 2.26+) is better than storing a password.",
+    // Not an ABS API key yet: the apps don't sign in with one.
+    abs: "Their own Audiobookshelf username and password.",
+    kavita: "Their login, or an API key they made in Kavita.",
     plex: "Plex Home users: a token; friends with their own plex.tv " +
           "account: Address only."
   };
@@ -868,7 +869,7 @@
       '</div>' +
       '<p class="meta" style="margin:6px 0 0">To read out, or type into Alexandria ' +
         'on their device.</p>' +
-      '<label class="field" for="inv-link">Link — the app opens it</label>' +
+      '<label class="field" for="inv-link">Link — they tap it on their phone</label>' +
       '<div class="row">' +
         '<input class="grow" type="text" id="inv-link" readonly spellcheck="false" ' +
           'value="' + esc(r.link) + '">' +
@@ -946,7 +947,9 @@
     }, function (r) {
       var inv = r.invite || {};
       // Kept in memory only, never stored: the server keeps just a hash.
-      acct.reveal = { code: inv.code, link: r.link || "",
+      // The web link: messaging apps make it tappable (an alexandria://
+      // one they don't), and it opens the app through /invite.
+      acct.reveal = { code: inv.code, link: r.webLink || r.link || "",
                       purpose: inv.purpose, expiresAt: inv.expiresAt,
                       warning: r.serverUrlWarning || "" };
       toast("Invite ready. It is shown once.");

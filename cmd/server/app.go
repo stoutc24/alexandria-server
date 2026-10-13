@@ -106,6 +106,8 @@ func buildApp(cfg *config.Config) *fiber.App {
 	// it, so it needs no auth of its own — every call it makes goes to
 	// /api/v1/admin/*, which does.
 	app.Get("/admin", adminui.Handler)
+	// What an Alexandria account invite link opens (adminui.InviteHandler).
+	app.Get("/invite", adminui.InviteHandler)
 
 	api := app.Group("/api")
 	v1 := api.Group("/v1")

@@ -67,13 +67,19 @@ People → **Sign-in & services**:
    Advice per service:
    - **Jellyfin**: use their own Jellyfin login, never a dashboard API key
      (those are admin-wide).
-   - **Audiobookshelf**: their own login. On 2.26+ an API key made for that
-     user is better than storing a password, but the phone app doesn't sign
-     in with ABS keys yet.
+   - **Audiobookshelf**: their own username and password. (ABS 2.26+ API
+     keys made for one user would be better, but the apps don't sign in
+     with them yet.)
 2. **Invite to sign in.** The invite is shown **once**: a code to read out
-   (`K7QF-2M9X`) and a link the app opens. It works once and expires in 7 days.
+   (`K7QF-2M9X`) and a link to text them. It works once and expires in 7 days.
    For a person who already has a sign-in, the same button makes a
-   **new-password invite**.
+   **new-password invite**. From the phone app (Manage server → a person),
+   *Share invite* sends the link, the code and the address in one message.
+
+   The link is this server's `/invite` page (`…/invite#invite=…`), because
+   messaging apps make web links tappable and `alexandria://` ones not. The
+   page hands the invite to the app. The invite rides after the `#`, which
+   browsers never send, so it reaches no log.
 3. Removing a service signs every one of that person's devices out of it at
    their next check. Downloads stay.
 
@@ -186,7 +192,7 @@ Limits: 10 a minute per client, a shared allowance across every visitor
 | Route | |
 |---|---|
 | `GET /admin/profiles/:id/account` | Sign-in state, waiting invite, services (no secrets), `secretsKeyConfigured`, `serviceTypes` |
-| `POST /admin/profiles/:id/invite` | `{invite: {token, code, purpose, expiresAt, profileName}, serverUrl, link, serverUrlWarning?}`. A phone's admin sign-in adds a fresh code (`totpCode` or `recoveryCode`), as link approvals do |
+| `POST /admin/profiles/:id/invite` | `{invite: {token, code, purpose, expiresAt, profileName}, serverUrl, webLink, link, serverUrlWarning?}`. `webLink` (`…/invite#invite=…`) is the one to share; `link` (`alexandria://…`) is what the page opens. A phone's admin sign-in adds a fresh code (`totpCode` or `recoveryCode`), as link approvals do |
 | `DELETE /admin/profiles/:id/invite` | Cancel the waiting invite |
 | `DELETE /admin/profiles/:id/account` | Remove the sign-in. Devices stay linked; services stay set up |
 | `GET` / `POST /admin/profiles/:id/services` | List / add `{type, name?, baseUrl, loginKind, username?, password?, token?, apiKey?}` |
@@ -249,4 +255,4 @@ another person's service.
 - Server Premium: an admin buying Premium for the household through a relay
   of ours, never from this server.
 - A QR code on the admin page.
-- ABS sign-in by API key in the phone app.
+- ABS sign-in by API key in the apps (the admin page steers to a password meanwhile).
