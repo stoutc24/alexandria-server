@@ -330,6 +330,34 @@
   async function untilPeople() {
     await waitFor("the people list", function () { return people().length > 0; });
   }
+  // The page's own parts (the 2026-10 redesign): its areas and People cards.
+  function card(id) { return document.querySelector('[data-person="' + id + '"]'); }
+  function inCard(id, sel) { var c = card(id); return c ? c.querySelector(sel) : null; }
+  function areaShown(name) { return !$("area-" + name).hidden; }
+  function navTo(name) { press(document.querySelector('#areas [data-area="' + name + '"]')); }
+  function openServices(id) {
+    navTo("people");
+    press(inCard(id, '[data-tab="services"]'));
+  }
+  function bodyOpen(id) { var b = inCard(id, ".p-body"); return !!b && visible(b); }
+  function texts(list) { return Array.prototype.map.call(list, function (x) { return x.textContent; }); }
+  function chips(id) { var c = inCard(id, ".chips"); return c ? texts(c.children) : []; }
+  function groupHeads(id) { return texts(card(id).querySelectorAll(".group-h")); }
+  function devRows(id) {
+    return Array.prototype.map.call(card(id).querySelectorAll(".dev"), function (r) {
+      return { name: r.querySelector(".dev-name").textContent,
+               seen: r.querySelector(".dev-seen").textContent, stale: r.classList.contains("stale") };
+    });
+  }
+  function shownCards() {
+    return Array.prototype.filter.call(document.querySelectorAll("[data-person]"), function (c) {
+      return !c.hidden;
+    }).map(function (c) { return c.querySelector(".p-name").textContent; });
+  }
+  function setSearch(v) {
+    $("people-search").value = v;
+    $("people-search").dispatchEvent(new Event("input", { bubbles: true }));
+  }
 
   // ---- the run -------------------------------------------------------------
   async function run() {
@@ -340,12 +368,134 @@
     $("code").value = CFG.recovery;
     $("signin").click();
     await waitFor("the signed-in page", function () {
-      return !$("app").hidden && document.querySelector('[data-signin="' + CFG.grandmaId + '"]');
+      return !$("app").hidden && card(CFG.grandmaId);
     });
+
+    // P. The page itself (2026-10 redesign, owner: "collapse the profile
+    // down so we aren't just looking at a wall of text"): its areas, the
+    // Waiting list, People folded to one line each, devices by kind, the
+    // sweep of unused devices, search, the tabs, and adding a person.
+    step = "P";
+    ok("P1 a code is waiting: the page opens on Waiting to connect, its badge lit",
+       areaShown("waiting") && !areaShown("overview") && !areaShown("people") &&
+       document.querySelector('#areas [data-area="waiting"]').getAttribute("aria-current") === "page" &&
+       $("badge-waiting").textContent === "1" && $("badge-waiting").classList.contains("hot"),
+       JSON.stringify({ waiting: areaShown("waiting"), badge: $("badge-waiting").textContent }));
+    navTo("overview");
+    var att = $("attention").textContent;
+    ok("P2 Needs attention: the waiting code, and the unused iPad by name",
+       att.indexOf("A device is waiting to connect · code " + CFG.tvCode) >= 0 &&
+       att.indexOf("1 device not seen in 30 days: Grandma Test's Old iPad") >= 0, att);
+    ok("P3 the address names the area", location.hash === "#overview" && areaShown("overview") &&
+       !areaShown("waiting"), location.hash);
+
+    navTo("waiting");
+    var nameBox = await waitFor("the TV's name box", function () {
+      return document.querySelector('#pending [data-name-for="' + CFG.tvCode + '"]');
+    });
+    ok("P4 the name box offers the people already here",
+       nameBox.getAttribute("list") === "pending-names" &&
+       Array.prototype.some.call($("pending-names").options, function (o) { return o.value === "Grandma Test"; }));
+    nameBox.value = "Grandma Test";
+    press(document.querySelector('#pending [data-approve="' + CFG.tvCode + '"]'));
+    await waitFor("the TV approved", function () { return !document.querySelector("#pending [data-name-for]"); });
+    // The TV collects its token, as the app does once it is approved.
+    var claimed = await realFetch("/api/v1/link/claim", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ claimSecret: CFG.tvClaim }) });
+    ok("P5 the TV approved on the page is linked", claimed.status === 200, claimed.status);
+
+    navTo("people");
+    ok("P6 People: everyone folded to one line",
+       !bodyOpen(CFG.grandmaId) && !bodyOpen(CFG.oldId) && visible(inCard(CFG.grandmaId, ".p-name")));
+    await waitFor("the TV in Grandma's card", function () { return chips(CFG.grandmaId)[0] === "4 devices"; }, 12000);
+    same("P7 Grandma's line: devices, no sign-in, services, the unused one",
+         chips(CFG.grandmaId), ["4 devices", "no sign-in", "0 services", "1 not seen in 30 days"]);
+    same("P8 the old Plex person's line", chips(CFG.oldId), ["0 devices", "no sign-in", "1 service"]);
+    ok("P9 Grandma's facts: last active, hours, sessions",
+       inCard(CFG.grandmaId, ".p-meta").textContent === "active just now · 0 hours · 0 sessions",
+       inCard(CFG.grandmaId, ".p-meta").textContent);
+    press(inCard(CFG.grandmaId, ".chev"));
+    ok("P10 the arrow opens the card, on its devices",
+       bodyOpen(CFG.grandmaId) && inCard(CFG.grandmaId, ".chev").getAttribute("aria-expanded") === "true" &&
+       inCard(CFG.grandmaId, '[data-tab="devices"]').getAttribute("aria-pressed") === "true");
+    same("P11 the devices by kind", groupHeads(CFG.grandmaId),
+         ["Phones, tablets & computers · 2", "TVs · 1", "Watches · 1"]);
+    same("P12 newest first, the unused iPad marked, the watch and TV never seen",
+         devRows(CFG.grandmaId),
+         [{ name: "Grandma's iPhone", seen: "seen just now", stale: false },
+          { name: "Old iPad", seen: "not seen in 41 days", stale: true },
+          { name: "Playroom TV", seen: "never seen", stale: false },
+          { name: "Grandma's Apple Watch", seen: "never seen", stale: false }]);
+    var sweep = inCard(CFG.grandmaId, "[data-revoke-stale]");
+    ok("P13 one button for what has gone unused",
+       sweep && sweep.textContent === "Revoke the one not seen in 30 days", sweep && sweep.textContent);
+    press(sweep);
+    await waitFor("the old iPad revoked", function () { return chips(CFG.grandmaId)[0] === "3 devices"; });
+    ok("P14 ...and it is gone, the others kept, the warning with it",
+       devRows(CFG.grandmaId).map(function (r) { return r.name; }).join(",") ===
+         "Grandma's iPhone,Playroom TV,Grandma's Apple Watch" &&
+       !inCard(CFG.grandmaId, "[data-revoke-stale]") && chips(CFG.grandmaId).indexOf("1 not seen in 30 days") < 0,
+       JSON.stringify(devRows(CFG.grandmaId)));
+    press(inCard(CFG.grandmaId, ".chev"));
+    ok("P15 the arrow folds it again", !bodyOpen(CFG.grandmaId));
+    press($("expand-all"));
+    ok("P16 Expand all", bodyOpen(CFG.grandmaId) && bodyOpen(CFG.oldId));
+    press($("collapse-all"));
+    ok("P17 Collapse all", !bodyOpen(CFG.grandmaId) && !bodyOpen(CFG.oldId));
+
+    setSearch("playroom");
+    same("P18 found by a device: only her card, open on just that device",
+         { shown: shownCards(), open: bodyOpen(CFG.grandmaId),
+           rows: devRows(CFG.grandmaId).map(function (r) { return r.name; }) },
+         { shown: ["Grandma Test"], open: true, rows: ["Playroom TV"] });
+    setSearch("nobody-zzz");
+    ok("P19 nobody found: says so", shownCards().length === 0 && visible($("people-empty")) &&
+       $("people-empty").textContent === "No one matches “nobody-zzz”.", $("people-empty").textContent);
+    setSearch("");
+    ok("P20 search cleared: everyone back, folded",
+       shownCards().length === 2 && !bodyOpen(CFG.grandmaId) && !visible($("people-empty")),
+       JSON.stringify(shownCards()));
+
+    press(inCard(CFG.grandmaId, '[data-tab="signin"]'));
+    await waitFor("Grandma's sign-in", function () {
+      return $("acct-status").textContent.indexOf("No sign-in yet") >= 0;
+    });
+    ok("P21 Sign-in: the account panel in her card, its sign-in part only",
+       card(CFG.grandmaId).contains($("acct")) && visible($("acct-status")) && !visible($("acct-services")));
+    press(inCard(CFG.grandmaId, '[data-tab="services"]'));
+    ok("P22 Services: the same panel, now its services part",
+       card(CFG.grandmaId).contains($("acct")) && visible($("acct-services")) && !visible($("acct-status")));
+    press(inCard(CFG.grandmaId, '[data-tab="devices"]'));
+    ok("P23 Devices: the panel closes, empties and leaves her card",
+       !card(CFG.grandmaId).contains($("acct")) && $("acct").hidden && $("acct-status").innerHTML === "");
+
+    press($("add-person"));
+    ok("P24 Add person: its form, the name box focused",
+       visible($("add-person-form")) && document.activeElement === $("add-person-name"));
+    $("add-person-name").value = "Flow Visitor";
+    press($("add-person-form").querySelector('button[type="submit"]'));
+    var visitor = await waitFor("the new person's card", function () {
+      return Array.prototype.filter.call(document.querySelectorAll("[data-person]"), function (c) {
+        return c.querySelector(".p-name").textContent === "Flow Visitor";
+      })[0];
+    });
+    ok("P25 the new person: listed open, nothing linked yet, the form gone",
+       visible(visitor.querySelector(".p-body")) &&
+       visitor.querySelector(".p-meta").textContent.indexOf("no devices yet") === 0 &&
+       !visible($("add-person-form")), visitor.querySelector(".p-meta").textContent);
+    press(visitor.querySelector("[data-delete]"));
+    await waitFor("the new person removed", function () { return !document.body.contains(visitor); });
+    ok("P26 Remove takes their card away", shownCards().indexOf("Flow Visitor") < 0);
+    navTo("phones");
+    history.back();
+    await waitFor("Back to People", function () { return areaShown("people"); });
+    ok("P27 Back returns to the area before", !areaShown("phones") && location.hash === "#people", location.hash);
+    step = "checkpoint-people";
+    await checkpoint("people");
 
     // A. Every other service: the form behaves as before.
     step = "A";
-    document.querySelector('[data-signin="' + CFG.grandmaId + '"]').click();
+    openServices(CFG.grandmaId);
     await waitFor("Grandma's panel", function () { return act("add"); });
     await openForm();
     ok("A1 the add form starts on Audiobookshelf", $("sf-type").value === "abs");
@@ -389,6 +539,12 @@
     same("A16 Audiobookshelf is sent exactly as before", absPost && JSON.parse(absPost.body),
          { type: "abs", name: "Audiobookshelf", baseUrl: "http://abs.local:13378", loginKind: "password",
            username: "grandma", password: CFG.absPassword });
+    await waitFor("the Services tab counting it", function () {
+      return inCard(CFG.grandmaId, '[data-tab="services"]').textContent === "Services (1)";
+    }, 12000);
+    ok("A17 the next poll counts it on the tab and on her line, the panel still open",
+       chips(CFG.grandmaId).indexOf("1 service") >= 0 && card(CFG.grandmaId).contains($("acct")) &&
+       visible($("acct-services")), JSON.stringify(chips(CFG.grandmaId)));
 
     // M. A saved login never moves to a new address (security sweep
     // 2026-10, S1): the form says so as the address changes, and Save asks
@@ -658,7 +814,7 @@
 
     // H. An old Plex service becomes a picked person.
     step = "H";
-    document.querySelector('[data-signin="' + CFG.oldId + '"]').click();
+    openServices(CFG.oldId);
     await waitFor("the old service's panel", function () {
       return document.querySelector('#acct-services [aria-label="Edit Plex (old)"]');
     });

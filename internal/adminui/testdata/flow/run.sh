@@ -94,6 +94,31 @@ old=$(curl -fsS "${auth[@]}" -d '{"name":"Old Plex Person"}' "$base/api/v1/admin
 curl -fsS "${auth[@]}" "$base/api/v1/admin/profiles/$old/services" -o /dev/null \
   -d "$(jq -n --arg t "$old_token" '{type: "plex", name: "Plex (old)",
         baseUrl: "https://plex.example.com:32400", loginKind: "token", token: $t}')"
+# Grandma's devices, linked as an app links one (request, approve, claim):
+# her phone in use now, an old iPad last seen 41 days ago, a watch never
+# used since. A TV is left waiting for the page to approve (step P).
+link_device() {
+  local req code claim
+  req=$(curl -fsS -H "Content-Type: application/json" "$base/api/v1/link/request" \
+    -d "$(jq -n --arg l "$1" '{deviceLabel: $l}')")
+  code=$(jq -er .code <<<"$req")
+  claim=$(jq -er .claimSecret <<<"$req")
+  curl -fsS "${auth[@]}" "$base/api/v1/admin/links/approve" -o /dev/null \
+    -d "$(jq -n --arg c "$code" --arg p "$grandma" '{code: $c, profileId: $p}')"
+  curl -fsS -H "Content-Type: application/json" "$base/api/v1/link/claim" \
+    -d "$(jq -n --arg s "$claim" '{claimSecret: $s}')" | jq -er .token
+}
+phone_tok=$(link_device "Grandma's iPhone")
+ipad_tok=$(link_device "Old iPad")
+link_device "Grandma's Apple Watch" >/dev/null
+for tok in "$phone_tok" "$ipad_tok"; do
+  curl -fsS -H "Authorization: Bearer $tok" "$base/api/v1/devices/me" -o /dev/null
+done
+"$work/flow" lastseen -db "$work/alexandria.db" -label "Old iPad" -days 41
+tv=$(curl -fsS -H "Content-Type: application/json" "$base/api/v1/link/request" \
+  -d '{"deviceLabel": "Playroom TV"}')
+tv_code=$(jq -er .code <<<"$tv")
+tv_claim=$(jq -er .claimSecret <<<"$tv")
 # The admin login, as the page's set-up screen makes it. The page signs in
 # with one recovery code, curl with another.
 enrol=$(curl -fsS "${auth[@]}" "$base/api/v1/admin/auth/enroll" \
@@ -109,9 +134,10 @@ admin() { curl -fsS -b "$jar" "$@"; }
 jq -n --arg pw "$password" --arg rc "$code_page" --arg at "$admin_plex_token" \
   --arg g "$grandma" --arg o "$old" --arg abs "$abs_password" \
   --arg kg "$key_grandma" --arg kb "$key_bob" --arg kc "$key_carol" --arg kh "$key_hostile" \
-  --arg ns "${NO_STORAGE:-}" \
+  --arg ns "${NO_STORAGE:-}" --arg tc "$tv_code" --arg ts "$tv_claim" \
   '{password: $pw, recovery: $rc, adminToken: $at, grandmaId: $g, oldId: $o, absPassword: $abs,
-    keys: {grandma: $kg, bob: $kb, carol: $kc, hostile: $kh}, noStorage: ($ns == "1")}' \
+    keys: {grandma: $kg, bob: $kb, carol: $kc, hostile: $kh}, noStorage: ($ns == "1"),
+    tvCode: $tc, tvClaim: $ts}' \
   >"$work/config.json"
 if [ "${NO_STORAGE:-}" = 1 ]; then echo "storage blocked in the page for this run (NO_STORAGE=1)"; fi
 
@@ -184,6 +210,18 @@ check_admin() {
   done
 }
 
+if reached people; then
+  admin "$base/api/v1/admin/profiles" >"$work/people.json"
+  check "people: curl GET /admin/profiles: the TV approved on the page is Grandma's, the old iPad gone" \
+    jq -e --arg g "$grandma" --arg a "Grandma's Apple Watch" --arg i "Grandma's iPhone" \
+    '[.profiles[] | select(.id == $g) | .devices[].label] | sort == ([$a, $i, "Playroom TV"] | sort)' \
+    "$work/people.json"
+  check "people: curl GET /admin/profiles: the person added and removed on the page is gone" \
+    jq -e '[.profiles[] | select(.name == "Flow Visitor")] | length == 0' "$work/people.json"
+  go_on people
+else
+  flunk "the page reached the people checkpoint"
+fi
 if reached added; then
   check_admin "after the add" "$grandma" "Plex" "$(pick 42 Grandma)"
   check "after the add: the Audiobookshelf service is still there, password not shown" \

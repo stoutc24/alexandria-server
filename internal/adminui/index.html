@@ -5,63 +5,143 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Alexandria Companion</title>
 <style>
+  /* One area at a time: a header with the server's state, a nav of the
+     areas (a rail when wide, a scrolling row on a phone), and the people
+     collapsed to one line each (renderPeople). */
   :root {
-    --bg: #f7f7f9;
+    --bg: #f5f6f9;
     --surface: #ffffff;
-    --border: #e2e2e8;
+    --surface-2: #f0f1f5;
+    --border: #e2e3ea;
     --text: #1a1a20;
-    --muted: #6b6b78;
+    --muted: #686875;
     --accent: #2563EB;
     --accent-soft: rgba(37, 99, 235, 0.1);
+    --on-accent: #ffffff;
     --gold: #C9822A;
+    --gold-soft: rgba(201, 130, 42, 0.14);
+    --warn: #8a5a14;
     --danger: #b3261e;
+    --danger-soft: rgba(179, 38, 30, 0.08);
     --ok: #2e7d4f;
+    --ok-soft: rgba(46, 125, 79, 0.1);
     --radius: 10px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #131317;
       --surface: #1c1c22;
+      --surface-2: #24242c;
       --border: #2e2e38;
       --text: #ececf1;
       --muted: #9a9aa8;
       --accent: #6b9cff;
       --accent-soft: rgba(107, 156, 255, 0.14);
+      --on-accent: #0b1530;
       --gold: #e0a45c;
+      --gold-soft: rgba(224, 164, 92, 0.16);
+      --warn: #e8b06a;
       --danger: #ef9a93;
+      --danger-soft: rgba(239, 154, 147, 0.12);
       --ok: #7ed3a2;
+      --ok-soft: rgba(126, 211, 162, 0.12);
+      color-scheme: dark;
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
     font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
-  header {
-    padding: 22px 20px 18px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
   }
-  header h1 { margin: 0; font-size: 19px; letter-spacing: -0.2px; }
-  header p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
-  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 60px; }
-  section {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 18px;
-    margin-bottom: 18px;
+
+  /* The header: the page's name, then (signed in) the server's state. */
+  header.top { background: var(--surface); border-bottom: 1px solid var(--border); }
+  .top-in {
+    max-width: 1180px; margin: 0 auto; padding: 16px 16px 14px;
+    display: flex; flex-wrap: wrap; gap: 12px 20px;
+    align-items: center; justify-content: space-between;
   }
-  h2 { margin: 0 0 4px; font-size: 15px; }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .mark {
+    width: 34px; height: 34px; border-radius: 9px; flex: none;
+    background: linear-gradient(135deg, var(--accent), var(--gold));
+  }
+  .brand h1 { margin: 0; font-size: 18px; letter-spacing: -0.2px; }
+  .brand p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+  .state { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+  /* Pills say a state; badges count. */
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px;
+    border-radius: 999px; font-size: 12.5px; white-space: nowrap;
+    background: var(--surface-2); color: var(--muted); border: 1px solid var(--border);
+  }
+  .pill.ok { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+  .pill.warn { color: var(--warn); background: var(--gold-soft); border-color: transparent; }
+  .pill.bad { color: var(--danger); background: var(--danger-soft); border-color: transparent; }
+  .pill.info { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .badge {
+    min-width: 20px; padding: 0 6px; border-radius: 999px; font-size: 12px;
+    line-height: 20px; text-align: center; font-variant-numeric: tabular-nums;
+    background: var(--surface-2); color: var(--muted);
+  }
+  .badge:empty { display: none; }
+  /* Dark text on the gold reads in both themes. */
+  .badge.hot { background: var(--gold); color: #1a1a20; font-weight: 700; }
+
+  /* Layout */
+  main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 60px; }
+  .frame {
+    display: grid; grid-template-columns: 210px minmax(0, 1fr);
+    gap: 24px; align-items: start;
+  }
+  nav.areas { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 2px; }
+  nav.areas button {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    text-align: left; border: 0; background: none; padding: 9px 12px;
+    border-radius: 8px; color: var(--muted); font-weight: 500;
+  }
+  nav.areas button:hover { background: var(--surface-2); color: var(--text); }
+  nav.areas button[aria-current="page"] { background: var(--accent-soft); color: var(--accent); }
+  .area { display: grid; gap: 16px; min-width: 0; }
+  .area-head {
+    display: flex; flex-wrap: wrap; gap: 10px 16px;
+    align-items: flex-end; justify-content: space-between;
+  }
+  .area-head h2 { margin: 0; font-size: 21px; text-wrap: balance; }
+  .area-head p { margin: 3px 0 0; color: var(--muted); font-size: 14px; max-width: 68ch; }
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 18px; min-width: 0;
+  }
+  .panel > h3 { margin: 0 0 10px; font-size: 15px; }
+  .panel.narrow { max-width: 560px; margin: 0 auto 18px; }
+  @media (max-width: 760px) {
+    .frame { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+    nav.areas {
+      position: static; flex-direction: row; overflow-x: auto;
+      gap: 4px; padding-bottom: 4px;
+    }
+    nav.areas button { white-space: nowrap; flex: none; }
+  }
+
+  h2 { margin: 0 0 4px; font-size: 17px; }
   .hint { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
-  input[type=text], input[type=password], select {
+  input[type=text], input[type=password], input[type=search], select {
     width: 100%; padding: 10px 12px; font-size: 14px;
     border: 1px solid var(--border); border-radius: 8px;
     background: var(--bg); color: var(--text); font-family: inherit;
   }
-  input:focus-visible, button:focus-visible, select:focus-visible {
+  input:focus-visible, button:focus-visible, select:focus-visible,
+  summary:focus-visible, [tabindex]:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 1px;
   }
   button {
@@ -71,10 +151,14 @@
   }
   button:hover { border-color: var(--accent); }
   button.primary {
-    background: var(--accent); border-color: var(--accent); color: #fff;
+    background: var(--accent); border-color: var(--accent); color: var(--on-accent);
   }
   button.primary:hover { filter: brightness(1.08); }
   button.danger { color: var(--danger); }
+  button.danger:hover { border-color: var(--danger); background: var(--danger-soft); }
+  button.quiet { border-color: transparent; background: none; color: var(--muted); }
+  button.quiet:hover { color: var(--text); background: var(--surface-2); }
+  button.small { padding: 5px 11px; font-size: 13px; }
   button:disabled { opacity: .5; cursor: default; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .grow { flex: 1; min-width: 180px; }
@@ -95,6 +179,7 @@
     gap: 10px; padding: 7px 0; border-top: 1px solid var(--border);
     font-size: 13px;
   }
+  #admin-devices .device:first-child, #svc-admins .device:first-child { border-top: 0; }
   .empty { color: var(--muted); font-size: 14px; padding: 6px 0; }
   .admin-device { min-width: 0; overflow-wrap: anywhere; }
   .toast {
@@ -105,9 +190,6 @@
   }
   .toast.show { opacity: 1; }
   .toast.err { background: var(--danger); color: #fff; }
-  .stat { display: flex; gap: 22px; flex-wrap: wrap; }
-  .stat div span { display: block; font-size: 21px; font-weight: 700; }
-  .stat div small { color: var(--muted); font-size: 12px; }
   .note {
     font-size: 12.5px; color: var(--muted); border-left: 3px solid var(--gold);
     padding: 8px 0 8px 11px; margin-top: 14px;
@@ -115,15 +197,102 @@
   .note code {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
   }
-  #app[hidden], #login[hidden], #acct[hidden] { display: none; }
 
-  /* Sign-in & services panel */
+  /* Overview */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .tile {
+    display: block; width: 100%; text-align: left; padding: 14px 16px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  button.tile:hover { border-color: var(--accent); }
+  .tile .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .tile .v { font-size: 26px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .tile .s { font-size: 13px; color: var(--muted); }
+  .attention { display: grid; gap: 8px; }
+  .att {
+    display: flex; gap: 12px; align-items: center; justify-content: space-between;
+    padding: 10px 12px; border-radius: 8px; background: var(--surface-2);
+  }
+  .att .what { display: flex; gap: 10px; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+  .sev { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
+  .sev.warn { background: var(--gold); }
+  .sev.bad { background: var(--danger); }
+  .sev.info { background: var(--accent); }
+
+  /* People */
+  .search { max-width: 520px; }
+  .people { display: grid; gap: 10px; }
+  .person { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+  .person.open { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+  .p-head {
+    display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto;
+    gap: 12px; align-items: center; padding: 12px 14px;
+  }
+  .chev {
+    width: 30px; height: 30px; padding: 0; border: 0; background: none;
+    color: var(--muted); display: grid; place-items: center; border-radius: 8px;
+  }
+  .chev:hover { background: var(--surface-2); color: var(--text); }
+  .chev svg { transition: transform .18s ease; }
+  .person.open .chev svg { transform: rotate(90deg); }
+  .avatar {
+    width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+    font-weight: 700; color: var(--on-accent); background: var(--accent);
+  }
+  .p-main { min-width: 0; }
+  .p-name { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+  .p-meta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .chips:empty { display: none; }
+  .p-actions { display: flex; gap: 6px; align-items: center; }
+  .p-body { border-top: 1px solid var(--border); padding: 0 14px 14px; }
+  .subtabs {
+    display: flex; gap: 2px; border-bottom: 1px solid var(--border);
+    margin: 0 -14px 12px; padding: 0 14px; overflow-x: auto;
+  }
+  .subtabs button {
+    border: 0; border-radius: 0; background: none; padding: 10px 12px;
+    color: var(--muted); font-weight: 500; white-space: nowrap;
+    border-bottom: 2px solid transparent;
+  }
+  .subtabs button:hover { color: var(--text); }
+  .subtabs button[aria-pressed="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  .group { margin-top: 4px; }
+  .group-h {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--muted); padding: 6px 2px;
+  }
+  .dev {
+    display: grid; grid-template-columns: 26px minmax(0, 1fr) auto auto;
+    gap: 10px; align-items: center; padding: 6px; border-radius: 8px; font-size: 14px;
+  }
+  .dev:hover { background: var(--surface-2); }
+  .dev svg { color: var(--muted); }
+  .dev-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dev-seen { color: var(--muted); font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .dev.stale .dev-name { color: var(--muted); }
+  .dev.stale .dev-seen { color: var(--warn); }
+  @media (max-width: 560px) {
+    .p-head { grid-template-columns: auto auto minmax(0, 1fr); }
+    .p-actions { grid-column: 1 / -1; justify-content: flex-end; }
+    .dev { grid-template-columns: 22px minmax(0, 1fr) auto; }
+    .dev-seen { grid-column: 2; grid-row: 2; }
+  }
+
+  /* Server Admin and Maintenance */
+  details.add > summary { cursor: pointer; color: var(--accent); font-weight: 500; margin-top: 12px; }
+  .formgrid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 8px; margin-top: 12px;
+  }
+  .kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0 0 14px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; }
+
+  /* Sign-in & services: the account panel, inside a person's card */
   #acct { scroll-margin-top: 12px; }
   /* One change at a time: dim the buttons while a request is out. */
   #acct.busy button { opacity: .55; pointer-events: none; }
-  button[aria-expanded="true"] {
-    border-color: var(--accent); background: var(--accent-soft);
-  }
   h3.sub { margin: 22px 0 4px; font-size: 14px; }
   label.field {
     display: block; margin: 13px 0 5px; font-size: 13px; color: var(--muted);
@@ -139,7 +308,6 @@
   }
 
   /* The Plex picker (renderPlexBox): built from nodes, never markup. */
-  #sf-classic[hidden], #sf-plex[hidden] { display: none; }
   #sf-plex { margin-top: 13px; }
   #sf-plex .row { margin-top: 11px; }
   #sf-plex p { margin: 8px 0 0; }
@@ -157,16 +325,31 @@
     border: 1px solid var(--border); white-space: nowrap;
   }
   .tag.home { color: var(--accent); border-color: var(--accent); }
+  @media (prefers-reduced-motion: reduce) {
+    .chev svg, .toast { transition: none; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>Alexandria Companion</h1>
-  <p>Household management — who is connected, and how much space they use.</p>
+<header class="top">
+  <div class="top-in">
+    <div class="brand">
+      <div class="mark" aria-hidden="true"></div>
+      <div>
+        <h1>Alexandria Companion</h1>
+        <p>Household management — who is connected, and how much space they use.</p>
+      </div>
+    </div>
+    <div class="state" id="top-state" hidden>
+      <span class="pill" id="key-pill"></span>
+      <button class="small" id="backup-top">Back up</button>
+      <button class="small quiet" id="signout-top">Sign out</button>
+    </div>
+  </div>
 </header>
 
 <main>
-  <section id="login" hidden>
+  <section id="login" class="panel narrow" hidden>
     <h2>Sign in</h2>
     <p class="hint">Your admin password and the current code from your
       authenticator app.</p>
@@ -186,7 +369,7 @@
     </p>
   </section>
 
-  <section id="enroll" hidden>
+  <section id="enroll" class="panel narrow" hidden>
     <h2>Set up admin sign-in</h2>
     <p class="hint">Setting up a login takes the place of the admin token:
       once you finish, that token no longer opens this page and is kept only
@@ -207,103 +390,187 @@
   </section>
 
   <div id="app" hidden>
-    <section>
-      <h2>Waiting to connect</h2>
-      <p class="hint">Someone opened Alexandria and read you a code. Approve it
-        and name them — an existing name adds the device to that person.</p>
-      <div id="pending"></div>
-    </section>
+    <div class="frame">
+      <!-- The areas, one shown at a time (showArea); the address names it
+           (#people), so a reload comes back to the same one. -->
+      <nav class="areas" id="areas" aria-label="Sections">
+        <button type="button" data-area="overview"><span>Overview</span></button>
+        <button type="button" data-area="people"><span>People</span><span class="badge" id="badge-people"></span></button>
+        <button type="button" data-area="waiting"><span>Waiting to connect</span><span class="badge" id="badge-waiting"></span></button>
+        <button type="button" data-area="admin"><span>Server Admin</span><span class="badge" id="badge-admin"></span></button>
+        <button type="button" data-area="phones"><span>Signed-in phones</span><span class="badge" id="badge-phones"></span></button>
+        <button type="button" data-area="library"><span>Library index</span></button>
+        <button type="button" data-area="maint"><span>Maintenance</span></button>
+      </nav>
 
-    <section>
-      <h2>People</h2>
-      <p class="hint">Counts and devices only. What anyone actually listened to
-        is not available here.</p>
-      <div id="profiles"></div>
-    </section>
+      <div>
+        <section class="area" id="area-overview" aria-labelledby="h-overview">
+          <div class="area-head">
+            <div>
+              <h2 id="h-overview">Overview</h2>
+              <p>What needs you, then the household at a glance.</p>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>Needs attention</h3>
+            <div class="attention" id="attention"></div>
+          </div>
+          <div class="tiles" id="tiles"></div>
+        </section>
 
-    <!-- Opened from a person's "Sign-in & services" button. A section of
-         its own, not part of their card: the People list rebuilds on every
-         poll and would wipe a half-typed form. -->
-    <section id="acct" hidden aria-labelledby="acct-title">
-      <div class="row" style="justify-content:space-between">
-        <h2 id="acct-title" tabindex="-1"></h2>
-        <button data-act="close">Close</button>
+        <section class="area" id="area-waiting" aria-labelledby="h-waiting" hidden>
+          <div class="area-head">
+            <div>
+              <h2 id="h-waiting">Waiting to connect</h2>
+              <p>Someone opened Alexandria and read you a code. Approve it and
+                name them — an existing name adds the device to that person.</p>
+            </div>
+          </div>
+          <div class="panel"><div id="pending"></div></div>
+          <datalist id="pending-names"></datalist>
+        </section>
+
+        <section class="area" id="area-people" aria-labelledby="h-people" hidden>
+          <div class="area-head">
+            <div>
+              <h2 id="h-people">People</h2>
+              <p>Counts and devices only. What anyone actually listened to is
+                not available here.</p>
+            </div>
+            <div class="row">
+              <button type="button" class="small quiet" id="expand-all">Expand all</button>
+              <button type="button" class="small quiet" id="collapse-all">Collapse all</button>
+              <button type="button" class="small primary" id="add-person"
+                      aria-expanded="false" aria-controls="add-person-form">Add person</button>
+            </div>
+          </div>
+          <form id="add-person-form" class="panel" autocomplete="off" hidden>
+            <div class="row">
+              <input class="grow" type="text" id="add-person-name" maxlength="80"
+                     placeholder="Their name" aria-label="Their name" spellcheck="false">
+              <button type="submit" class="primary">Add</button>
+              <button type="button" id="add-person-cancel">Cancel</button>
+            </div>
+            <p class="hint" style="margin:10px 0 0">Then invite them from Sign-in,
+              or have them read you a code from the app.</p>
+          </form>
+          <input class="search" type="search" id="people-search" spellcheck="false"
+                 placeholder="Find a person or a device" aria-label="Find a person or a device">
+          <div class="people" id="profiles"></div>
+          <p class="empty" id="people-empty" hidden></p>
+        </section>
+
+        <!-- Server Admin's sign-ins to the servers you run. The list rebuilds
+             on every poll; the form stays outside it, so typing survives. -->
+        <section class="area" id="area-admin" aria-labelledby="h-admin" hidden>
+          <div class="area-head">
+            <div>
+              <h2 id="h-admin">Server Admin sign-ins</h2>
+              <p>Your admin sign-in to each server you run, so Server Admin on
+                your phones can manage all of them, even ones that are not in
+                your library. A phone signed in here fetches them once, with a
+                code from your authenticator. Passwords are locked with this
+                server's secrets key and never shown again. Plex is not kept
+                here: sign in with Plex on each phone.</p>
+            </div>
+          </div>
+          <div class="panel">
+            <div id="svc-admins"></div>
+            <details class="add" id="svc-admin-add">
+              <summary>Add a server sign-in</summary>
+              <form id="svc-admin-form" class="formgrid" autocomplete="off" hidden>
+                <select id="svc-admin-type" aria-label="Service">
+                  <option value="abs">Audiobookshelf</option>
+                  <option value="jellyfin">Jellyfin</option>
+                  <option value="kavita">Kavita</option>
+                  <option value="komga">Komga (email)</option>
+                  <option value="navidrome">Navidrome</option>
+                  <option value="booklore">Grimmory</option>
+                  <option value="storyteller">Storyteller</option>
+                  <option value="stump">Stump</option>
+                  <option value="calibreweb">Calibre-Web</option>
+                </select>
+                <input id="svc-admin-url" type="text" inputmode="url" spellcheck="false"
+                  placeholder="https://server.example.com" aria-label="Server address" required>
+                <input id="svc-admin-user" type="text" spellcheck="false" autocomplete="off"
+                  placeholder="Admin username" aria-label="Admin username" required>
+                <input id="svc-admin-pass" type="password" autocomplete="new-password"
+                  placeholder="Admin password" aria-label="Admin password" required>
+                <button type="submit" class="primary">Save</button>
+              </form>
+            </details>
+          </div>
+        </section>
+
+        <section class="area" id="area-phones" aria-labelledby="h-phones" hidden>
+          <div class="area-head">
+            <div>
+              <h2 id="h-phones">Signed-in phones</h2>
+              <p>Phones that can manage this server without signing in each time.
+                Revoke one you have lost or no longer use. This does not
+                disconnect it from Party Play or stats.</p>
+            </div>
+            <button class="small danger" id="revoke-all-phones">Sign out all phones</button>
+          </div>
+          <div class="panel"><div id="admin-devices"></div></div>
+        </section>
+
+        <section class="area" id="area-library" aria-labelledby="h-library" hidden>
+          <div class="area-head">
+            <div>
+              <h2 id="h-library">Library index</h2>
+              <p>The index is shared: it describes your servers, not any person.
+                Everyone connected reads the same one.</p>
+            </div>
+          </div>
+          <div class="tiles" id="catalog"></div>
+        </section>
+
+        <section class="area" id="area-maint" aria-labelledby="h-maint" hidden>
+          <div class="area-head">
+            <div>
+              <h2 id="h-maint">Maintenance</h2>
+              <p>A backup holds everyone's history and stats, so keep the file
+                somewhere private.</p>
+            </div>
+          </div>
+          <div class="panel">
+            <dl class="kv"><dt>Secrets key</dt><dd id="maint-key">…</dd></dl>
+            <div class="row">
+              <button class="primary" id="backup">Download backup</button>
+              <button id="refresh">Refresh</button>
+              <button id="signout">Sign out of this browser</button>
+            </div>
+          </div>
+        </section>
       </div>
-      <p class="hint">One username and password for every Alexandria app. Set up
-        their services here once, send an invite, and each service signs in
-        for them.</p>
-      <div id="acct-notice"></div>
-      <h3 class="sub">Sign-in</h3>
-      <div id="acct-status"></div>
-      <h3 class="sub">Services</h3>
-      <p class="hint" style="margin-bottom:10px">Each one signs in for them
-        automatically. The free plan keeps the first 2, so the order
-        matters.</p>
-      <div id="acct-services"></div>
-      <div id="acct-form" style="margin-top:12px"></div>
-    </section>
+    </div>
 
-    <section>
-      <h2>Library index</h2>
-      <div id="catalog" class="stat"></div>
-      <div class="note">The index is shared: it describes your servers, not any
-        person. Everyone connected reads the same one.</div>
-    </section>
-
-    <section>
-      <h2>Signed-in phones</h2>
-      <p class="hint">Phones that can manage this server without signing in each time.
-        Revoke one you have lost or no longer use. This does not disconnect it from
-        Party Play or stats.</p>
-      <div id="admin-devices"></div>
-      <div class="row" style="margin-top:11px">
-        <button class="danger" id="revoke-all-phones">Sign out all phones</button>
+    <!-- A person's sign-in & services: ONE panel, moved into their card
+         while their Sign-in or Services tab is open (placeAcct) and parked
+         here otherwise. The cards update in place and nothing in load()
+         rebuilds this panel, so a half-typed form survives the 5 s poll. -->
+    <div id="acct-park" hidden>
+      <div id="acct" hidden aria-labelledby="acct-title">
+        <h3 id="acct-title" class="sr-only" tabindex="-1"></h3>
+        <div id="acct-notice"></div>
+        <div id="acct-part-signin">
+          <p class="hint">One username and password for every Alexandria app.
+            Set up their services, send an invite, and each service signs in
+            for them.</p>
+          <div id="acct-status"></div>
+        </div>
+        <div id="acct-part-services">
+          <p class="hint">Each one signs in for them automatically. The free
+            plan keeps the first 2, so the order matters.</p>
+          <div id="acct-services"></div>
+          <div id="acct-form" style="margin-top:12px"></div>
+        </div>
       </div>
-    </section>
-
-    <!-- Server Admin's sign-ins to the servers you run. The list rebuilds
-         on every poll; the form stays outside it, so typing survives. -->
-    <section>
-      <h2>Server Admin sign-ins</h2>
-      <p class="hint">Your admin sign-in to each server you run, so Server Admin
-        on your phones can manage all of them, even ones that are not in your
-        library. A phone signed in here fetches them once, with a code from
-        your authenticator. Passwords are locked with this server's secrets
-        key and never shown again. Plex is not kept here: sign in with Plex on
-        each phone.</p>
-      <div id="svc-admins"></div>
-      <form id="svc-admin-form" class="row" style="margin-top:11px" autocomplete="off" hidden>
-        <select id="svc-admin-type" aria-label="Service">
-          <option value="abs">Audiobookshelf</option>
-          <option value="jellyfin">Jellyfin</option>
-          <option value="kavita">Kavita</option>
-          <option value="komga">Komga (email)</option>
-          <option value="navidrome">Navidrome</option>
-          <option value="booklore">Grimmory</option>
-          <option value="storyteller">Storyteller</option>
-          <option value="stump">Stump</option>
-          <option value="calibreweb">Calibre-Web</option>
-        </select>
-        <input id="svc-admin-url" type="text" inputmode="url" spellcheck="false"
-          placeholder="https://server.example.com" aria-label="Server address" required>
-        <input id="svc-admin-user" type="text" spellcheck="false" autocomplete="off"
-          placeholder="Admin username" aria-label="Admin username" required>
-        <input id="svc-admin-pass" type="password" autocomplete="new-password"
-          placeholder="Admin password" aria-label="Admin password" required>
-        <button type="submit">Save</button>
-      </form>
-    </section>
-
-    <section>
-      <h2>Maintenance</h2>
-      <div class="row">
-        <button id="backup">Download backup</button>
-        <button id="refresh">Refresh</button>
-        <button id="signout">Sign out of this browser</button>
-      </div>
-    </section>
+    </div>
   </div>
 </main>
+
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
@@ -423,8 +690,10 @@
           '<span class="meta">' + pendingMeta(p) + '</span>' +
         '</div>' +
         '<div class="row" style="margin-top:11px">' +
+          // list: the people already here, so a name can be picked.
           '<input class="grow" type="text" placeholder="Who is this?" ' +
-            'data-name-for="' + esc(p.code) + '" spellcheck="false">' +
+            'data-name-for="' + esc(p.code) + '" spellcheck="false" ' +
+            'list="pending-names" autocomplete="off">' +
           '<button class="primary" data-approve="' + esc(p.code) + '">Approve</button>' +
         '</div>' +
       '</div>';
@@ -454,53 +723,505 @@
     }).catch(function (e) { toast(e.message, true); });
   }
 
-  // ---- profiles ------------------------------------------------------
-  var profilesHTML = null;
-  var lastProfiles = [];
+  // ---- areas ---------------------------------------------------------
+  //
+  // One area at a time. The address names it (#people), so a reload or a
+  // bookmark comes back to it: the page keeps nothing in storage but the
+  // Plex picker's client id (testdata/flow/driver.js checks that).
+  var AREAS = ["overview", "people", "waiting", "admin", "phones", "library", "maint"];
 
-  function renderProfiles(list) {
-    lastProfiles = list;
-    var el = $("profiles");
-    if (!list.length) {
-      profilesHTML = null;
-      el.innerHTML = '<p class="empty">Nobody is connected yet.</p>';
+  function areaFromHash() {
+    var h = (location.hash || "").replace(/^#/, "");
+    return AREAS.indexOf(h) >= 0 ? h : null;
+  }
+
+  function showArea(name) {
+    if (AREAS.indexOf(name) < 0) name = "overview";
+    AREAS.forEach(function (a) { $("area-" + a).hidden = a !== name; });
+    document.querySelectorAll("#areas [data-area]").forEach(function (b) {
+      if (b.dataset.area === name) b.setAttribute("aria-current", "page");
+      else b.removeAttribute("aria-current");
+    });
+  }
+
+  // The admin chose an area: into the history (Back returns), from the top.
+  function goArea(name) {
+    if (areaFromHash() !== name) history.pushState(null, "", "#" + name);
+    showArea(name);
+    window.scrollTo(0, 0);
+  }
+
+  // ---- overview, the header and the badges ----------------------------
+  //
+  // All read from what load() last fetched (seen); nothing here asks the
+  // server anything of its own.
+  var seen = { pending: [], profiles: [], summary: {}, phones: [], svcAdmins: null, catalog: null };
+  var firstLoad = true;
+  // A device not seen for this long is marked, and offered for revoking.
+  var STALE_DAYS = 30;
+
+  function daysSince(iso) {
+    if (!iso) return null;
+    var t = new Date(iso).getTime();
+    return isNaN(t) ? null : (Date.now() - t) / 86400000;
+  }
+  function isStale(d) {
+    var n = daysSince(d.lastSeenAt);
+    return n !== null && n > STALE_DAYS;
+  }
+  function plural(n, one, many) { return n + " " + (n === 1 ? one : many); }
+  function num(n) { return Number(n || 0).toLocaleString(); }
+  function setText(el, s) { if (el.textContent !== s) el.textContent = s; }
+  function profileById(id) {
+    for (var i = 0; i < seen.profiles.length; i++) {
+      if (seen.profiles[i].id === id) return seen.profiles[i];
+    }
+    return null;
+  }
+
+  function renderOverview() {
+    var people = seen.profiles, pend = seen.pending, items = [];
+    var devices = 0, stale = [];
+    people.forEach(function (p) {
+      (p.devices || []).forEach(function (d) {
+        devices++;
+        if (isStale(d)) stale.push(p.name + "'s " + (d.label || "unnamed device"));
+      });
+    });
+    if (pend.length) {
+      items.push(["warn", pend.length === 1
+        ? "A device is waiting to connect · code " + pend[0].code
+        : pend.length + " devices are waiting to connect", "Approve", "waiting"]);
+    }
+    if (stale.length) {
+      items.push(["warn", plural(stale.length, "device", "devices") + " not seen in " +
+        STALE_DAYS + " days: " + stale.slice(0, 2).join(", ") +
+        (stale.length > 2 ? " and " + (stale.length - 2) + " more" : ""), "Review", "stale"]);
+    }
+    people.forEach(function (p) {
+      var s = seen.summary[p.id];
+      if (!s) return;
+      if (s.login && s.login.locked) {
+        items.push(["bad", p.name + "'s sign-in is paused after wrong attempts. " +
+          "It lifts by itself.", "Show", "signin:" + p.id]);
+      }
+      if (s.invite) {
+        items.push(["info", (s.invite.purpose === "reset" ? "New-password invite" : "Invite") +
+          " waiting for " + p.name + ", expires " + untilUnix(s.invite.expiresAt),
+          "Show", "signin:" + p.id]);
+      }
+    });
+    var key = seen.svcAdmins ? seen.svcAdmins.available : null;
+    if (key === false) {
+      items.push(["warn", "No secrets key, so this server can't keep service logins " +
+        "or Server Admin sign-ins.", "Details", "maint"]);
+    }
+    setHTML($("attention"), items.length ? items.map(function (a) {
+      return '<div class="att"><div class="what"><span class="sev ' + a[0] + '"></span>' +
+        '<span>' + esc(a[1]) + '</span></div>' +
+        '<button class="small" data-attn="' + esc(a[3]) + '">' + esc(a[2]) + '</button></div>';
+    }).join("") : '<p class="empty">Nothing needs you right now.</p>');
+
+    var kept = key ? ((seen.svcAdmins.admins || []).length) : null;
+    var cat = seen.catalog || {};
+    var servers = Object.keys(cat.bySource || {}).length;
+    setHTML($("tiles"), [
+      ["people", "People", num(people.length), plural(devices, "device", "devices") + " linked"],
+      ["waiting", "Waiting", num(pend.length),
+        pend.length ? "asked " + ago(pend[0].createdAt) : "codes last 10 minutes"],
+      ["admin", "Server Admin", kept === null ? "–" : num(kept),
+        kept === null ? "no secrets key" : "sign-ins kept"],
+      ["phones", "Phones", num(seen.phones.length), "signed in to manage"],
+      ["library", "Library index", num(cat.distinctWorks),
+        "titles from " + plural(servers, "server", "servers")]
+    ].map(function (t) {
+      return '<button class="tile" data-go="' + t[0] + '"><div class="k">' + esc(t[1]) +
+        '</div><div class="v">' + esc(t[2]) + '</div><div class="s">' + esc(t[3]) +
+        '</div></button>';
+    }).join(""));
+
+    setText($("badge-people"), people.length ? String(people.length) : "");
+    setText($("badge-waiting"), pend.length ? String(pend.length) : "");
+    $("badge-waiting").classList.toggle("hot", pend.length > 0);
+    setText($("badge-admin"), kept ? String(kept) : "");
+    setText($("badge-phones"), seen.phones.length ? String(seen.phones.length) : "");
+
+    var pill = $("key-pill");
+    pill.hidden = key === null;
+    pill.className = "pill " + (key ? "ok" : "warn");
+    setHTML(pill, '<span class="dot"></span>' + (key ? "Secrets key set" : "No secrets key"));
+    setText($("maint-key"), key === null ? "…" : key
+      ? "set · sign-ins and service logins can be kept"
+      : "not set · set ALEXANDRIA_SECRETS_KEY (see the README) and restart");
+  }
+
+  // A "Needs attention" button.
+  function attention(what) {
+    if (what === "waiting") {
+      goArea("waiting");
+      var first = document.querySelector("#pending [data-name-for]");
+      if (first) first.focus();
+    } else if (what === "stale") {
+      goArea("people");
+      seen.profiles.forEach(function (p) {
+        if ((p.devices || []).some(isStale)) selectTab(p.id, "devices");
+      });
+    } else if (what === "maint") {
+      goArea("maint");
+    } else if (what.indexOf("signin:") === 0) {
+      var id = what.slice("signin:".length);
+      goArea("people");
+      selectTab(id, "signin");
+      if (cards[id]) cards[id].el.scrollIntoView({ block: "start" });
+    }
+  }
+
+  // ---- people ----------------------------------------------------------
+  //
+  // One card per person, made once and then updated in place. The list is
+  // read every 5 s; rebuilding it would throw away a keyboard user's focus
+  // and the account panel open inside a card (placeAcct). Text that ages
+  // is rewritten; a card's buttons stay put.
+  var cards = {};                         // profile id -> that card's parts
+  var ui = { open: {}, tab: {}, query: "" };
+
+  var ICON = {
+    phone: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg>',
+    tv: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="2.5" y="4.5" width="19" height="12.5" rx="2"/><path d="M8 20.5h8"/></svg>',
+    watch: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="6.5" y="6" width="11" height="12" rx="3"/>' +
+      '<path d="M9 6l.6-3.5h4.8L15 6M9 18l.6 3.5h4.8L15 18"/></svg>',
+    chev: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+      'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M9 6l6 6-6 6"/></svg>'
+  };
+
+  // By the name a device was linked with ("iPhone", "Playroom TV",
+  // "Chris's Apple Watch"): the server keeps no other kind.
+  function deviceKind(label) {
+    var l = String(label || "").toLowerCase();
+    if (/watch|wear ?os/.test(l)) return "watch";
+    if (/\btv\b|tvos|television|shield|chromecast|roku|fire ?stick|tizen/.test(l)) return "tv";
+    return "phone";
+  }
+  var KINDS = [["phone", "Phones, tablets & computers"], ["tv", "TVs"], ["watch", "Watches"]];
+
+  function seenText(d) {
+    if (!d.lastSeenAt) return "never seen";
+    var n = daysSince(d.lastSeenAt);
+    if (n !== null && n > STALE_DAYS) return "not seen in " + Math.floor(n) + " days";
+    return "seen " + ago(d.lastSeenAt);
+  }
+
+  function seenTime(d) {
+    var t = d.lastSeenAt ? new Date(d.lastSeenAt).getTime() : NaN;
+    return isNaN(t) ? -Infinity : t;
+  }
+
+  function lastActive(devs) {
+    var best = -Infinity;
+    devs.forEach(function (d) { best = Math.max(best, seenTime(d)); });
+    if (best > -Infinity) return "active " + ago(new Date(best).toISOString());
+    return devs.length ? "not seen yet" : "no devices yet";
+  }
+
+  // The collapsed card's one line of facts. The sign-in facts come from
+  // /admin/accounts/summary; without it (s null) the card still shows
+  // the devices.
+  function chipsHTML(p, s) {
+    var devs = p.devices || [], c = [];
+    c.push('<span class="pill">' + esc(plural(devs.length, "device", "devices")) + '</span>');
+    if (s) {
+      if (s.login) {
+        c.push('<span class="pill info">signs in as ' + esc(s.login.username) + '</span>');
+        c.push('<span class="pill' + (s.login.totpEnabled ? ' ok' : '') + '">two-step ' +
+          (s.login.totpEnabled ? "on" : "off") + '</span>');
+        if (s.login.locked) c.push('<span class="pill bad">sign-in paused</span>');
+      } else if (!s.invite) {
+        c.push('<span class="pill">no sign-in</span>');
+      }
+      if (s.invite) {
+        c.push('<span class="pill warn">' +
+          (s.invite.purpose === "reset" ? "new-password invite" : "invite") + ' waiting</span>');
+      }
+      c.push('<span class="pill">' + esc(plural(s.services, "service", "services")) + '</span>');
+    }
+    var stale = devs.filter(isStale).length;
+    if (stale) {
+      c.push('<span class="pill warn">' + stale + ' not seen in ' + STALE_DAYS + ' days</span>');
+    }
+    return c.join("");
+  }
+
+  function makeCard(id) {
+    var el = document.createElement("article");
+    el.className = "person";
+    el.dataset.person = id;
+    var body = "pbody-" + id;
+    el.innerHTML =
+      '<div class="p-head">' +
+        '<button type="button" class="chev" data-toggle="' + esc(id) + '" ' +
+          'aria-controls="' + esc(body) + '">' + ICON.chev + '</button>' +
+        '<div class="avatar" aria-hidden="true"></div>' +
+        '<div class="p-main"><h3 class="p-name"></h3><div class="p-meta"></div>' +
+          '<div class="chips"></div></div>' +
+        '<div class="p-actions">' +
+          '<button type="button" class="small" data-toggle="' + esc(id) + '" data-manage ' +
+            'aria-controls="' + esc(body) + '"></button>' +
+          '<button type="button" class="small danger" data-delete="' + esc(id) + '">Remove</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="p-body" id="' + esc(body) + '" hidden>' +
+        '<div class="subtabs">' +
+          '<button type="button" data-tab="devices" data-for="' + esc(id) + '"></button>' +
+          '<button type="button" data-tab="signin" data-for="' + esc(id) + '">Sign-in</button>' +
+          '<button type="button" data-tab="services" data-for="' + esc(id) + '"></button>' +
+        '</div>' +
+        '<div class="p-devices"></div>' +
+        '<div class="p-slot"></div>' +
+      '</div>';
+    function q(sel) { return el.querySelector(sel); }
+    return { el: el, id: id, chev: q(".chev"), avatar: q(".avatar"), name: q(".p-name"),
+             meta: q(".p-meta"), chips: q(".chips"), manage: q("[data-manage]"),
+             del: q("[data-delete]"), body: q(".p-body"), tabs: el.querySelectorAll("[data-tab]"),
+             devices: q(".p-devices"), slot: q(".p-slot"), tab: "devices",
+             devSig: null, seenEls: {} };
+  }
+
+  function updateCard(c, p, s, query) {
+    var devs = p.devices || [];
+    var nameHit = !query || p.name.toLowerCase().indexOf(query) >= 0;
+    var hits = query ? devs.filter(function (d) {
+      return String(d.label || "").toLowerCase().indexOf(query) >= 0;
+    }) : devs;
+    c.el.hidden = !nameHit && !hits.length;
+    // Found by a device's name alone: shown open on its devices, just those.
+    var byDevice = !nameHit && hits.length > 0;
+    var open = byDevice || !!ui.open[p.id];
+    var tab = byDevice ? "devices" : (ui.tab[p.id] || "devices");
+    if (tab !== "devices" && acct.id !== p.id && !byDevice) {
+      tab = ui.tab[p.id] = "devices";
+    }
+    c.tab = tab;
+
+    setText(c.name, p.name);
+    setText(c.avatar, (p.name.trim().charAt(0) || "?").toUpperCase());
+    setText(c.meta, lastActive(devs) + " · " + hours(p.totalSeconds) + " hours · " +
+      num(p.eventCount) + " sessions");
+    setHTML(c.chips, chipsHTML(p, s));
+    c.el.classList.toggle("open", open);
+    c.body.hidden = !open;
+    c.chev.setAttribute("aria-expanded", String(open));
+    c.chev.setAttribute("aria-label", (open ? "Hide " : "Show ") + p.name);
+    c.manage.setAttribute("aria-expanded", String(open));
+    c.manage.setAttribute("aria-label", (open ? "Hide " : "Manage ") + p.name);
+    setText(c.manage, open ? "Hide" : "Manage");
+    c.del.dataset.pname = p.name;
+    c.del.setAttribute("aria-label", "Remove " + p.name);
+    c.tabs.forEach(function (b) {
+      var t = b.dataset.tab;
+      if (t === "devices") setText(b, "Devices (" + devs.length + ")");
+      if (t === "services") setText(b, s ? "Services (" + s.services + ")" : "Services");
+      b.setAttribute("aria-pressed", String(t === tab));
+    });
+    c.devices.hidden = tab !== "devices";
+    c.slot.hidden = tab === "devices";
+    renderDevices(c, p, byDevice ? hits : devs, byDevice);
+  }
+
+  // A card's devices, by kind, newest first. Rebuilt only when the devices
+  // themselves change; otherwise only their ages are rewritten, so focus
+  // on a Revoke button survives the poll.
+  function renderDevices(c, p, devs, filtered) {
+    var all = p.devices || [];
+    var groups = {};
+    KINDS.forEach(function (k) { groups[k[0]] = []; });
+    devs.forEach(function (d) { groups[deviceKind(d.label)].push(d); });
+    KINDS.forEach(function (k) {
+      groups[k[0]].sort(function (a, b) { return seenTime(b) - seenTime(a); });
+    });
+    var stale = all.filter(isStale);
+    var sig = [filtered ? "some" : "all", all.length, stale.length].concat(KINDS.map(function (k) {
+      return groups[k[0]].map(function (d) {
+        return d.id + "/" + (d.label || "") + "/" + (isStale(d) ? 1 : 0);
+      }).join(",");
+    })).join("|");
+    if (sig === c.devSig) {
+      devs.forEach(function (d) {
+        if (c.seenEls[d.id]) setText(c.seenEls[d.id], seenText(d));
+      });
       return;
     }
-    var html = list.map(function (p) {
-      var devices = (p.devices || []).map(function (d) {
-        return '<div class="device">' +
-          '<span>' + esc(d.label || "unnamed device") +
-            ' <span class="meta">· seen ' + ago(d.lastSeenAt) + '</span></span>' +
-          '<button class="danger" data-revoke="' + esc(d.id) + '" ' +
-            'data-devlabel="' + esc(d.label || "this device") + '">Revoke</button>' +
-        '</div>';
-      }).join("");
-      if (!devices) {
-        devices = '<div class="device"><span class="meta">No devices linked.</span></div>';
-      }
-      return '<div class="card">' +
-        '<div class="row" style="justify-content:space-between">' +
-          '<div><h3>' + esc(p.name) + '</h3>' +
-            '<span class="meta">' + hours(p.totalSeconds) + ' hours · ' +
-              p.eventCount + ' sessions</span></div>' +
-          '<div class="row">' +
-            '<button data-signin="' + esc(p.id) + '" ' +
-              'data-pname="' + esc(p.name) + '" aria-controls="acct" ' +
-              'aria-expanded="' + (p.id === acct.id) + '" ' +
-              'aria-label="Sign-in &amp; services for ' + esc(p.name) + '">' +
-              'Sign-in &amp; services</button>' +
-            '<button class="danger" data-delete="' + esc(p.id) + '" ' +
-              'data-pname="' + esc(p.name) + '">Remove</button>' +
-          '</div>' +
-        '</div>' + devices +
-      '</div>';
-    }).join("");
-    // Rebuilt only when the text changed (the ages tick over about once a
-    // minute), so a keyboard user's focus on a button here is not thrown
-    // away by every 5 s poll. Same guard as the signed-in phones list.
-    if (html === profilesHTML) return;
-    profilesHTML = html;
-    el.innerHTML = html;
+    c.devSig = sig;
+    var html = "";
+    if (!all.length) {
+      html = '<p class="empty">No devices linked. Have them read you a code from the app, ' +
+        'or invite them from Sign-in.</p>';
+    }
+    KINDS.forEach(function (k) {
+      var list = groups[k[0]];
+      if (!list.length) return;
+      html += '<div class="group"><div class="group-h">' + esc(k[1]) + ' · ' + list.length +
+        '</div>' + list.map(function (d) {
+          var label = d.label || "unnamed device";
+          return '<div class="dev' + (isStale(d) ? ' stale' : '') + '">' + ICON[k[0]] +
+            '<span class="dev-name" title="' + esc(label) + '">' + esc(label) + '</span>' +
+            '<span class="dev-seen" data-seen-for="' + esc(d.id) + '">' + esc(seenText(d)) +
+            '</span><button type="button" class="small danger" data-revoke="' + esc(d.id) +
+            '" data-devlabel="' + esc(label) + '" aria-label="Revoke ' + esc(label) +
+            '">Revoke</button></div>';
+        }).join("") + '</div>';
+    });
+    if (stale.length && !filtered) {
+      html += '<div class="row" style="margin-top:10px"><button type="button" class="small" ' +
+        'data-revoke-stale="' + esc(p.id) + '">Revoke the ' +
+        (stale.length === 1 ? "one" : stale.length) + ' not seen in ' + STALE_DAYS +
+        ' days</button></div>';
+    }
+    c.devices.innerHTML = html;
+    c.seenEls = {};
+    c.devices.querySelectorAll("[data-seen-for]").forEach(function (el) {
+      c.seenEls[el.dataset.seenFor] = el;
+    });
+  }
+
+  function renderPeople() {
+    var list = seen.profiles, box = $("profiles"), keep = {};
+    setHTML($("pending-names"), list.map(function (p) {
+      return '<option value="' + esc(p.name) + '"></option>';
+    }).join(""));
+    var els = list.map(function (p) {
+      keep[p.id] = true;
+      var c = cards[p.id] || (cards[p.id] = makeCard(p.id));
+      updateCard(c, p, seen.summary[p.id] || null, ui.query);
+      return c.el;
+    });
+    Object.keys(cards).forEach(function (id) {
+      if (keep[id]) return;
+      if (cards[id].el.contains($("acct"))) parkAcct();
+      cards[id].el.remove();
+      delete cards[id];
+      delete ui.open[id];
+      delete ui.tab[id];
+    });
+    // In the list's order, moving only what is out of place: moving the
+    // card that holds focus would drop it.
+    els.forEach(function (el, i) {
+      if (box.children[i] !== el) box.insertBefore(el, box.children[i] || null);
+    });
+    placeAcct();
+    var empty = $("people-empty");
+    empty.hidden = els.some(function (el) { return !el.hidden; });
+    setText(empty, !list.length ? "Nobody is connected yet." :
+      "No one matches “" + $("people-search").value.trim() + "”.");
+  }
+
+  // The account panel goes into its person's card while their Sign-in or
+  // Services tab is showing, and is parked otherwise.
+  function placeAcct() {
+    var c = acct.id && cards[acct.id];
+    if (!c || c.tab === "devices") { parkAcct(); return; }
+    if ($("acct").parentNode !== c.slot) c.slot.appendChild($("acct"));
+    $("acct-part-signin").hidden = c.tab !== "signin";
+    $("acct-part-services").hidden = c.tab !== "services";
+  }
+
+  function parkAcct() {
+    if ($("acct").parentNode !== $("acct-park")) $("acct-park").appendChild($("acct"));
+  }
+
+  // A card's tab. Sign-in and Services share the one account panel, so
+  // opening either for someone else closes it for whoever had it; Devices
+  // closes it as its Close button used to.
+  function selectTab(id, tab) {
+    var p = profileById(id);
+    if (!p) return;
+    ui.open[id] = true;
+    ui.tab[id] = tab;
+    if (tab === "devices") {
+      if (acct.id === id) closeAcct();
+    } else if (acct.id !== id) {
+      if (acct.id) closeAcct();
+      openAcct(id, p.name);
+    }
+    renderPeople();
+  }
+
+  function toggleCard(id) {
+    var c = cards[id];
+    ui.open[id] = !(c && !c.body.hidden);
+    if (!ui.open[id] && acct.id === id) closeAcct();
+    renderPeople();
+  }
+
+  function setAllOpen(open) {
+    seen.profiles.forEach(function (p) { ui.open[p.id] = open; });
+    if (!open && acct.id) closeAcct();
+    renderPeople();
+  }
+
+  // Signed out: nobody's name or devices stay in the page.
+  function resetPeople() {
+    Object.keys(cards).forEach(function (id) { cards[id].el.remove(); });
+    cards = {};
+    ui = { open: {}, tab: {}, query: "" };
+    $("people-search").value = "";
+    seen = { pending: [], profiles: [], summary: {}, phones: [], svcAdmins: null, catalog: null };
+    firstLoad = true;
+  }
+
+  function showAddPerson(show) {
+    $("add-person-form").hidden = !show;
+    $("add-person").setAttribute("aria-expanded", String(show));
+    if (show) $("add-person-name").focus();
+    else $("add-person-name").value = "";
+  }
+
+  // Someone set up ahead of time (POST /admin/profiles): no device yet.
+  function addPerson(e) {
+    e.preventDefault();
+    var name = $("add-person-name").value.trim();
+    if (!name) { toast("Give them a name first.", true); return; }
+    api("/admin/profiles", { method: "POST", body: JSON.stringify({ name: name }) })
+      .then(function (r) {
+        showAddPerson(false);
+        var id = r && r.profile && r.profile.id;
+        if (id) ui.open[id] = true;
+        toast("Added " + name + ". Invite them from Sign-in, or have them read you a code.");
+        return load();
+      })
+      .catch(function (err) {
+        toast(err.status === 409 ? "Someone here is already called " + name + "." : err.message, true);
+      });
+  }
+
+  // Every device of one person not seen in STALE_DAYS, after one question.
+  function revokeStale(pid) {
+    var p = profileById(pid);
+    var list = p ? (p.devices || []).filter(isStale) : [];
+    if (!list.length) return;
+    if (!confirm("Revoke " + plural(list.length, "device", "devices") + " of " + p.name +
+                 "'s not seen in " + STALE_DAYS + " days?\n\n" +
+                 list.map(function (d) { return "• " + (d.label || "unnamed device"); }).join("\n") +
+                 "\n\nEach signs out. Their other devices and all their history are untouched.")) return;
+    var done = 0, failed = 0;
+    list.reduce(function (chain, d) {
+      return chain.then(function () {
+        return api("/admin/devices/" + encodeURIComponent(d.id), { method: "DELETE" })
+          .then(function () { done++; }, function (e) {
+            if (e.status === 404) done++; else failed++;
+          });
+      });
+    }, Promise.resolve()).then(function () {
+      toast(failed ? "Revoked " + done + "; " + failed + " could not be revoked."
+                   : "Revoked " + plural(done, "device", "devices") + ".", failed > 0);
+      load();
+    });
   }
 
   function revoke(id, label) {
@@ -523,11 +1244,13 @@
   // ---- catalog -------------------------------------------------------
   function renderCatalog(c) {
     var sources = Object.keys(c.bySource || {}).length;
-    $("catalog").innerHTML =
-      '<div><span>' + (c.distinctWorks || 0) + '</span><small>distinct titles</small></div>' +
-      '<div><span>' + (c.rawItems || 0) + '</span><small>entries indexed</small></div>' +
-      '<div><span>' + (c.duplicateCopies || 0) + '</span><small>duplicate copies</small></div>' +
-      '<div><span>' + sources + '</span><small>servers</small></div>';
+    setHTML($("catalog"), [
+      ["Distinct titles", c.distinctWorks], ["Entries indexed", c.rawItems],
+      ["Duplicate copies", c.duplicateCopies], ["Servers", sources]
+    ].map(function (t) {
+      return '<div class="tile"><div class="k">' + t[0] + '</div><div class="v">' +
+        num(t[1]) + '</div></div>';
+    }).join(""));
   }
 
   // ---- signed-in phones ----------------------------------------------
@@ -688,6 +1411,9 @@
       }).join("");
     }
     $("svc-admin-form").hidden = !r.available;
+    $("svc-admin-add").hidden = !r.available;
+    // Nothing kept yet: the form is the point, so it starts open.
+    if (r.available && !(r.admins || []).length) $("svc-admin-add").open = true;
     if (html === svcAdminsHTML) return;
     svcAdminsHTML = html;
     $("svc-admins").innerHTML = html;
@@ -731,9 +1457,10 @@
   // them into every app, plus the service logins the admin sets up once so
   // each service signs in for them.
   //
-  // One person at a time, in a section of its own: the People list rebuilds
-  // on the 5 s poll, which would wipe a half-typed form and close an open
-  // drop-down under the admin's hands. Nothing in load() touches this panel.
+  // One person at a time, in one panel (#acct) that moves into their card
+  // while its Sign-in or Services tab is open (placeAcct). The cards update
+  // in place and nothing in load() rebuilds this panel, so a half-typed
+  // form and an open drop-down survive the 5 s poll.
   //
   // The server never returns a stored secret, so none is ever shown: a
   // service says "login saved", and an edit leaves its secret boxes empty.
@@ -832,32 +1559,29 @@
     $("acct").classList.remove("busy");
   }
 
+  // From a person's Sign-in or Services tab (selectTab, which has set the
+  // tab): placeAcct moves the panel into their card. Focus stays on the
+  // tab that was pressed.
   function openAcct(id, name) {
     acct = newAcct(id, name);
     blankAcct();
     $("acct-title").textContent = "Sign-in & services — " + name;
     setHTML($("acct-status"), '<p class="empty">Loading…</p>');
     $("acct").hidden = false;
-    renderProfiles(lastProfiles);   // marks this person's button as open
-    var calm = window.matchMedia &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    $("acct").scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "start" });
-    $("acct-title").focus({ preventScroll: true });
+    renderPeople();
     acctLoad();
   }
 
+  // By their Devices tab, by folding their card, or because they are gone:
+  // emptied (blankAcct), not just hidden, and parked.
   function closeAcct() {
     var id = acct.id;
     acct = newAcct(null, "");
     blankAcct();
     $("acct").hidden = true;
-    renderProfiles(lastProfiles);
-    var back = id && document.querySelector('[data-signin="' + id + '"]');
-    if (back) back.focus();
-  }
-
-  function toggleAcct(id, name) {
-    if (acct.id === id) closeAcct(); else openAcct(id, name);
+    if (id && ui.tab[id] && ui.tab[id] !== "devices") ui.tab[id] = "devices";
+    parkAcct();
+    renderPeople();
   }
 
   // The person was removed (here or in another tab): nothing left to edit.
@@ -2164,14 +2888,35 @@
       api("/admin/profiles"),
       api("/catalog/summary"),
       api("/admin/admin-devices"),
-      api("/admin/service-admins")
+      api("/admin/service-admins"),
+      // The People list's sign-in facts. Without them it still lists
+      // everyone and their devices, so only a signed-out answer counts.
+      api("/admin/accounts/summary").catch(function (e) {
+        if (e.status === 401) throw e;
+        return null;
+      })
     ]).then(function (r) {
-      renderPending(r[0].pending || []);
-      renderProfiles(r[1].profiles || []);
-      acctSync(r[1].profiles || []);
-      renderCatalog(r[2] || {});
-      renderAdminDevices((r[3] || {}).devices || []);
-      renderServiceAdmins(r[4] || {});
+      seen.pending = r[0].pending || [];
+      seen.profiles = r[1].profiles || [];
+      seen.catalog = r[2] || {};
+      seen.phones = (r[3] || {}).devices || [];
+      seen.svcAdmins = r[4] || {};
+      if (r[5]) {
+        seen.summary = {};
+        (r[5].people || []).forEach(function (s) { seen.summary[s.profileId] = s; });
+      }
+      renderPending(seen.pending);
+      acctSync(seen.profiles);
+      renderPeople();
+      renderCatalog(seen.catalog);
+      renderAdminDevices(seen.phones);
+      renderServiceAdmins(seen.svcAdmins);
+      renderOverview();
+      // Someone is reading out a code right now: open on it.
+      if (firstLoad) {
+        firstLoad = false;
+        if (!areaFromHash() && seen.pending.length) showArea("waiting");
+      }
     }).catch(function (e) { toast(e.message, true); });
   }
 
@@ -2179,6 +2924,8 @@
     // Signed out or timed out: drop any open panel, and with it any invite
     // code or typed password it was holding.
     if (acct.id) closeAcct();
+    resetPeople();
+    $("top-state").hidden = true;
     $("app").hidden = true;
     $("enroll").hidden = true;
     $("login").hidden = false;
@@ -2188,8 +2935,10 @@
     $("login").hidden = true;
     $("enroll").hidden = true;
     $("app").hidden = false;
+    $("top-state").hidden = false;
     $("password").value = "";
     $("code").value = "";
+    showArea(areaFromHash() || "overview");
     load();
     if (!window._alexPoll) {
       window._alexPoll = setInterval(function () {
@@ -2290,21 +3039,41 @@
     }).catch(function (e) { toast(e.message, true); });
   }
 
-  // Delegated so re-rendered rows keep working.
+  // Delegated so re-rendered rows keep working. closest(): a press on a
+  // button's icon or badge is a press on the button.
   document.addEventListener("click", function (e) {
-    var t = e.target;
-    if (!t || t.tagName !== "BUTTON") return;
-    if (t.dataset.approve) approve(t.dataset.approve);
-    else if (t.dataset.revoke) revoke(t.dataset.revoke, t.dataset.devlabel);
-    else if (t.dataset.delete) removeProfile(t.dataset.delete, t.dataset.pname);
-    else if (t.dataset.revokeAdmin) {
-      revokeAdminDevice(t.dataset.revokeAdmin, t.dataset.adlabel);
-    }
-    else if (t.dataset.removeSvcAdmin) {
-      removeServiceAdmin(t.dataset.removeSvcAdmin, t.dataset.svcname);
-    }
-    else if (t.dataset.signin) toggleAcct(t.dataset.signin, t.dataset.pname);
+    var t = e.target && e.target.closest ? e.target.closest("button") : null;
+    if (!t) return;
+    var d = t.dataset;
+    if (d.area) goArea(d.area);
+    else if (d.go) goArea(d.go);
+    else if (d.attn) attention(d.attn);
+    else if (d.toggle) toggleCard(d.toggle);
+    else if (d.tab) selectTab(d.for, d.tab);
+    else if (d.approve) approve(d.approve);
+    else if (d.revokeStale) revokeStale(d.revokeStale);
+    else if (d.revoke) revoke(d.revoke, d.devlabel);
+    else if (d.delete) removeProfile(d.delete, d.pname);
+    else if (d.revokeAdmin) revokeAdminDevice(d.revokeAdmin, d.adlabel);
+    else if (d.removeSvcAdmin) removeServiceAdmin(d.removeSvcAdmin, d.svcname);
   });
+  // Back and Forward move between areas.
+  window.addEventListener("popstate", function () { showArea(areaFromHash() || "overview"); });
+  window.addEventListener("hashchange", function () { showArea(areaFromHash() || "overview"); });
+
+  $("expand-all").addEventListener("click", function () { setAllOpen(true); });
+  $("collapse-all").addEventListener("click", function () { setAllOpen(false); });
+  $("add-person").addEventListener("click", function () {
+    showAddPerson($("add-person-form").hidden);
+  });
+  $("add-person-cancel").addEventListener("click", function () { showAddPerson(false); });
+  $("add-person-form").addEventListener("submit", addPerson);
+  $("people-search").addEventListener("input", function () {
+    ui.query = this.value.trim().toLowerCase();
+    renderPeople();
+  });
+  $("backup-top").addEventListener("click", backup);
+  $("signout-top").addEventListener("click", signOut);
 
   // The panel's own buttons. Delegated, like the list above, because its
   // parts are rebuilt after every change.
