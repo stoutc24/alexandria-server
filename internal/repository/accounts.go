@@ -128,6 +128,35 @@ type AccountLogin struct {
 	LockedUntil    int64
 	CreatedAt      int64
 	LastLoginAt    int64 // 0 when never
+	// AdminAccess is what this person's phones may reach on this server
+	// when they sign in to Manage server with this account: "" (nothing),
+	// AdminAccessServerAdmin, AdminAccessManage or AdminAccessFull.
+	AdminAccess string
+}
+
+// What a person's account may be given (SetAdminAccess). Only the admin
+// login hands these out, only to a sign-in with two-step on, and a phone
+// signed in with the account reaches no further than its access
+// (middleware.AdminScopeGate).
+const (
+	// AdminAccessServerAdmin: the media servers' admin sign-ins this
+	// server keeps (/admin/service-admins), for Server Admin on a phone.
+	AdminAccessServerAdmin = "serveradmin"
+	// AdminAccessManage: everything else Manage server does — devices,
+	// people, invites, backups — but not those sign-ins.
+	AdminAccessManage = "manage"
+	// AdminAccessFull: both.
+	AdminAccessFull = "full"
+)
+
+// ValidAdminAccess reports whether s is an access a person may be given
+// ("" takes it away).
+func ValidAdminAccess(s string) bool {
+	switch s {
+	case "", AdminAccessServerAdmin, AdminAccessManage, AdminAccessFull:
+		return true
+	}
+	return false
 }
 
 var usernameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{2,31}$`)
@@ -143,14 +172,16 @@ func NormalizeUsername(s string) (string, error) {
 
 const loginColumns = `l.profile_id, p.name, l.username, l.password_hash,
 	COALESCE(l.totp_secret, ''), l.totp_enabled, l.last_totp_step,
-	l.failed_attempts, l.locked_until, l.created_at, COALESCE(l.last_login_at, 0)`
+	l.failed_attempts, l.locked_until, l.created_at, COALESCE(l.last_login_at, 0),
+	l.admin_access`
 
 func scanLogin(row interface{ Scan(...any) error }) (*AccountLogin, error) {
 	l := &AccountLogin{}
 	var enabled int
 	err := row.Scan(&l.ProfileID, &l.ProfileName, &l.Username, &l.PasswordHash,
 		&l.TOTPSecret, &enabled, &l.LastTOTPStep,
-		&l.FailedAttempts, &l.LockedUntil, &l.CreatedAt, &l.LastLoginAt)
+		&l.FailedAttempts, &l.LockedUntil, &l.CreatedAt, &l.LastLoginAt,
+		&l.AdminAccess)
 	if err == sql.ErrNoRows {
 		return nil, ErrNoLogin
 	}
@@ -214,9 +245,28 @@ func (r *AccountRepository) RecordSuccess(profileID string, now time.Time) error
 	return err
 }
 
-// SetPassword replaces a person's password hash.
+// signOutAdminPhones ends every Manage server sign-in made with this
+// person's account (admin_device_tokens.profile_id), inside tx. The
+// admin login's own sign-ins have no profile_id and are never touched.
+// Run whenever the account's password or two-step changes or it goes:
+// an admin sign-in must not outlive the credentials that made it.
+func signOutAdminPhones(tx *sql.Tx, profileID string) error {
+	if profileID == "" {
+		return nil
+	}
+	_, err := tx.Exec(`DELETE FROM admin_device_tokens WHERE profile_id = ?`, profileID)
+	return err
+}
+
+// SetPassword replaces a person's password hash, and signs their account's
+// phones out of Manage server (signOutAdminPhones).
 func (r *AccountRepository) SetPassword(profileID, hash string, now time.Time) error {
-	res, err := database.DB.Exec(`
+	tx, err := database.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`
 		UPDATE account_logins SET password_hash = ?, updated_at = ?,
 			failed_attempts = 0, locked_until = 0
 		WHERE profile_id = ?`, hash, now.Unix(), profileID)
@@ -226,13 +276,46 @@ func (r *AccountRepository) SetPassword(profileID, hash string, now time.Time) e
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNoLogin
 	}
-	return nil
+	if err := signOutAdminPhones(tx, profileID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // DeleteLogin removes a person's sign-in. Their devices stay linked and
-// their services stay set up; they simply can no longer sign in anew.
+// their services stay set up; they simply can no longer sign in anew. Its
+// admin access goes with it, and so do the account's Manage server
+// sign-ins.
 func (r *AccountRepository) DeleteLogin(profileID string) error {
-	res, err := database.DB.Exec(`DELETE FROM account_logins WHERE profile_id = ?`, profileID)
+	tx, err := database.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`DELETE FROM account_logins WHERE profile_id = ?`, profileID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNoLogin
+	}
+	if err := signOutAdminPhones(tx, profileID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// SetAdminAccess records what a person's account may reach as an admin
+// (ValidAdminAccess; "" takes it away). Its rules — the admin login alone
+// sets it, two-step must be on, what happens to phones already signed in
+// — are the handler's (handlers.AccountsHandler.SetAdminAccess).
+func (r *AccountRepository) SetAdminAccess(profileID, access string, now time.Time) error {
+	if !ValidAdminAccess(access) {
+		return fmt.Errorf("unknown admin access %q", access)
+	}
+	res, err := database.DB.Exec(`
+		UPDATE account_logins SET admin_access = ?, updated_at = ?
+		WHERE profile_id = ?`, access, now.Unix(), profileID)
 	if err != nil {
 		return err
 	}
@@ -297,12 +380,25 @@ func (r *AccountRepository) SpendTOTPStep(profileID string, step int64, enable b
 	return n == 1, nil
 }
 
-// DisableTOTP switches two-step off and forgets the secret.
+// DisableTOTP switches two-step off and forgets the secret. Admin access
+// needs two-step, so it goes too, with the account's Manage server
+// sign-ins: the admin has to give it again once two-step is back on.
 func (r *AccountRepository) DisableTOTP(profileID string, now time.Time) error {
-	_, err := database.DB.Exec(`
-		UPDATE account_logins SET totp_secret = NULL, totp_enabled = 0, updated_at = ?
-		WHERE profile_id = ?`, now.Unix(), profileID)
-	return err
+	tx, err := database.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`
+		UPDATE account_logins SET totp_secret = NULL, totp_enabled = 0,
+			admin_access = '', updated_at = ?
+		WHERE profile_id = ?`, now.Unix(), profileID); err != nil {
+		return err
+	}
+	if err := signOutAdminPhones(tx, profileID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ── invites ─────────────────────────────────────────────────────────
@@ -497,6 +593,11 @@ func (r *AccountRepository) AcceptInvite(inv *Invite, username, passwordHash str
 		}
 	}
 	if err != nil {
+		return err
+	}
+	// A new password, either way: no Manage server sign-in made with the
+	// old one lives on.
+	if err := signOutAdminPhones(tx, inv.ProfileID); err != nil {
 		return err
 	}
 	return tx.Commit()

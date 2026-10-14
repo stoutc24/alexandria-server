@@ -92,6 +92,10 @@ func buildApp(cfg *config.Config) *fiber.App {
 	}
 	accountRepo := repository.NewAccountRepository(secrets)
 	accountsHandler := handlers.NewAccountsHandler(accountRepo, profileRepo, adminAuthHandler.FreshCode)
+	// Admin access through a person's own account: the sign-in reads their
+	// login; a change to their access reaches their phones' sign-ins.
+	adminAuthHandler.UseAccounts(accountRepo)
+	accountsHandler.UseAdminDevices(adminAuthRepo)
 	handlers.SetAccountsServices(secrets != nil)
 	// Server Admin's sign-ins to the household's servers: the same vault.
 	serviceAdminsHandler := handlers.NewServiceAdminsHandler(
@@ -166,7 +170,10 @@ func buildApp(cfg *config.Config) *fiber.App {
 	adminAuth.Post("/enroll",
 		middleware.RequireAdminToken(cfg), adminAuthHandler.Enroll)
 
-	admin := v1.Group("/admin", requireAdmin)
+	// AdminScopeGate: a phone signed in with a person's account reaches only
+	// what their admin access covers; the admin login's sign-ins, the
+	// browser's included, pass straight through.
+	admin := v1.Group("/admin", requireAdmin, middleware.AdminScopeGate())
 	admin.Post("/profiles", adminHandler.CreateProfile)
 	admin.Get("/profiles", adminHandler.ListProfiles)
 	admin.Delete("/profiles/:id", adminHandler.DeleteProfile)
@@ -211,6 +218,8 @@ func buildApp(cfg *config.Config) *fiber.App {
 	// CreateInvite) and share the sign-in rate limit, as link approvals do.
 	// The summary is everyone's sign-in at a glance, for the People list.
 	admin.Get("/accounts/summary", accountsHandler.Summary)
+	// Admin access per person (the admin login's alone; AdminScopeGate).
+	admin.Put("/profiles/:id/admin-access", accountsHandler.SetAdminAccess)
 	admin.Get("/profiles/:id/account", accountsHandler.Account)
 	admin.Delete("/profiles/:id/account", accountsHandler.RemoveLogin)
 	admin.Post("/profiles/:id/invite",
@@ -293,6 +302,11 @@ func buildApp(cfg *config.Config) *fiber.App {
 	accounts.Post("/totp/setup", requireProfile, accountsHandler.TOTPSetup)
 	accounts.Post("/totp/enable", requireProfile, accountLimiter, accountsHandler.TOTPEnable)
 	accounts.Post("/totp/disable", requireProfile, accountLimiter, accountsHandler.TOTPDisable)
+	// Manage server with this account's admin access: its password and a
+	// fresh code, behind the SAME authLimiter instance as /admin/auth, so
+	// guesses here and at the admin sign-in share one budget.
+	accounts.Post("/admin-sign-in", requireProfile, authLimiter,
+		adminAuthHandler.IssueAccountDeviceToken)
 
 	// The library index describes the household's SERVERS, not any
 	// person, so anyone with a valid token may read it — and write it.

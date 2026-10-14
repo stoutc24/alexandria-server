@@ -349,6 +349,9 @@ func (r *ProfileRepository) Delete(id string) error {
 		`DELETE FROM account_services WHERE profile_id = ?`,
 		`DELETE FROM account_invites WHERE profile_id = ?`,
 		`DELETE FROM account_logins WHERE profile_id = ?`,
+		// Manage server sign-ins made with their account's admin access.
+		// Never the admin login's own: those have no profile_id.
+		`DELETE FROM admin_device_tokens WHERE profile_id = ? AND profile_id != ''`,
 		`DELETE FROM profile_tokens WHERE profile_id = ?`,
 		`DELETE FROM link_requests WHERE profile_id = ?`,
 	} {

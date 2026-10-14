@@ -115,6 +115,21 @@ for tok in "$phone_tok" "$ipad_tok"; do
   curl -fsS -H "Authorization: Bearer $tok" "$base/api/v1/devices/me" -o /dev/null
 done
 "$work/flow" lastseen -db "$work/alexandria.db" -label "Old iPad" -days 41
+# Ada: signed in with two-step on, for admin access (step Q).
+ada=$(curl -fsS "${auth[@]}" -d '{"name":"Ada Admin"}' "$base/api/v1/admin/profiles" |
+  jq -er .profile.id)
+ada_invite=$(curl -fsS "${auth[@]}" -X POST "$base/api/v1/admin/profiles/$ada/invite" |
+  jq -er .invite.token)
+ada_pub=$("$work/flow" devicekey -out "$work/ada.key")
+ada_tok=$(curl -fsS -H "Content-Type: application/json" "$base/api/v1/accounts/invite/accept" \
+  -d "$(jq -n --arg i "$ada_invite" --arg k "$ada_pub" '{invite: $i, username: "ada",
+        password: "ada-password-1", device: {label: "Ada phone", publicKey: $k}}')" |
+  jq -er .deviceToken)
+ada_secret=$(curl -fsS -X POST -H "Authorization: Bearer $ada_tok" \
+  "$base/api/v1/accounts/totp/setup" | jq -er .secret)
+curl -fsS -H "Authorization: Bearer $ada_tok" -H "Content-Type: application/json" -o /dev/null \
+  "$base/api/v1/accounts/totp/enable" \
+  -d "$(jq -n --arg c "$("$work/flow" totp -secret "$ada_secret")" '{code: $c}')"
 tv=$(curl -fsS -H "Content-Type: application/json" "$base/api/v1/link/request" \
   -d '{"deviceLabel": "Playroom TV"}')
 tv_code=$(jq -er .code <<<"$tv")
@@ -134,10 +149,10 @@ admin() { curl -fsS -b "$jar" "$@"; }
 jq -n --arg pw "$password" --arg rc "$code_page" --arg at "$admin_plex_token" \
   --arg g "$grandma" --arg o "$old" --arg abs "$abs_password" \
   --arg kg "$key_grandma" --arg kb "$key_bob" --arg kc "$key_carol" --arg kh "$key_hostile" \
-  --arg ns "${NO_STORAGE:-}" --arg tc "$tv_code" --arg ts "$tv_claim" \
+  --arg ns "${NO_STORAGE:-}" --arg tc "$tv_code" --arg ts "$tv_claim" --arg ada "$ada" \
   '{password: $pw, recovery: $rc, adminToken: $at, grandmaId: $g, oldId: $o, absPassword: $abs,
     keys: {grandma: $kg, bob: $kb, carol: $kc, hostile: $kh}, noStorage: ($ns == "1"),
-    tvCode: $tc, tvClaim: $ts}' \
+    tvCode: $tc, tvClaim: $ts, adaId: $ada}' \
   >"$work/config.json"
 if [ "${NO_STORAGE:-}" = 1 ]; then echo "storage blocked in the page for this run (NO_STORAGE=1)"; fi
 
@@ -221,6 +236,15 @@ if reached people; then
   go_on people
 else
   flunk "the page reached the people checkpoint"
+fi
+if reached access; then
+  admin "$base/api/v1/admin/accounts/summary" >"$work/access.json"
+  check "access: curl GET /admin/accounts/summary: Ada's account has Server Admin access" \
+    jq -e --arg a "$ada" '[.people[] | select(.profileId == $a) | .login.adminAccess] == ["serveradmin"]' \
+    "$work/access.json"
+  go_on access
+else
+  flunk "the page reached the access checkpoint"
 fi
 if reached added; then
   check_admin "after the add" "$grandma" "Plex" "$(pick 42 Grandma)"

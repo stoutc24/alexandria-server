@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -234,10 +235,12 @@ const AdminDeviceSessionLifetime = SessionLifetime
 // polls every few seconds while its screen is open.
 const adminDeviceTouchResolution = time.Minute
 
-// How a token was issued: with a TOTP code or a recovery code.
+// How a token was issued: with a TOTP code or a recovery code, or with a
+// person's own account and its two-step code (ProfileID set).
 const (
 	AdminDeviceViaTOTP     = "totp"
 	AdminDeviceViaRecovery = "recovery"
+	AdminDeviceViaAccount  = "account"
 )
 
 var ErrAdminDeviceNotFound = errors.New("admin device not found")
@@ -253,6 +256,11 @@ type AdminDevice struct {
 	CreatedAt   time.Time
 	LastUsedAt  time.Time
 	ExpiresAt   time.Time
+	// ProfileID is the person whose account made this sign-in, "" for the
+	// admin login's own. Scope is the access it was made with
+	// (AdminAccess…), "" for the admin login's: everything.
+	ProfileID string
+	Scope     string
 }
 
 // NewAdminDevice is what issuing a sign-in records beside the hash.
@@ -261,6 +269,8 @@ type NewAdminDevice struct {
 	Persistent  bool
 	CreatedVia  string
 	SchemeBasis string
+	ProfileID   string
+	Scope       string
 }
 
 // DeviceTokenState is the verdict of LookupDeviceToken.
@@ -288,7 +298,7 @@ func (d *AdminDevice) live(now time.Time) bool {
 }
 
 const adminDeviceColumns = `id, label, persistent, created_via, scheme_basis,
-	created_at, last_used_at, expires_at`
+	created_at, last_used_at, expires_at, profile_id, scope`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -299,7 +309,7 @@ func scanAdminDevice(row rowScanner) (*AdminDevice, error) {
 	var persistent int
 	var created, lastUsed, expires int64
 	if err := row.Scan(&d.ID, &d.Label, &persistent, &d.CreatedVia,
-		&d.SchemeBasis, &created, &lastUsed, &expires); err != nil {
+		&d.SchemeBasis, &created, &lastUsed, &expires, &d.ProfileID, &d.Scope); err != nil {
 		return nil, err
 	}
 	d.Persistent = persistent == 1
@@ -337,9 +347,17 @@ func (r *AdminAuthRepository) CreateDeviceToken(
 		SchemeBasis: in.SchemeBasis,
 		CreatedAt:   t,
 		LastUsedAt:  t,
+		ProfileID:   in.ProfileID,
+		Scope:       in.Scope,
 	}
 	if d.CreatedVia == "" {
 		d.CreatedVia = AdminDeviceViaTOTP
+	}
+	// A person's sign-in always carries what it may reach; the admin
+	// login's never does. Neither half alone is a sign-in this server
+	// would know how to judge.
+	if (d.ProfileID == "") != (d.Scope == "") {
+		return nil, fmt.Errorf("admin device: profile %q with scope %q", d.ProfileID, d.Scope)
 	}
 	if d.Persistent {
 		d.ExpiresAt = t.Add(AdminDeviceIdleLimit)
@@ -353,10 +371,10 @@ func (r *AdminAuthRepository) CreateDeviceToken(
 	_, err := database.DB.Exec(`
 		INSERT INTO admin_device_tokens
 			(id, token_hash, label, persistent, created_via, scheme_basis,
-			 created_at, last_used_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 created_at, last_used_at, expires_at, profile_id, scope)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ID, tokenHash, d.Label, persistent, d.CreatedVia, d.SchemeBasis,
-		t.Unix(), t.Unix(), d.ExpiresAt.Unix())
+		t.Unix(), t.Unix(), d.ExpiresAt.Unix(), d.ProfileID, d.Scope)
 	if err != nil {
 		return nil, err
 	}
@@ -451,6 +469,37 @@ func (r *AdminAuthRepository) RevokeDeviceToken(id string) (*AdminDevice, error)
 		return nil, ErrAdminDeviceNotFound
 	}
 	return &gone[0], nil
+}
+
+// RevokeDeviceTokensOf ends every sign-in made with one person's account
+// and returns them. Never the admin login's own: an empty profileID ends
+// nothing.
+func (r *AdminAuthRepository) RevokeDeviceTokensOf(profileID string) ([]AdminDevice, error) {
+	if profileID == "" {
+		return []AdminDevice{}, nil
+	}
+	rows, err := database.DB.Query(`DELETE FROM admin_device_tokens
+		WHERE profile_id = ? RETURNING `+adminDeviceColumns, profileID)
+	if err != nil {
+		return nil, err
+	}
+	return scanAdminDevices(rows)
+}
+
+// RescopeDeviceTokensOf gives every sign-in made with one person's
+// account a new access, for a change that only adds to what they had
+// (handlers.AccountsHandler.SetAdminAccess); one that takes anything away
+// signs them out instead. Returns how many it changed.
+func (r *AdminAuthRepository) RescopeDeviceTokensOf(profileID, scope string) (int64, error) {
+	if profileID == "" || scope == "" {
+		return 0, fmt.Errorf("rescope: profile %q, scope %q", profileID, scope)
+	}
+	res, err := database.DB.Exec(`UPDATE admin_device_tokens SET scope = ?
+		WHERE profile_id = ?`, scope, profileID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // RevokeAllDeviceTokens ends every phone's sign-in and returns what was

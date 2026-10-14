@@ -114,6 +114,8 @@ func RequireAdmin(
 const (
 	adminDeviceLocalsKey      = "adminDeviceID"
 	adminDeviceLabelLocalsKey = "adminDeviceLabel"
+	adminProfileLocalsKey     = "adminDeviceProfile"
+	adminScopeLocalsKey       = "adminDeviceScope"
 )
 
 // requireAdminDevice admits a phone's admin sign-in, an admin device
@@ -149,6 +151,8 @@ func requireAdminDevice(
 		auth.TouchDeviceToken(dev, now)
 		c.Locals(adminDeviceLocalsKey, dev.ID)
 		c.Locals(adminDeviceLabelLocalsKey, dev.Label)
+		c.Locals(adminProfileLocalsKey, dev.ProfileID)
+		c.Locals(adminScopeLocalsKey, dev.Scope)
 		return c.Next()
 	case state == repository.DeviceTokenExpired:
 		log.Printf("admin device sign-in expired: %q (%s)", dev.Label, dev.ID)
@@ -176,6 +180,71 @@ func AdminDevice(c *fiber.Ctx) string {
 func AdminDeviceLabel(c *fiber.Ctx) string {
 	label, _ := c.Locals(adminDeviceLabelLocalsKey).(string)
 	return label
+}
+
+// AdminProfile is the person whose account signed this phone in to
+// Manage server, "" for the admin login (its phones, the browser, the
+// environment token).
+func AdminProfile(c *fiber.Ctx) string {
+	id, _ := c.Locals(adminProfileLocalsKey).(string)
+	return id
+}
+
+// AdminScope is the access that person's sign-in carries
+// (repository.AdminAccess…), "" for the admin login.
+func AdminScope(c *fiber.Ctx) string {
+	scope, _ := c.Locals(adminScopeLocalsKey).(string)
+	return scope
+}
+
+// AdminScopeGate keeps a phone signed in with a person's account
+// (AdminProfile set) to the access it was given; the admin login's own
+// sign-ins pass straight on. It goes after RequireAdmin on the /admin
+// group, and decides by the path under /api/v1/admin:
+//
+//   - /service-admins…: the kept media-server sign-ins — "serveradmin"
+//     and "full".
+//   - DELETE /admin-devices/<its own id>: signing itself out — always.
+//   - any other change to /admin-devices (another phone, or all of
+//     them): the admin login's alone, so no account can sign the admin
+//     out.
+//   - …/admin-access: who has access is the admin login's call alone,
+//     so no account can raise its own or anyone's.
+//   - everything else (people, devices, invites, services, backups, the
+//     signed-in phones list): "manage" and "full".
+//
+// The refusal is 403 access-denied: the phone stays signed in.
+func AdminScopeGate() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if AdminProfile(c) == "" {
+			return c.Next()
+		}
+		scope := AdminScope(c)
+		path := strings.TrimSuffix(strings.TrimPrefix(c.Path(), "/api/v1/admin"), "/")
+		reading := c.Method() == fiber.MethodGet || c.Method() == fiber.MethodHead
+		allowed := false
+		switch {
+		case path == "/service-admins" || strings.HasPrefix(path, "/service-admins/"):
+			allowed = scope == repository.AdminAccessServerAdmin || scope == repository.AdminAccessFull
+		case c.Method() == fiber.MethodDelete && path == "/admin-devices/"+AdminDevice(c):
+			allowed = true
+		case (path == "/admin-devices" || strings.HasPrefix(path, "/admin-devices/")) && !reading:
+			allowed = false
+		case strings.HasSuffix(path, "/admin-access"):
+			allowed = false
+		default:
+			allowed = scope == repository.AdminAccessManage || scope == repository.AdminAccessFull
+		}
+		if !allowed {
+			log.Printf("admin access refused: %s %s for %q (%s, access %q)",
+				c.Method(), c.Path(), AdminDeviceLabel(c), AdminDevice(c), scope)
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"error":  "this sign-in's admin access does not cover that",
+				"reason": "access-denied",
+			})
+		}
+		return c.Next()
+	}
 }
 
 // ForAdminDevices runs h only for a request a phone's admin sign-in
