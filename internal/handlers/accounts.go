@@ -635,6 +635,52 @@ func (h *AccountsHandler) Account(c *fiber.Ctx) error {
 	return c.JSON(out)
 }
 
+// Summary is the People list's line for each person, everyone at once,
+// so the admin page can show who has a sign-in without opening anyone:
+// the sign-in's username, two-step and pause, a waiting invite (its
+// purpose and expiry), and how many services are set up. The same facts
+// Account gives for one person, read the same way, and like it no
+// secret: no code, token, password, key or address.
+func (h *AccountsHandler) Summary(c *fiber.Ctx) error {
+	ids, err := h.profiles.ListIDs()
+	if err != nil {
+		return serverError(c, "could not list the people", err)
+	}
+	now := h.now()
+	people := make([]fiber.Map, 0, len(ids))
+	for _, id := range ids {
+		p := fiber.Map{"profileId": id, "login": nil, "invite": nil}
+		login, err := h.accounts.LoginByProfile(id)
+		switch {
+		case errors.Is(err, repository.ErrNoLogin):
+		case err != nil:
+			return serverError(c, "could not read a sign-in", err)
+		default:
+			l := fiber.Map{
+				"username":    login.Username,
+				"totpEnabled": login.TOTPEnabled,
+				"locked":      login.LockedUntil > now.Unix(),
+			}
+			if login.LastLoginAt > 0 {
+				l["lastLoginAt"] = login.LastLoginAt
+			}
+			p["login"] = l
+		}
+		if inv, err := h.accounts.PendingInvite(id, now); err != nil {
+			return serverError(c, "could not read an invite", err)
+		} else if inv != nil {
+			p["invite"] = fiber.Map{"purpose": inv.Purpose, "expiresAt": inv.ExpiresAt}
+		}
+		services, err := h.accounts.ListServices(id, false)
+		if err != nil {
+			return serverError(c, "could not read the services", err)
+		}
+		p["services"] = len(services)
+		people = append(people, p)
+	}
+	return c.JSON(fiber.Map{"people": people, "secretsKeyConfigured": h.accounts.VaultOn()})
+}
+
 type adminInviteBody struct {
 	// A phone's admin sign-in adds a fresh code to each invite.
 	TOTPCode     string `json:"totpCode"`

@@ -402,6 +402,86 @@ func TestAccountsAdminRoutesNeedTheAdmin(t *testing.T) {
 	}
 }
 
+// The admin page's People list: everyone's sign-in at a glance, from the
+// same reads as each person's account route, with no secret in it.
+func TestAccountsSummaryForThePeopleList(t *testing.T) {
+	s := newTestServer(t, withSecretsKey)
+	admin := bearer(testAPIToken)
+	samID, samInvite := setUpSam(t, s) // two services, an invite waiting
+
+	r := s.do("POST", "/api/v1/admin/profiles", map[string]any{"name": "Dana Okafor"}, admin)
+	danaID := r.body["profile"].(map[string]any)["id"].(string)
+	r = s.do("POST", "/api/v1/admin/profiles/"+danaID+"/invite", nil, admin)
+	danaInvite := r.body["invite"].(map[string]any)
+	r = s.do("POST", "/api/v1/accounts/invite/accept", map[string]any{
+		"invite": danaInvite["token"], "username": "dana", "password": "a long enough one",
+		"device": newTestDevice(t).body("phone"),
+	}, nil)
+	if r.status != 201 {
+		t.Fatalf("accept: %d %s", r.status, r)
+	}
+	danaToken := r.str("deviceToken")
+	if _, err := database.DB.Exec(`UPDATE account_logins SET locked_until = ? WHERE profile_id = ?`,
+		time.Now().Add(10*time.Minute).Unix(), danaID); err != nil {
+		t.Fatal(err)
+	}
+	r = s.do("POST", "/api/v1/admin/profiles", map[string]any{"name": "Lee"}, admin)
+	leeID := r.body["profile"].(map[string]any)["id"].(string)
+
+	r = s.do("GET", "/api/v1/admin/accounts/summary", nil, admin)
+	if r.status != 200 || r.body["secretsKeyConfigured"] != true {
+		t.Fatalf("summary: %d %s", r.status, r)
+	}
+	people := map[string]map[string]any{}
+	var order []string
+	for _, p := range r.body["people"].([]any) {
+		m := p.(map[string]any)
+		people[m["profileId"].(string)] = m
+		order = append(order, m["profileId"].(string))
+	}
+	if got, want := strings.Join(order, ","), strings.Join([]string{danaID, leeID, samID}, ","); got != want {
+		t.Errorf("order %s, want by name (Dana, Lee, Sam) %s", got, want)
+	}
+
+	sam := people[samID]
+	inv, _ := sam["invite"].(map[string]any)
+	if sam["login"] != nil || sam["services"] != float64(2) || inv == nil || inv["purpose"] != "invite" {
+		t.Errorf("Sam: %v", sam)
+	}
+	if exp, _ := inv["expiresAt"].(float64); int64(exp) <= time.Now().Unix() {
+		t.Errorf("Sam's invite expiresAt %v", inv["expiresAt"])
+	}
+	dana := people[danaID]
+	login, _ := dana["login"].(map[string]any)
+	if login == nil || login["username"] != "dana" || login["totpEnabled"] != false || login["locked"] != true {
+		t.Errorf("Dana's sign-in: %v", dana["login"])
+	}
+	if dana["invite"] != nil || dana["services"] != float64(0) {
+		t.Errorf("Dana (invite used, no services): %v", dana)
+	}
+	lee := people[leeID]
+	if lee["login"] != nil || lee["invite"] != nil || lee["services"] != float64(0) {
+		t.Errorf("Lee (nothing set up): %v", lee)
+	}
+
+	raw, _ := json.Marshal(r.body)
+	for _, secret := range []string{
+		samInvite["token"].(string), samInvite["code"].(string), danaInvite["token"].(string),
+		"correct horse", "a long enough one", "abs.local", "plex.example",
+	} {
+		if strings.Contains(string(raw), secret) {
+			t.Errorf("the summary holds %q: %s", secret, raw)
+		}
+	}
+	// The admin's alone: not a person's device, not anyone unsigned.
+	if r := s.do("GET", "/api/v1/admin/accounts/summary", nil, bearer(danaToken)); r.status != 401 {
+		t.Errorf("summary with a person's token: %d", r.status)
+	}
+	if r := s.do("GET", "/api/v1/admin/accounts/summary", nil, nil); r.status != 401 {
+		t.Errorf("summary with no token: %d", r.status)
+	}
+}
+
 func TestAccountsInviteWarnsWhenItsLinkPointsAtLoopback(t *testing.T) {
 	s := newTestServer(t, withSecretsKey)
 	admin := bearer(testAPIToken)

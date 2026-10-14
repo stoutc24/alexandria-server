@@ -267,6 +267,26 @@ func (r *ProfileRepository) RenameToken(tokenID, label string) error {
 	return nil
 }
 
+// ListIDs returns every profile's id, ordered by name as List orders
+// them: for a route that needs the people but none of their stats or
+// devices (handlers.AccountsHandler.Summary).
+func (r *ProfileRepository) ListIDs() ([]string, error) {
+	rows, err := database.DB.Query(`SELECT id FROM profiles ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // List returns every profile with its devices and storage footprint —
 // the admin's management view. No event content crosses this boundary.
 func (r *ProfileRepository) List() ([]ProfileSummary, error) {
