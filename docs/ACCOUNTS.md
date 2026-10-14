@@ -176,13 +176,32 @@ Limits: 10 a minute per client, a shared allowance across every visitor
 
 | Route | Answer |
 |---|---|
-| `GET /accounts/me` | `{profile, hasLogin, username?, totpEnabled?, deviceKey?, servicesAvailable}` |
+| `GET /accounts/me` | `{profile, hasLogin, username?, totpEnabled?, adminAccess?, deviceKey?, servicesAvailable}` |
 | `GET /accounts/services?since=<revision>` | `{revision, unchanged: true}` when nothing changed. Otherwise `{revision, box}`: the list, sealed to this device (below). `503 secrets-key-missing`, `409 device-key-required` |
 | `PUT /accounts/device-key` `{publicKey}` | A device linked by **code** gets a key, once (`409 device-key-exists` after) |
 | `POST /accounts/password` `{currentPassword, newPassword}` | Other devices stay signed in |
 | `POST /accounts/totp/setup` | `{secret, uri}` for an authenticator app. It is on only after… |
 | `POST /accounts/totp/enable` `{code}` | …a code from it is confirmed. A code is never accepted twice |
-| `POST /accounts/totp/disable` `{password}` | |
+| `POST /accounts/totp/disable` `{password}` | Also takes away any admin access, and signs out its Manage server sign-ins |
+| `POST /accounts/admin-sign-in` `{password, code, deviceLabel, persistent}` | Manage server with this account's **admin access** (below): `201 {token: "alxa_…", device, access}`, the admin device token `/admin/auth/device-token` gives, held to the access. `403 no-admin-access`, `403 two-step-required`, `409 not-enrolled`, `429 locked`, `401 code-required`, `401 bad-credentials` (counts as a wrong sign-in). Shares the admin sign-in's rate limit |
+
+**Admin access** (owner, 2026-10-13). The admin login can give a person's
+account one of `serveradmin` (the media servers' admin sign-ins this server
+keeps: `/admin/service-admins…`), `manage` (everything else under `/admin`:
+people, devices, invites, services, backups, the signed-in phones list) or
+`full` (both), on the admin page's Sign-in tab, and only to a sign-in with
+two-step on.
+- The phone signs in with the account's own password and code
+  (`POST /accounts/admin-sign-in`) and is then held to that access by
+  `middleware.AdminScopeGate` (`403 access-denied` past it).
+- Its step-ups (invites, link approvals, backups, opening the kept sign-ins)
+  take a code from **the account's** authenticator, never the admin login's,
+  and recovery codes stay the admin login's alone.
+- It may sign itself out. It may not end anyone else's sign-in, nor change
+  anyone's admin access, its own included.
+- A change that only adds (to `full`) carries the account's signed-in phones
+  over. Anything else signs them out, as do a new password, two-step off,
+  and removing the sign-in or the person.
 
 **Inside the box** (`services` in priority order):
 
@@ -218,7 +237,8 @@ Limits: 10 a minute per client, a shared allowance across every visitor
 
 | Route | |
 |---|---|
-| `GET /admin/accounts/summary` | Everyone at once, for the admin page's People list: `{people: [{profileId, login: {username, totpEnabled, locked, lastLoginAt?} \| null, invite: {purpose, expiresAt} \| null, services: <count>}], secretsKeyConfigured}`, by name. The same reads as the route below, and no secret: no code, token, password or address |
+| `GET /admin/accounts/summary` | Everyone at once, for the admin page's People list: `{people: [{profileId, login: {username, totpEnabled, locked, adminAccess, lastLoginAt?} \| null, invite: {purpose, expiresAt} \| null, services: <count>}], secretsKeyConfigured}`, by name. The same reads as the route below, and no secret: no code, token, password or address |
+| `PUT /admin/profiles/:id/admin-access` `{access}` | `none`, `serveradmin`, `manage` or `full` (above): `{adminAccess, signedOut}`. The admin login's alone (`403 access-denied` for an account's sign-in). `409 two-step-required`, `404 no-login`, `400 bad-access` |
 | `GET /admin/profiles/:id/account` | Sign-in state, waiting invite, services (no secrets), `secretsKeyConfigured`, `serviceTypes` |
 | `POST /admin/profiles/:id/invite` | `{invite: {token, code, purpose, expiresAt, profileName}, serverUrl, webLink, link, serverUrlWarning?}`. `webLink` (`…/invite#invite=…`) is the one to share; `link` (`alexandria://…`) is what the page opens. A phone's admin sign-in adds a fresh code (`totpCode` or `recoveryCode`), as link approvals do |
 | `DELETE /admin/profiles/:id/invite` | Cancel the waiting invite |

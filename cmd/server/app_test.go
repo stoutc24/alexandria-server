@@ -228,6 +228,7 @@ var wantRoutes = []string{
 	"HEAD /invite",
 	"PATCH /api/v1/admin/profiles/:id/services/:sid",
 	"PATCH /api/v1/devices/me",
+	"POST /api/v1/accounts/admin-sign-in",
 	"POST /api/v1/accounts/invite/accept",
 	"POST /api/v1/accounts/invite/check",
 	"POST /api/v1/accounts/login",
@@ -255,6 +256,7 @@ var wantRoutes = []string{
 	"POST /api/v1/nowplaying/intent",
 	"POST /api/v1/stats/events",
 	"PUT /api/v1/accounts/device-key",
+	"PUT /api/v1/admin/profiles/:id/admin-access",
 	"PUT /api/v1/admin/profiles/:id/services/order",
 	"PUT /api/v1/nowplaying/",
 }

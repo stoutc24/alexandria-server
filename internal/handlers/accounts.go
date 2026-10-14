@@ -51,6 +51,15 @@ type AccountsHandler struct {
 	// timing.
 	decoy string
 	now   func() time.Time
+	// adminDevices is the phones' Manage server sign-ins, so a change to a
+	// person's admin access reaches the phones signed in with it at once
+	// (SetAdminAccess). Set by UseAdminDevices.
+	adminDevices *repository.AdminAuthRepository
+}
+
+// UseAdminDevices gives the handler the phones' Manage server sign-ins.
+func (h *AccountsHandler) UseAdminDevices(auth *repository.AdminAuthRepository) {
+	h.adminDevices = auth
 }
 
 func NewAccountsHandler(
@@ -348,6 +357,9 @@ func (h *AccountsHandler) Me(c *fiber.Ctx) error {
 		out["hasLogin"] = true
 		out["username"] = login.Username
 		out["totpEnabled"] = login.TOTPEnabled
+		// What Manage server would let this account do ("" nothing), so
+		// the app offers "sign in with my account" only when it would work.
+		out["adminAccess"] = login.AdminAccess
 	}
 	if _, err := h.accounts.DeviceKey(deviceID(c)); err == nil {
 		out["deviceKey"] = true
@@ -616,6 +628,7 @@ func (h *AccountsHandler) Account(c *fiber.Ctx) error {
 			"totpEnabled": login.TOTPEnabled,
 			"createdAt":   login.CreatedAt,
 			"locked":      login.LockedUntil > now.Unix(),
+			"adminAccess": login.AdminAccess,
 		}
 		if login.LastLoginAt > 0 {
 			l["lastLoginAt"] = login.LastLoginAt
@@ -660,6 +673,7 @@ func (h *AccountsHandler) Summary(c *fiber.Ctx) error {
 				"username":    login.Username,
 				"totpEnabled": login.TOTPEnabled,
 				"locked":      login.LockedUntil > now.Unix(),
+				"adminAccess": login.AdminAccess,
 			}
 			if login.LastLoginAt > 0 {
 				l["lastLoginAt"] = login.LastLoginAt
@@ -679,6 +693,80 @@ func (h *AccountsHandler) Summary(c *fiber.Ctx) error {
 		people = append(people, p)
 	}
 	return c.JSON(fiber.Map{"people": people, "secretsKeyConfigured": h.accounts.VaultOn()})
+}
+
+type adminAccessBody struct {
+	Access string `json:"access"`
+}
+
+// SetAdminAccess is PUT /admin/profiles/:id/admin-access: what this
+// person's account may reach when one of their phones signs in to Manage
+// server with it — "none" (or ""), "serveradmin", "manage" or "full"
+// (repository.AdminAccess…). The admin login's alone:
+// middleware.AdminScopeGate refuses it to every account's sign-in, its
+// own included. Only for a sign-in with two-step on (409
+// two-step-required), as the account's own code is what vouches for its
+// phones from then on.
+//
+// Phones already signed in with the account follow at once: a change that
+// only adds (to "full") carries them over; one that takes anything away
+// — less access, other access, none — signs them out, and the answer says
+// how many.
+func (h *AccountsHandler) SetAdminAccess(c *fiber.Ctx) error {
+	p, err := h.profileFromPath(c)
+	if p == nil {
+		return err
+	}
+	var body adminAccessBody
+	if err := c.BodyParser(&body); err != nil {
+		return refuse(c, fiber.StatusBadRequest, "bad-request", "invalid request body")
+	}
+	access := strings.TrimSpace(body.Access)
+	if access == "none" {
+		access = ""
+	}
+	if !repository.ValidAdminAccess(access) {
+		return refuse(c, fiber.StatusBadRequest, "bad-access",
+			`access is one of "none", "serveradmin", "manage" or "full"`)
+	}
+	if h.adminDevices == nil {
+		return serverError(c, "the phones' sign-ins are not available",
+			errors.New("AccountsHandler.UseAdminDevices was never called"))
+	}
+	login, err := h.accounts.LoginByProfile(p.ID)
+	switch {
+	case errors.Is(err, repository.ErrNoLogin):
+		return refuse(c, fiber.StatusNotFound, "no-login", "they have no sign-in yet")
+	case err != nil:
+		return serverError(c, "could not read the sign-in", err)
+	}
+	if access != "" && !login.TOTPEnabled {
+		return refuse(c, fiber.StatusConflict, "two-step-required",
+			"they need two-step turned on for their account first")
+	}
+	old := login.AdminAccess
+	if err := h.accounts.SetAdminAccess(p.ID, access, h.now()); err != nil {
+		return serverError(c, "could not change their admin access", err)
+	}
+	signedOut := 0
+	switch {
+	case access == old:
+	case access == repository.AdminAccessFull || old == "":
+		if access != "" {
+			if _, err := h.adminDevices.RescopeDeviceTokensOf(p.ID, access); err != nil {
+				return serverError(c, "could not update their phones' sign-ins", err)
+			}
+		}
+	default:
+		gone, err := h.adminDevices.RevokeDeviceTokensOf(p.ID)
+		if err != nil {
+			return serverError(c, "could not sign their phones out", err)
+		}
+		signedOut = len(gone)
+	}
+	log.Printf("admin access for %q: %q -> %q (phones signed out: %d)",
+		login.Username, old, access, signedOut)
+	return c.JSON(fiber.Map{"adminAccess": access, "signedOut": signedOut})
 }
 
 type adminInviteBody struct {

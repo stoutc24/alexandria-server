@@ -453,7 +453,7 @@
        $("people-empty").textContent === "No one matches “nobody-zzz”.", $("people-empty").textContent);
     setSearch("");
     ok("P20 search cleared: everyone back, folded",
-       shownCards().length === 2 && !bodyOpen(CFG.grandmaId) && !visible($("people-empty")),
+       shownCards().length === 3 && !bodyOpen(CFG.grandmaId) && !visible($("people-empty")),
        JSON.stringify(shownCards()));
 
     press(inCard(CFG.grandmaId, '[data-tab="signin"]'));
@@ -492,6 +492,45 @@
     ok("P27 Back returns to the area before", !areaShown("phones") && location.hash === "#people", location.hash);
     step = "checkpoint-people";
     await checkpoint("people");
+
+    // Q. Admin access per person (owner, 2026-10-13): on the Sign-in tab,
+    // for a sign-in with two-step on; taking it away asks first.
+    step = "Q";
+    navTo("people");
+    press(inCard(CFG.adaId, '[data-tab="signin"]'));
+    await waitFor("Ada's admin access", function () {
+      return document.querySelector('#acct input[name="acct-access"]');
+    });
+    var choices = function () {
+      return Array.prototype.slice.call(document.querySelectorAll('#acct input[name="acct-access"]'));
+    };
+    same("Q1 four choices, None chosen, all open (two-step is on)",
+         choices().map(function (r) { return [r.value, r.checked, r.disabled]; }),
+         [["", true, false], ["serveradmin", false, false], ["manage", false, false], ["full", false, false]]);
+    from = rec.same.length;
+    press(choices()[1]);
+    await waitFor("Ada's line to show it", function () {
+      return chips(CFG.adaId).indexOf("admin: Server Admin") >= 0;
+    }, 12000);
+    var put = sent("PUT", "/admin-access", from);
+    same("Q2 Server Admin only: sent as such", put && JSON.parse(put.body), { access: "serveradmin" });
+    ok("Q3 ...said so, and still chosen once the panel reloads",
+       $("toast").textContent.indexOf("Server Admin only") >= 0 && choices()[1].checked,
+       $("toast").textContent);
+    step = "checkpoint-access";
+    await checkpoint("access");
+    step = "Q";
+    press(choices()[0]);
+    await waitFor("Ada's line without it", function () {
+      return chips(CFG.adaId).join(",").indexOf("admin:") < 0;
+    }, 12000);
+    ok("Q4 None takes it away", choices()[0].checked && sent("PUT", "/admin-access", from + 1));
+    press(inCard(CFG.grandmaId, '[data-tab="signin"]'));
+    await waitFor("Grandma's sign-in", function () {
+      return $("acct-status").textContent.indexOf("No sign-in yet") >= 0;
+    });
+    ok("Q5 no sign-in: no admin access to give", !document.querySelector('#acct input[name="acct-access"]'));
+    press(inCard(CFG.grandmaId, '[data-tab="devices"]'));
 
     // A. Every other service: the form behaves as before.
     step = "A";

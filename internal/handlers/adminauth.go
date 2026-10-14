@@ -31,6 +31,16 @@ type AdminAuthHandler struct {
 	// adminauth.GuessLimit).
 	signIns *adminauth.GuessLimit
 	stepUps *adminauth.GuessLimit
+	// accounts reads people's sign-ins, for a phone that signs in to
+	// Manage server with a person's account (IssueAccountDeviceToken) and
+	// for that phone's step-up codes (FreshCode). Set by UseAccounts.
+	accounts *repository.AccountRepository
+}
+
+// UseAccounts gives the handler people's sign-ins, for admin access
+// through a person's own account.
+func (h *AdminAuthHandler) UseAccounts(accounts *repository.AccountRepository) {
+	h.accounts = accounts
 }
 
 // everyone is the sign-ins' one allowance key.
@@ -511,6 +521,9 @@ func (h *AdminAuthHandler) FreshCode(
 	c *fiber.Ctx,
 	code, recoveryCode, action string,
 ) (bool, error) {
+	if profileID := middleware.AdminProfile(c); profileID != "" {
+		return h.accountFreshCode(c, profileID, code, recoveryCode, action)
+	}
 	cred, err := h.auth.Get()
 	if errors.Is(err, repository.ErrNoCredentials) {
 		return false, c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -535,6 +548,194 @@ func (h *AdminAuthHandler) FreshCode(
 	}
 	h.stepUps.Refund(stepUpKey(c))
 	return true, nil
+}
+
+// accountFreshCode is FreshCode for a phone signed in with a person's
+// account: the code comes from THEIR authenticator and is spent on THEIR
+// sign-in, never the admin login's, so the household's codes cannot vouch
+// for an account's phone nor the other way round. Recovery codes are the
+// admin login's alone. Same refusals and the same per-phone allowance as
+// the admin login's step-ups.
+func (h *AdminAuthHandler) accountFreshCode(
+	c *fiber.Ctx,
+	profileID, code, recoveryCode, action string,
+) (bool, error) {
+	if h.accounts == nil {
+		return false, serverError(c, "people's sign-ins are not available",
+			errors.New("AdminAuthHandler.UseAccounts was never called"))
+	}
+	if ok, err := h.spendStepUpGuess(c, action); !ok {
+		return false, err
+	}
+	refused := func(why string) (bool, error) {
+		log.Printf("%s step-up refused%s: %s", action, callerForLog(c), why)
+		return false, c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "wrong code", "reason": "step-up-failed"})
+	}
+	login, err := h.accounts.LoginByProfile(profileID)
+	switch {
+	case errors.Is(err, repository.ErrNoLogin):
+		return refused("the account's sign-in is gone")
+	case err != nil:
+		return false, serverError(c, "could not read the sign-in", err)
+	}
+	if recoveryCode != "" {
+		return refused("a recovery code belongs to the admin login, not an account")
+	}
+	if !login.TOTPEnabled {
+		return refused("the account has no two-step")
+	}
+	ok, err := h.spendAccountCode(login, code)
+	if err != nil {
+		return false, serverError(c, "could not check the code", err)
+	}
+	if !ok {
+		return refused("the account's two-step code was wrong or spent")
+	}
+	h.stepUps.Refund(stepUpKey(c))
+	return true, nil
+}
+
+// spendAccountCode checks a code from a person's authenticator and spends
+// its time step (AccountRepository.SpendTOTPStep), so one code serves one
+// request — the same rule the account's own sign-in keeps.
+func (h *AdminAuthHandler) spendAccountCode(login *repository.AccountLogin, code string) (bool, error) {
+	secret, err := h.accounts.OpenTOTP(login)
+	if err != nil || secret == "" {
+		return false, err
+	}
+	step, ok := adminauth.Verify(secret, code, clock().Unix(), login.LastTOTPStep)
+	if !ok {
+		return false, nil
+	}
+	return h.accounts.SpendTOTPStep(login.ProfileID, step, false)
+}
+
+// --- Manage server with a person's own account ------------------------
+
+type accountDeviceTokenRequest struct {
+	Password    string `json:"password"`
+	Code        string `json:"code"`
+	DeviceLabel string `json:"deviceLabel"`
+	Persistent  bool   `json:"persistent"`
+}
+
+// IssueAccountDeviceToken signs a phone in to Manage server with a
+// person's OWN account (owner, 2026-10-13: admin access per person, set on
+// the admin page): POST /api/v1/accounts/admin-sign-in, on a phone signed
+// in with that account (RequireProfile), for the account's password and a
+// fresh code from its authenticator. The answer is the admin device token
+// IssueDeviceToken gives, carrying the account's access as its scope;
+// middleware.AdminScopeGate holds it to that, and FreshCode asks this
+// account's authenticator for its step-ups.
+//
+// Refusals: 404 no-login; 403 no-admin-access; 403 two-step-required;
+// 409 not-enrolled (the admin login is not set up, so no admin sign-in
+// works yet); 429 locked; 401 code-required; 401 bad-credentials for a
+// wrong password or code, which counts against the account as a wrong
+// sign-in does (enough of them pause it) and against everyone's sign-in
+// allowance.
+func (h *AdminAuthHandler) IssueAccountDeviceToken(c *fiber.Ctx) error {
+	var req accountDeviceTokenRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid request body", "reason": "bad-request"})
+	}
+	if h.accounts == nil {
+		return serverError(c, "people's sign-ins are not available",
+			errors.New("AdminAuthHandler.UseAccounts was never called"))
+	}
+	enrolled, err := h.auth.Enrolled()
+	if err != nil {
+		return serverError(c, "could not read admin credentials", err)
+	}
+	if !enrolled {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error":  "this server's admin login is not set up yet",
+			"reason": "not-enrolled"})
+	}
+	login, err := h.accounts.LoginByProfile(middleware.ProfileID(c))
+	switch {
+	case errors.Is(err, repository.ErrNoLogin):
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "this device is not signed in with an account", "reason": "no-login"})
+	case err != nil:
+		return serverError(c, "could not read the sign-in", err)
+	}
+	if login.AdminAccess == "" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "this account has no admin access on this server", "reason": "no-admin-access"})
+	}
+	if !login.TOTPEnabled {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "turn on two-step for this account first", "reason": "two-step-required"})
+	}
+	now := clock()
+	if login.LockedUntil > now.Unix() {
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+			"error":             "too many wrong attempts; this sign-in is paused",
+			"reason":            "locked",
+			"retryAfterSeconds": login.LockedUntil - now.Unix(),
+		})
+	}
+	if ok, err := h.spendSignInGuess(c, "account admin sign-in"); !ok {
+		return err
+	}
+	wrong := func(why string) error {
+		log.Printf("account admin sign-in refused for %q: %s", login.Username, why)
+		if until, err := h.accounts.RecordFailure(login.ProfileID, now); err == nil && until > 0 {
+			log.Printf("account sign-in %q paused until %s after repeated wrong answers",
+				login.Username, time.Unix(until, 0).Format(time.RFC3339))
+		}
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "wrong password or code", "reason": "bad-credentials"})
+	}
+	// The password before the code, for the reason checkCredentials gives:
+	// a code is spent when it matches, so it must not be spendable by
+	// someone who does not know the password.
+	if !adminauth.VerifyPassword(login.PasswordHash, req.Password) {
+		return wrong("password did not match")
+	}
+	if strings.TrimSpace(req.Code) == "" {
+		h.signIns.Refund(everyone)
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "enter the code from your authenticator app", "reason": "code-required"})
+	}
+	ok, err := h.spendAccountCode(login, req.Code)
+	if err != nil {
+		return serverError(c, "could not check the code", err)
+	}
+	if !ok {
+		return wrong("the two-step code was wrong or spent")
+	}
+	h.signIns.Refund(everyone)
+	_ = h.accounts.RecordSuccess(login.ProfileID, now)
+
+	token, err := adminauth.NewDeviceToken()
+	if err != nil {
+		return serverError(c, "could not create a device sign-in", err)
+	}
+	dev, err := h.auth.CreateDeviceToken(adminauth.HashToken(token),
+		repository.NewAdminDevice{
+			Label:       sanitizeDeviceLabel(req.DeviceLabel),
+			Persistent:  req.Persistent,
+			CreatedVia:  repository.AdminDeviceViaAccount,
+			SchemeBasis: schemeBasis(c, h.httpsDeclared, req.Persistent),
+			ProfileID:   login.ProfileID,
+			Scope:       login.AdminAccess,
+		}, now)
+	if err != nil {
+		return serverError(c, "could not save the device sign-in", err)
+	}
+	log.Printf("admin device signed in with %q's account: %q (%s, access=%s, persistent=%v, https=%s)",
+		login.Username, dev.Label, dev.ID, dev.Scope, dev.Persistent,
+		schemeBasisForLog(dev.SchemeBasis))
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"token":            token,
+		"device":           adminDeviceView(dev),
+		"access":           dev.Scope,
+		"usedRecoveryCode": false,
+	})
 }
 
 // callerForLog names the admin device behind a request, for the server

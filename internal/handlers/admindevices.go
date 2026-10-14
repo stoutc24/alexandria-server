@@ -103,6 +103,11 @@ type adminDeviceJSON struct {
 	// authenticated the request, false for every row when the caller is
 	// the browser.
 	Current *bool `json:"current,omitempty"`
+	// ProfileID and Access are set for a sign-in made with a person's own
+	// account: whose, and the admin access it carries
+	// (repository.AdminAccess…). Both absent for the admin login's.
+	ProfileID string `json:"profileId,omitempty"`
+	Access    string `json:"access,omitempty"`
 }
 
 // rfc3339 is the contract's time format for new fields: UTC, to the
@@ -121,5 +126,7 @@ func adminDeviceView(d *repository.AdminDevice) adminDeviceJSON {
 		Persistent:  d.Persistent,
 		CreatedVia:  d.CreatedVia,
 		SchemeBasis: d.SchemeBasis,
+		ProfileID:   d.ProfileID,
+		Access:      d.Scope,
 	}
 }

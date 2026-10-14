@@ -559,6 +559,7 @@
             Set up their services, send an invite, and each service signs in
             for them.</p>
           <div id="acct-status"></div>
+          <div id="acct-access"></div>
         </div>
         <div id="acct-part-services">
           <p class="hint">Each one signs in for them automatically. The free
@@ -942,6 +943,9 @@
         c.push('<span class="pill' + (s.login.totpEnabled ? ' ok' : '') + '">two-step ' +
           (s.login.totpEnabled ? "on" : "off") + '</span>');
         if (s.login.locked) c.push('<span class="pill bad">sign-in paused</span>');
+        if (ACCESS_CHIP[s.login.adminAccess]) {
+          c.push('<span class="pill info">admin: ' + ACCESS_CHIP[s.login.adminAccess] + '</span>');
+        }
       } else if (!s.invite) {
         c.push('<span class="pill">no sign-in</span>');
       }
@@ -1336,11 +1340,20 @@
     } else {
       html = list.map(function (d) {
         var l = adminDeviceLines(d);
+        // Signed in with a person's own account: whose, and how far it
+        // reaches (admin access). The admin login's phones have neither.
+        var who = "";
+        if (d.profileId) {
+          var p = profileById(d.profileId);
+          who = "via " + (p ? p.name + "'s" : "a person's") + " account \u00b7 " +
+            (ACCESS_WORDS[d.access] || d.access);
+        }
         return '<div class="device">' +
           '<div class="admin-device" title="' + esc(l.title) + '">' +
             esc(d.label || "phone") +
             ' <span class="meta">\u00b7 ' + esc(l.first) + '</span>' +
             '<div class="meta">' + esc(l.second) + '</div>' +
+            (who ? '<div class="meta">' + esc(who) + '</div>' : '') +
           '</div>' +
           '<button class="danger" data-revoke-admin="' + esc(d.id) + '" ' +
             'data-adlabel="' + esc(d.label || "this phone") + '">Revoke</button>' +
@@ -1551,7 +1564,7 @@
     // must not sit in the page after the panel is closed — nor a Plex
     // sign-in in memory.
     dropPlexPick();
-    ["acct-notice", "acct-status", "acct-services", "acct-form"].forEach(function (id) {
+    ["acct-notice", "acct-status", "acct-access", "acct-services", "acct-form"].forEach(function (id) {
       var el = $(id);
       el._html = null;
       el.innerHTML = "";
@@ -1636,6 +1649,16 @@
         toast("The list changed. Showing the latest.", true);
         acctLoad();
         break;
+      case "two-step-required":
+        toast("Their account needs two-step turned on first.", true);
+        $("acct-access")._html = null;   // undo the choice on screen
+        acctLoad();
+        break;
+      case "bad-access":
+        toast((e && e.message) || "That isn't an access this server knows.", true);
+        $("acct-access")._html = null;
+        acctLoad();
+        break;
       default:
         toast((e && e.message) || "Something went wrong.", true);
     }
@@ -1669,6 +1692,7 @@
     setHTML($("acct-notice"), d.secretsKeyConfigured ? "" :
       '<div class="note" style="margin:0 0 4px">' + NO_KEY + '</div>');
     setHTML($("acct-status"), statusHTML(d));
+    setHTML($("acct-access"), accessHTML(d));
     setHTML($("acct-services"), servicesHTML(d));
     fillPlexLines(d.services || []);
     // The service being edited was removed elsewhere: nothing to save to.
@@ -1676,6 +1700,73 @@
       acct.form = null;
     }
     renderAcctForm();
+  }
+
+  // ---- admin access ----
+  //
+  // What a person's phones may reach after signing in to Manage server
+  // with their own account and a code from their own authenticator (PUT
+  // …/admin-access; the server holds each sign-in to it). Given only to a
+  // sign-in with two-step on. Taking anything away signs those phones out.
+  var ACCESS = [
+    ["", "None", ""],
+    ["serveradmin", "Server Admin only", "the media-server admin sign-ins you keep"],
+    ["manage", "Management only", "devices, people, invites, backups"],
+    ["full", "Full", "both"]
+  ];
+  var ACCESS_CHIP = { serveradmin: "Server Admin", manage: "management", full: "full" };
+  var ACCESS_WORDS = { "": "no admin access", serveradmin: "Server Admin only",
+                       manage: "management only", full: "full admin access" };
+
+  function accessHTML(d) {
+    var login = d.login;
+    if (!login) return "";
+    var cur = login.adminAccess || "";
+    var twoStep = !!login.totpEnabled;
+    return '<div class="card" style="margin-top:12px"><h4>Admin access</h4>' +
+      '<div class="meta">What their phones can do after signing in to Manage server ' +
+        'with this account and a code from their own authenticator.</div>' +
+      '<fieldset class="pick"><legend class="sr-only">Admin access</legend>' +
+      ACCESS.map(function (a) {
+        // Without two-step only taking access away is open.
+        var off = !twoStep && a[0] !== "" && a[0] !== cur;
+        return '<label class="choice' + (off ? ' off' : '') + '">' +
+          '<input type="radio" name="acct-access" value="' + a[0] + '"' +
+            (a[0] === cur ? ' checked' : '') + (off ? ' disabled' : '') + '>' +
+          '<span class="wrap">' + a[1] +
+            (a[2] ? ' <span class="meta">— ' + a[2] + '</span>' : '') + '</span></label>';
+      }).join("") + '</fieldset>' +
+      (twoStep ? '' : '<div class="bad">Two-step is off for this account. They turn it ' +
+        'on in the app (Settings › Companion Server › Alexandria account › ' +
+        'Two-step sign-in); then you can give access.</div>') +
+      '</div>';
+  }
+
+  function setAccess(value) {
+    var login = acct.data && acct.data.login;
+    if (!login) return;
+    var was = login.adminAccess || "";
+    if (value === was) return;
+    // Only "full" adds to everything; anything else that isn't a first
+    // grant takes something away, which signs their phones out.
+    var takes = !(value === "full" || was === "");
+    if (takes && !confirm("Change " + acct.name + "'s admin access to " +
+        ACCESS_WORDS[value] + "?\n\nTheir phones signed in to Manage server with " +
+        "this account are signed out now, and sign in again for the new access.")) {
+      $("acct-access")._html = null;   // put the old choice back on screen
+      renderAcct();
+      return;
+    }
+    run(function () {
+      return api(acctPath("/admin-access"), {
+        method: "PUT", body: JSON.stringify({ access: value || "none" }) });
+    }, function (r) {
+      var n = (r && r.signedOut) || 0;
+      toast(acct.name + ": " + ACCESS_WORDS[value] + "." +
+        (n ? " Signed out " + plural(n, "phone", "phones") + "." : ""));
+      load();
+      return acctLoad();
+    });
   }
 
   function statusHTML(d) {
@@ -3110,7 +3201,8 @@
   });
   $("acct").addEventListener("change", function (e) {
     var t = e.target;
-    if (t.id === "sf-type" || t.id === "sf-kind") syncForm();
+    if (t.name === "acct-access") setAccess(t.value);
+    else if (t.id === "sf-type" || t.id === "sf-kind") syncForm();
     else if (t.name === "sf-plex-server") plexServerPicked(Number(t.value));
     else if (t.name === "sf-plex-person") plexPersonPicked(Number(t.value));
   });

@@ -10,6 +10,8 @@
 //	flow openbox    opens a device's GET /api/v1/accounts/services answer.
 //	flow lastseen   dates a linked device's last visit back by -days, in
 //	                the throwaway database, as if it had gone unused.
+//	flow totp       prints the current code for a two-step secret, as an
+//	                authenticator app shows it.
 package main
 
 import (
@@ -33,6 +35,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/stoutsolutions/alexandria-server/internal/adminauth"
 	"github.com/stoutsolutions/alexandria-server/internal/vault"
 )
 
@@ -49,14 +52,28 @@ func main() {
 		openBox(os.Args[2:])
 	case "lastseen":
 		lastSeen(os.Args[2:])
+	case "totp":
+		totpCode(os.Args[2:])
 	default:
 		usage()
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: flow proxy|devicekey|openbox|lastseen [flags]")
+	fmt.Fprintln(os.Stderr, "usage: flow proxy|devicekey|openbox|lastseen|totp [flags]")
 	os.Exit(2)
+}
+
+// totpCode prints the code for -secret at this moment's 30-second step.
+func totpCode(args []string) {
+	fs := flag.NewFlagSet("totp", flag.ExitOnError)
+	secret := fs.String("secret", "", "the base32 two-step secret")
+	_ = fs.Parse(args)
+	code, err := adminauth.CodeAt(*secret, time.Now().Unix()/30)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(code)
 }
 
 // lastSeen sets one device's last_seen_at -days in the past, through the

@@ -376,6 +376,17 @@ func RunMigrations() error {
 		// 2026-10-13): the server's id, the person's name and Plex's
 		// addresses for it, as JSON. NULL for every other service.
 		`ALTER TABLE account_services ADD COLUMN plex TEXT`,
+		// Admin access for a person's own account (owner, 2026-10-13: "a
+		// switch in the server profile section ... full management
+		// access, just server admin page, or just management access"):
+		// "" none, "serveradmin", "manage" or "full". Kept on the login,
+		// so removing the sign-in takes it away.
+		`ALTER TABLE account_logins ADD COLUMN admin_access TEXT NOT NULL DEFAULT ''`,
+		// A phone's admin sign-in made with a person's account: whose
+		// account, and the access it was signed in with. Both "" for the
+		// admin login's own sign-ins, which keep reaching everything.
+		`ALTER TABLE admin_device_tokens ADD COLUMN profile_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE admin_device_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := DB.Exec(alter); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
