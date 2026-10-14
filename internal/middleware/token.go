@@ -204,6 +204,9 @@ func AdminScope(c *fiber.Ctx) string {
 //
 //   - /service-admins…: the kept media-server sign-ins — "serveradmin"
 //     and "full".
+//   - /provision and …/provision: making or resetting a person's account
+//     on a media server WITH those sign-ins — people and media servers
+//     both, so "full" alone.
 //   - DELETE /admin-devices/<its own id>: signing itself out — always.
 //   - any other change to /admin-devices (another phone, or all of
 //     them): the admin login's alone, so no account can sign the admin
@@ -226,6 +229,8 @@ func AdminScopeGate() fiber.Handler {
 		switch {
 		case path == "/service-admins" || strings.HasPrefix(path, "/service-admins/"):
 			allowed = scope == repository.AdminAccessServerAdmin || scope == repository.AdminAccessFull
+		case path == "/provision" || strings.HasSuffix(path, "/provision"):
+			allowed = scope == repository.AdminAccessFull
 		case c.Method() == fiber.MethodDelete && path == "/admin-devices/"+AdminDevice(c):
 			allowed = true
 		case (path == "/admin-devices" || strings.HasPrefix(path, "/admin-devices/")) && !reading:

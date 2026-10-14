@@ -70,12 +70,18 @@ party ends or the server restarts.
 
 ## What leaves your machine
 
-**Nothing, by default.** The server makes no outbound connections. It
-does not check for updates, report usage, or contact any third party —
-including us.
+**Nothing, by default.** The server does not check for updates, report
+usage, or contact any third party — including us.
 
-The only traffic is between the server and the Alexandria apps on your
-own network that you have linked to it.
+Its traffic is between the server and the Alexandria apps on your own
+network that you have linked to it — and one more thing, only when you
+ask: it connects only to your own servers, and only to create or reset an
+account you asked for. When the administrator sets up a person's service
+with "create this account" ticked, the server signs in to that service
+(your Audiobookshelf, Jellyfin and the like, at the address saved with
+its Server Admin sign-in) and makes the person's account there, or sets
+its password. That request carries the person's username and password,
+and for the services that need them, their name and email address.
 
 When the administrator picks a Plex person for an Alexandria account,
 their own browser or phone asks plex.tv, with their own Plex sign-in, for

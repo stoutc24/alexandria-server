@@ -178,6 +178,34 @@ func (r *ServiceAdminRepository) Delete(id string) error {
 	return nil
 }
 
+// Open is one service's kept sign-in with its password, for the server's
+// own use: creating or resetting a person's account on that service
+// (internal/provision). The password never leaves the server this way.
+func (r *ServiceAdminRepository) Open(serviceType string) (*OpenedServiceAdmin, error) {
+	if r.vault == nil {
+		return nil, ErrVaultOff
+	}
+	var a OpenedServiceAdmin
+	var sealed sql.NullString
+	err := database.DB.QueryRow(`
+		SELECT id, service_type, base_url, username, updated_at, secret
+		FROM service_admin_logins WHERE service_type = ?`, serviceType).
+		Scan(&a.ID, &a.Type, &a.BaseURL, &a.Username, &a.UpdatedAt, &sealed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrServiceAdminNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	a.Name = ServiceAdminTypes[a.Type]
+	if plain, err := r.vault.Open(sealed.String, serviceAdminAD(a.Type)); err == nil {
+		a.Password = string(plain)
+	} else {
+		a.Unreadable = true
+	}
+	return &a, nil
+}
+
 // OpenAll is every kept sign-in with its password, for the one route that
 // hands them to a phone. A password that will not open is marked
 // Unreadable rather than failing the rest.

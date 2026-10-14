@@ -1,0 +1,175 @@
+#!/bin/bash
+# A person's account on a media server, made from the admin page, end to
+# end. TEST-ONLY. From the repository root:
+#
+#   internal/adminui/testdata/provision/run.sh
+#
+# Builds and starts the real server binary (a throwaway database, a fresh
+# API token and secrets key) and a small Audiobookshelf (abs_stub.py),
+# enrols the admin login, keeps an ABS Server Admin sign-in and makes a
+# person, Emily, with curl. Headless Chrome then adds Emily's ABS service
+# through the page with the "create this account" tick (her ABS account is
+# made), edits it with a new password (the page asks; her ABS password
+# changes), and tries ABS's root account (refused). The stub's state is
+# checked at each step.
+#
+# Needs Go, curl, jq, openssl, python3 and Google Chrome (CHROME=... for
+# another). Nothing leaves this machine. KEEP=1 keeps the work folder.
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/../../../.." && pwd)
+here="$root/internal/adminui/testdata/provision"
+chrome=${CHROME:-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}
+port=${PORT:-4587}
+proxy_port=${PROXY_PORT:-4588}
+abs_port=${ABS_PORT:-4589}
+work=$(mktemp -d "${TMPDIR:-/tmp}/alexandria-provision.XXXXXX")
+pids=()
+failed=0
+
+cleanup() {
+  local p
+  for p in "${pids[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
+  pkill -f -- "--user-data-dir=$work/chrome" 2>/dev/null || true
+  if [ "${KEEP:-0}" = 1 ] || [ "$failed" != 0 ]; then
+    echo "work folder kept: $work"
+  else
+    rm -rf "${work:?}"
+  fi
+}
+trap cleanup EXIT
+
+pass() { printf 'PASS %s\n' "$1"; }
+flunk() { printf 'FAIL %s\n' "$1"; failed=1; }
+check() {
+  local name=$1
+  shift
+  if "$@" >/dev/null 2>&1; then pass "$name"; else flunk "$name"; fi
+}
+up() {
+  local _
+  for _ in $(seq 1 100); do
+    curl -fsS "$1" >/dev/null 2>&1 && return 0
+    sleep 0.1
+  done
+  return 1
+}
+reached() {
+  local _
+  for _ in $(seq 1 1200); do
+    [ -e "$work/checkpoint-$1" ] && return 0
+    [ -e "$work/report.json" ] && return 1
+    sleep 0.1
+  done
+  return 1
+}
+go_on() { : >"$work/continue-$1"; }
+
+echo "building the server and the harness"
+(cd "$root" && go build -o "$work/server" ./cmd/server &&
+  go build -o "$work/flow" ./internal/adminui/testdata/flow)
+
+api_token=$(openssl rand -hex 24)
+secrets_key=$(openssl rand -base64 32)
+password="provision-$(openssl rand -hex 8)"
+abs_admin="abs-admin-$(openssl rand -hex 6)"
+first="emily-first-$(openssl rand -hex 6)"
+second="emily-second-$(openssl rand -hex 6)"
+base="http://127.0.0.1:$port"
+abs="http://127.0.0.1:$abs_port"
+
+echo "starting the small Audiobookshelf on $abs"
+PORT=$abs_port ABS_ADMIN_PASSWORD=$abs_admin python3 "$here/abs_stub.py" >"$work/abs.log" 2>&1 &
+pids+=($!) && disown
+up "$abs/__state" || { flunk "the ABS stub started"; exit 1; }
+
+echo "starting the server on $base"
+ALEXANDRIA_API_TOKEN=$api_token ALEXANDRIA_SECRETS_KEY=$secrets_key \
+  DB_PATH="$work/alexandria.db" PORT=$port \
+  "$work/server" >"$work/server.log" 2>&1 &
+pids+=($!) && disown
+up "$base/health" || { flunk "the server started"; tail -20 "$work/server.log"; exit 1; }
+
+# Emily, before the admin login exists (the API token works until then).
+emily=$(curl -fsS -H "Authorization: Bearer $api_token" -H "Content-Type: application/json" \
+  -d '{"name":"Emily"}' "$base/api/v1/admin/profiles" | jq -er .profile.id)
+
+enrol=$(curl -fsS -H "Authorization: Bearer $api_token" -H "Content-Type: application/json" \
+  -d "$(jq -n --arg p "$password" '{password: $p}')" "$base/api/v1/admin/auth/enroll")
+code_page=$(jq -er '.recoveryCodes[0]' <<<"$enrol")
+code_curl=$(jq -er '.recoveryCodes[1]' <<<"$enrol")
+jar="$work/curl.cookies"
+curl -fsS -c "$jar" -H "Content-Type: application/json" -o /dev/null \
+  -d "$(jq -n --arg p "$password" --arg c "$code_curl" '{password: $p, recoveryCode: $c}')" \
+  "$base/api/v1/admin/auth/login"
+admin() { curl -fsS -b "$jar" "$@"; }
+
+# The admin's own ABS sign-in, kept by Server Admin.
+admin -H "Content-Type: application/json" -o /dev/null \
+  -d "$(jq -n --arg u "$abs" --arg p "$abs_admin" '{type: "abs", baseUrl: $u, username: "admin", password: $p}')" \
+  "$base/api/v1/admin/service-admins"
+
+jq -n --arg pw "$password" --arg rc "$code_page" --arg e "$emily" --arg u "$abs" \
+  --arg h "127.0.0.1:$abs_port" --arg f "$first" --arg s "$second" \
+  '{password: $pw, recovery: $rc, emilyId: $e, absUrl: $u, absHost: $h, firstPassword: $f, secondPassword: $s}' \
+  >"$work/config.json"
+
+"$work/flow" proxy -listen "127.0.0.1:$proxy_port" -upstream "$base" \
+  -driver "$here/driver.js" -config "$work/config.json" -dir "$work" >"$work/proxy.log" 2>&1 &
+pids+=($!) && disown
+up "http://127.0.0.1:$proxy_port/health" || { flunk "the proxy started"; exit 1; }
+
+echo "driving the admin page in headless Chrome"
+"$chrome" --headless=new --disable-gpu --no-first-run --no-default-browser-check \
+  --user-data-dir="$work/chrome" --no-proxy-server \
+  --host-resolver-rules="MAP * ~NOTFOUND, EXCLUDE 127.0.0.1" \
+  --disable-background-networking --disable-component-update --disable-sync \
+  --disable-extensions \
+  "http://127.0.0.1:$proxy_port/admin" >"$work/chrome.log" 2>&1 &
+pids+=($!) && disown
+
+if reached created; then
+  curl -fsS "$abs/__state" >"$work/state1.json"
+  check "ABS: emily made, active, a plain user, with the password typed in the page" \
+    jq -e --arg p "$first" '(.users | map(select(.username == "emily")) | length == 1) and
+      (.users[] | select(.username == "emily") | .type == "user" and .isActive == true) and
+      .passwords.emily == $p' "$work/state1.json"
+  admin "$base/api/v1/admin/profiles/$emily/services" >"$work/services.json"
+  check "Alexandria keeps her ABS login (username emily)" \
+    jq -e '.services | length == 1 and .[0].type == "abs" and .[0].username == "emily"' "$work/services.json"
+  check "the server log names the account, never the password" \
+    bash -c "grep -q 'provision: Audiobookshelf account \"emily\" created' '$work/server.log' &&
+      ! grep -qF -- '$first' '$work/server.log'"
+  go_on created
+else
+  flunk "the page reached the created checkpoint"
+fi
+
+if reached reset; then
+  curl -fsS "$abs/__state" >"$work/state2.json"
+  check "ABS: emily's password is the new one" \
+    jq -e --arg p "$second" '.passwords.emily == $p' "$work/state2.json"
+  go_on reset
+else
+  flunk "the page reached the reset checkpoint"
+fi
+
+if reached admin; then
+  curl -fsS "$abs/__state" >"$work/state3.json"
+  check "ABS: root untouched" jq -e '.passwords.root == null' "$work/state3.json"
+  go_on admin
+else
+  flunk "the page reached the admin checkpoint"
+fi
+
+for _ in $(seq 1 600); do [ -e "$work/report.json" ] && break; sleep 0.1; done
+if [ -e "$work/report.json" ]; then
+  jq -r '.checks[] | (if .ok then "PASS page: " else "FAIL page: " end) + .name +
+    (if .ok then "" else " :: " + .detail end)' "$work/report.json"
+  jq -e '(.checks | length) > 0 and all(.checks[]; .ok)' "$work/report.json" >/dev/null || failed=1
+else
+  flunk "the page reported"
+fi
+
+if [ "$failed" = 0 ]; then echo "ALL PASSED"; else echo "SOMETHING FAILED"; fi
+exit "$failed"

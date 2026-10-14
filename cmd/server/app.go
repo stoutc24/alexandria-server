@@ -98,8 +98,11 @@ func buildApp(cfg *config.Config) *fiber.App {
 	accountsHandler.UseAdminDevices(adminAuthRepo)
 	handlers.SetAccountsServices(secrets != nil)
 	// Server Admin's sign-ins to the household's servers: the same vault.
-	serviceAdminsHandler := handlers.NewServiceAdminsHandler(
-		repository.NewServiceAdminRepository(secrets), adminAuthHandler.FreshCode)
+	serviceAdminRepo := repository.NewServiceAdminRepository(secrets)
+	serviceAdminsHandler := handlers.NewServiceAdminsHandler(serviceAdminRepo, adminAuthHandler.FreshCode)
+	// A person's account on one of those servers, made (or its password
+	// set) by this server with the kept sign-in.
+	provisionHandler := handlers.NewProvisionHandler(serviceAdminRepo, profileRepo)
 
 	// Unauthenticated on purpose: the app needs to know whether a
 	// companion exists and what it can do before it has been given a
@@ -239,6 +242,14 @@ func buildApp(cfg *config.Config) *fiber.App {
 	admin.Post("/service-admins", serviceAdminsHandler.Save)
 	admin.Post("/service-admins/open", authLimiter, serviceAdminsHandler.Open)
 	admin.Delete("/service-admins/:id", serviceAdminsHandler.Delete)
+
+	// A person's account on one of the household's servers, made — or its
+	// password set — with the kept Server Admin sign-in: the one thing this
+	// server reaches out for (handlers.ProvisionHandler). The page and
+	// admin phones call it before saving the person's login for that
+	// service. "full" access only (middleware.AdminScopeGate).
+	admin.Get("/provision", provisionHandler.Capabilities)
+	admin.Post("/profiles/:id/provision", provisionHandler.Provision)
 
 	// Device linking, device half. Unauthenticated by necessity — the
 	// device has no token yet, which is the problem being solved. Rate

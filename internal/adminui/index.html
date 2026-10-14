@@ -297,6 +297,12 @@
   label.field {
     display: block; margin: 13px 0 5px; font-size: 13px; color: var(--muted);
   }
+  /* "Create this account on …": a tick, its sentence beside it. */
+  label.tick {
+    display: flex; gap: 9px; align-items: flex-start; margin: 14px 0 4px;
+    font-size: 14px; cursor: pointer;
+  }
+  label.tick input { margin-top: 3px; flex: none; }
   .wrap { min-width: 0; overflow-wrap: anywhere; }
   .bad { color: var(--danger); font-size: 13px; margin-top: 6px; }
   .card.invite { border-color: var(--accent); }
@@ -586,11 +592,12 @@
 
   var $ = function (id) { return document.getElementById(id); };
 
-  function toast(msg, isErr) {
+  function toast(msg, isErr, ms) {
     var t = $("toast");
     t.textContent = msg;
     t.className = "toast show" + (isErr ? " err" : "");
-    setTimeout(function () { t.className = "toast"; }, 2600);
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(function () { t.className = "toast"; }, ms || 2600);
   }
 
   function api(path, opts) {
@@ -1527,7 +1534,7 @@
 
   function newAcct(id, name) {
     return { id: id, name: name, data: null, reveal: null, form: null,
-             busy: false, seq: 0 };
+             busy: false, seq: 0, prov: null };
   }
 
   // Writes only when the markup changed, so a rebuild that would change
@@ -1583,6 +1590,25 @@
     $("acct").hidden = false;
     renderPeople();
     acctLoad();
+    provLoad();
+  }
+
+  // What this server can set up on each service with the Server Admin
+  // sign-ins it keeps (GET /admin/provision): creating a person's account
+  // there, or setting its password (owner, 2026-10-14). Null when it can't
+  // — an older server, or a sign-in whose access does not cover it — and
+  // the form simply offers nothing.
+  function provLoad() {
+    var st = acct;
+    return api("/admin/provision").then(function (r) {
+      if (acct !== st) return;
+      var by = {};
+      ((r && r.services) || []).forEach(function (s) { by[s.type] = s; });
+      st.prov = r && r.available ? by : null;
+      if (st.form && $("sf-type")) syncForm();
+    }).catch(function () {
+      if (acct === st) st.prov = null;
+    });
   }
 
   // By their Devices tab, by folding their card, or because they are gone:
@@ -1658,6 +1684,22 @@
         toast((e && e.message) || "That isn't an access this server knows.", true);
         $("acct-access")._html = null;
         acctLoad();
+        break;
+      case "prov-cancelled":
+        toast(e.message);
+        break;
+      case "account-exists":
+      case "admin-account":
+      case "email-required":
+      case "email-username":
+      case "reset-unsupported":
+      case "no-service-admin":
+      case "admin-sign-in-failed":
+      case "service-unreachable":
+      case "service-refused":
+        // The server's own sentence, kept up long enough to read; the
+        // form stays open with what was typed.
+        toast(e.message, true, 7000);
         break;
       default:
         toast((e && e.message) || "Something went wrong.", true);
@@ -2103,6 +2145,20 @@
         '<input type="text" id="sf-user" autocomplete="off" autocapitalize="off" ' +
           'spellcheck="false"' + off + ' value="' + esc(s ? s.username : "") + '">' +
         '<label class="field" for="sf-pass">Password</label>' + secret("sf-pass", "Password") +
+        // Their account on the service itself, made (or its password set)
+        // by this server with the kept Server Admin sign-in: provLoad /
+        // syncProv. Ticked for a new service, not for an edit.
+        '<div id="sf-prov" hidden>' +
+          '<label class="tick"><input type="checkbox" id="sf-prov-on"' + (s ? "" : " checked") + '>' +
+            '<span id="sf-prov-label"></span></label>' +
+          '<p class="meta" id="sf-prov-note" style="margin:0 0 0 26px" hidden></p>' +
+          '<div id="sf-prov-mail" hidden>' +
+            '<label class="field" for="sf-prov-email">Their email ' +
+              '<span class="meta" id="sf-prov-email-opt"></span></label>' +
+            '<input type="email" id="sf-prov-email" autocomplete="off" autocapitalize="off" ' +
+              'spellcheck="false" data-1p-ignore data-lpignore="true">' +
+          '</div>' +
+        '</div>' +
       '</div>' +
       '<div data-kind="token" hidden>' +
         '<label class="field" for="sf-token">Token</label>' + secret("sf-token", "Token") +
@@ -2145,9 +2201,37 @@
     var same = !!s && kind === s.loginKind && kind !== "none";
     $("sf-lost").hidden = !(same && s.unreadable);
     syncMoved();
+    syncProv(type, kind);
     // Moving off Plex ends a Plex sign-in rather than keeping it unseen.
     if (type !== "plex") dropPlexPick();
     renderPlexBox();
+  }
+
+  // The "create this account" tick: only for a username-and-password login
+  // on a service this server can make accounts on and keeps a Server Admin
+  // sign-in for. Its sentence says where, and whether an existing account's
+  // password is set; the email box is there for the services that use one.
+  function provCap(type, kind) {
+    var cap = acct.prov && acct.prov[type];
+    return cap && cap.create && cap.serverAdmin && kind === "password" ? cap : null;
+  }
+
+  function syncProv(type, kind) {
+    var box = $("sf-prov");
+    if (!box) return;
+    var cap = provCap(type, kind);
+    box.hidden = !cap;
+    if (!cap) return;
+    var where = cap.name + (cap.host ? " (" + cap.host + ")" : "");
+    $("sf-prov-label").textContent = cap.reset
+      ? "Create this account on " + where + ", or set its password to this one if it's already there"
+      : "Create this account on " + where;
+    var note = cap.note || "";
+    $("sf-prov-note").textContent = note;
+    $("sf-prov-note").hidden = !note;
+    var on = $("sf-prov-on").checked;
+    $("sf-prov-mail").hidden = !on || (cap.email !== "required" && cap.email !== "optional");
+    $("sf-prov-email-opt").textContent = cap.email === "optional" ? "(optional)" : "";
   }
 
   // Mirrors the server's sameServiceAddress: scheme and host without case,
@@ -2209,9 +2293,22 @@
     var moved = formMoves(s);
     var need = !s || kind !== s.loginKind || s.unreadable || !s.hasSecret || moved;
     var again = moved && s.hasSecret ? " A saved login never moves to a new address." : "";
+    // Their account on the service itself first (syncProv's tick): made, or
+    // — once the admin says so — its password set, by this server. Only
+    // then is the login saved here, so the two match.
+    var cap = provCap(type, kind);
+    var prov = !!cap && !$("sf-prov").hidden && $("sf-prov-on").checked;
+    var email = prov ? $("sf-prov-email").value.trim() : "";
     if (kind === "password") {
       if (!user) return complain("Enter their username.", "sf-user");
       if (!pass && need) return complain("Enter their password." + again, "sf-pass");
+      if (prov && !pass) {
+        return complain("Type the password to set up their " + cap.name +
+          " account, or untick the box.", "sf-pass");
+      }
+      if (prov && cap.email === "required" && !email) {
+        return complain(cap.name + " needs their email for a new account.", "sf-prov-email");
+      }
     } else if (kind === "token" && !tok && need) {
       return complain("Enter the token." + again, "sf-token");
     } else if (kind === "apikey" && !key && need) {
@@ -2241,12 +2338,38 @@
     Object.keys(send).forEach(function (k) { body[k] = send[k]; });
 
     var path = acctPath("/services" + (s ? "/" + encodeURIComponent(s.id) : ""));
+    var said = null;
     run(function () {
-      return api(path, { method: s ? "PATCH" : "POST", body: JSON.stringify(body) });
+      var save = function () {
+        return api(path, { method: s ? "PATCH" : "POST", body: JSON.stringify(body) });
+      };
+      if (!prov) return save();
+      var req = { type: type, username: user, password: pass, email: email };
+      var ask = function (allowReset) {
+        req.allowReset = allowReset;
+        return api(acctPath("/provision"), { method: "POST", body: JSON.stringify(req) });
+      };
+      return ask(false).catch(function (e) {
+        if (e.reason !== "account-exists") throw e;
+        if (!confirm(e.message + ".\n\nChange its password to the one you typed?")) {
+          var stop = new Error("Nothing was changed: their " + cap.name + " password stays as it is.");
+          stop.reason = "prov-cancelled";
+          throw stop;
+        }
+        return ask(true);
+      }).then(function (r) {
+        said = r;
+        return save();
+      });
     }, function () {
       acct.form = null;
       renderAcctForm();
-      toast(s ? "Saved." : "Service added.");
+      var msg = s ? "Saved." : "Service added.";
+      if (said) {
+        msg = (said.outcome === "reset" ? "Password changed on " : "Account created on ") +
+          said.service + ". " + msg + (said.note ? " " + said.note : "");
+      }
+      toast(msg, false, said ? 7000 : 0);
       return acctLoad().then(function () {
         var back = s
           ? $("acct-services").querySelector('[data-act="edit"][data-sid="' + s.id + '"]')
@@ -3202,7 +3325,7 @@
   $("acct").addEventListener("change", function (e) {
     var t = e.target;
     if (t.name === "acct-access") setAccess(t.value);
-    else if (t.id === "sf-type" || t.id === "sf-kind") syncForm();
+    else if (t.id === "sf-type" || t.id === "sf-kind" || t.id === "sf-prov-on") syncForm();
     else if (t.name === "sf-plex-server") plexServerPicked(Number(t.value));
     else if (t.name === "sf-plex-person") plexPersonPicked(Number(t.value));
   });

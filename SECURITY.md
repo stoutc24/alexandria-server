@@ -33,7 +33,8 @@ stored and how, and which routes answer without a token. In short:
   more;
 - device tokens and sessions are stored only as hashes;
 - the admin page needs a password and an authenticator code;
-- it makes no outbound connections;
+- it connects only to your own servers, and only to create or reset an
+  account you asked for (with the Server Admin sign-in you saved there);
 - it runs as a non-root user.
 
 The image is built by GitHub Actions from this repository only:

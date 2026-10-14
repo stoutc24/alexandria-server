@@ -247,6 +247,34 @@ two-step on.
 | `PATCH /admin/profiles/:id/services/:sid` | Edit. A secret left out keeps its value; an empty one clears it. `plex` left out keeps the pick; a new `plex` (a person picked again) needs its `token`. An edit that moves the service (another address, or another `type`) keeps no saved secret: it must carry the login's own (`password`, `token` or `apiKey`), or name `loginKind: none`, else 400 `login-required` and nothing changes |
 | `DELETE /admin/profiles/:id/services/:sid` | Devices sign out of it at their next check |
 | `PUT /admin/profiles/:id/services/order` `{ids}` | Every id once, first to last |
+| `GET /admin/provision` | What this server can do on each service with the Server Admin sign-ins it keeps: `{available, services: [{type, name, create, reset, email, note?, serverAdmin, host?}]}`. `email` is `optional`, `required` or `username` (Komga signs in with one). No secret |
+| `POST /admin/profiles/:id/provision` `{type, username, password, name?, email?, allowReset?}` | Make the person's account on that service — or, with `allowReset`, set an existing account's password — signed in with the kept Server Admin sign-in (below): `{outcome: created\|reset, note?, service, host}`. `409 account-exists` (ask, then send `allowReset`), `409 admin-account`, `409 reset-unsupported`, `409 no-service-admin`, `409 service-admin-unreadable`, `400 email-required`, `400 email-username`, `400 not-supported`, `502 admin-sign-in-failed`, `502 service-unreachable`, `502 service-refused` (the service's own words). An account's own admin sign-in needs `full` |
+
+### Making their accounts on your servers
+
+Owner, 2026-10-14: setting up Emily's ABS and Grimmory should make those
+accounts too. With a **Server Admin sign-in** kept for a service, the
+admin page and an admin phone tick "Create this account on …" when they
+add a person's username-and-password login; the server then signs in to
+the service and makes the account, or — after asking — sets its password.
+This is the one place the server connects out: to the household's own
+servers, at the address saved with the sign-in, only when asked
+(`internal/provision`, each service's calls read from its own source).
+
+| Service | Create | Set an existing password | Notes |
+|---|---|---|---|
+| Audiobookshelf | yes | yes | Active user, every library, downloads; ABS signs that account out elsewhere on a reset |
+| Grimmory | yes | yes | Needs a name and an email; every library; Grimmory's website asks for a new password on the first sign-in there |
+| Jellyfin | yes | yes | Jellyfin's defaults: every library, playback, downloads, hidden from the login screen |
+| Navidrome | yes | yes | Every library (Navidrome's own `user create` does the same) |
+| Komga | yes | yes | The username is an email address; file download and page streaming |
+| Kavita | yes | yes | Invited and accepted in one go, with the Login role; with mail set up Kavita also emails the invite |
+| Stump | yes | yes | Download and change-password; a reset keeps the account's permissions and limits |
+| Storyteller | yes | no | Invited and accepted in one go; Storyteller can only email someone a reset link |
+| Calibre-Web | yes | no | Its own form, with the server's defaults; its edit form would reset an account's permissions |
+
+Admin, owner and root accounts are never changed, and neither is the kept
+sign-in's own account.
 
 ---
 

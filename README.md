@@ -67,9 +67,12 @@ server**.
 - **It does not touch your media.** It keeps an index. Deleting a row here
   removes an index entry, never a file on any server. No route in this
   server deletes media.
-- **It does not phone home.** It makes no outbound connections. It sends
-  nothing to the developer and needs no internet access once its image is
-  downloaded. (Picking a Plex person for an account is done by your own
+- **It does not phone home.** It sends nothing to the developer and needs
+  no internet access once its image is downloaded. It connects only to
+  your own servers, and only to create or reset an account you asked for:
+  with the Server Admin sign-in you saved for a service, it can make a
+  person's account there (or set its password) when you set up their
+  services. (Picking a Plex person for an account is done by your own
   browser or phone talking to plex.tv, not by this server.) See
   [legal/PRIVACY_POLICY.md](legal/PRIVACY_POLICY.md).
 
