@@ -8,11 +8,14 @@
 //	                fetch and window.open for plex.tv only.
 //	flow devicekey  makes a device key pair, as the app does at sign-in.
 //	flow openbox    opens a device's GET /api/v1/accounts/services answer.
+//	flow lastseen   dates a linked device's last visit back by -days, in
+//	                the throwaway database, as if it had gone unused.
 package main
 
 import (
 	"crypto/ecdh"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -28,6 +31,8 @@ import (
 	"strings"
 	"time"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/stoutsolutions/alexandria-server/internal/vault"
 )
 
@@ -42,14 +47,41 @@ func main() {
 		deviceKey(os.Args[2:])
 	case "openbox":
 		openBox(os.Args[2:])
+	case "lastseen":
+		lastSeen(os.Args[2:])
 	default:
 		usage()
 	}
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: flow proxy|devicekey|openbox [flags]")
+	fmt.Fprintln(os.Stderr, "usage: flow proxy|devicekey|openbox|lastseen [flags]")
 	os.Exit(2)
+}
+
+// lastSeen sets one device's last_seen_at -days in the past, through the
+// same SQLite driver the server writes it with (so it reads back as the
+// server's own would). The server keeps running: WAL lets a second writer
+// in, and busy_timeout waits out its locks.
+func lastSeen(args []string) {
+	fs := flag.NewFlagSet("lastseen", flag.ExitOnError)
+	dbPath := fs.String("db", "", "the test server's database")
+	label := fs.String("label", "", "the device's label")
+	days := fs.Int("days", 41, "how many days ago")
+	_ = fs.Parse(args)
+	db, err := sql.Open("sqlite", *dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	at := time.Now().UTC().Add(-time.Duration(*days) * 24 * time.Hour)
+	res, err := db.Exec(`UPDATE profile_tokens SET last_seen_at = ? WHERE label = ?`, at, *label)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		log.Fatalf("%d devices labelled %q, want 1", n, *label)
+	}
 }
 
 var checkpointName = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)

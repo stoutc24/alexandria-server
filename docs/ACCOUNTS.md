@@ -218,6 +218,7 @@ Limits: 10 a minute per client, a shared allowance across every visitor
 
 | Route | |
 |---|---|
+| `GET /admin/accounts/summary` | Everyone at once, for the admin page's People list: `{people: [{profileId, login: {username, totpEnabled, locked, lastLoginAt?} \| null, invite: {purpose, expiresAt} \| null, services: <count>}], secretsKeyConfigured}`, by name. The same reads as the route below, and no secret: no code, token, password or address |
 | `GET /admin/profiles/:id/account` | Sign-in state, waiting invite, services (no secrets), `secretsKeyConfigured`, `serviceTypes` |
 | `POST /admin/profiles/:id/invite` | `{invite: {token, code, purpose, expiresAt, profileName}, serverUrl, webLink, link, serverUrlWarning?}`. `webLink` (`…/invite#invite=…`) is the one to share; `link` (`alexandria://…`) is what the page opens. A phone's admin sign-in adds a fresh code (`totpCode` or `recoveryCode`), as link approvals do |
 | `DELETE /admin/profiles/:id/invite` | Cancel the waiting invite |

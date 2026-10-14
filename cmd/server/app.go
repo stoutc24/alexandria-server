@@ -209,6 +209,8 @@ func buildApp(cfg *config.Config) *fiber.App {
 	// services. An invite lets someone into a person's profile, so a
 	// phone's invites add a fresh code (handlers.AccountsHandler.
 	// CreateInvite) and share the sign-in rate limit, as link approvals do.
+	// The summary is everyone's sign-in at a glance, for the People list.
+	admin.Get("/accounts/summary", accountsHandler.Summary)
 	admin.Get("/profiles/:id/account", accountsHandler.Account)
 	admin.Delete("/profiles/:id/account", accountsHandler.RemoveLogin)
 	admin.Post("/profiles/:id/invite",
