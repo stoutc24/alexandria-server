@@ -154,6 +154,9 @@ type Capability struct {
 	Libraries bool `json:"libraries"`
 	// Note is a sentence the forms show (for example why reset is off).
 	Note string `json:"note,omitempty"`
+	// Access is what Change access can set on an existing account
+	// (AccessEditor); absent where it can set nothing.
+	Access *AccessCapability `json:"access,omitempty"`
 }
 
 // Provider makes or updates accounts on one kind of service.
@@ -192,6 +195,10 @@ func Capabilities() []Capability {
 	for _, p := range providers {
 		c := p.Capability()
 		_, c.Libraries = p.(Librarian)
+		if ed, ok := p.(AccessEditor); ok {
+			a := ed.AccessCapability()
+			c.Access = &a
+		}
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })

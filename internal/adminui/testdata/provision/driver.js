@@ -9,7 +9,9 @@
 // account is made seeing only the other. Then her service is edited with a
 // new password and the tick: the page asks (her libraries stay as they
 // are), and her ABS password changes. Noah's account is refused with no
-// library ticked, then made with all of them ticked: every library.
+// library ticked, then made with all of them ticked: every library. Then
+// "Change access" on Emily's login reads her account, changes it, and
+// warns when the service changed more than asked; and "Test accounts" runs.
 (function () {
   "use strict";
   var CFG = window.__FLOW__;
@@ -171,6 +173,82 @@
     ok("L7 all ticked: made", true, "");
     await checkpoint("all");
 
+    // "Change access" on Emily's saved ABS login: her account read with the
+    // kept sign-in, changed, and read back.
+    step = "access";
+    var change = await waitFor("Change access on her ABS login", function () {
+      return document.querySelector('#acct-services [data-act="svc-access"]');
+    });
+    ok("A1 Change access is offered on a password login", /Change access/.test(change.textContent), change.textContent);
+    var sid = change.getAttribute("data-sid");
+    function panel() { return document.querySelector('#acct-services [data-access="' + sid + '"]'); }
+    function inPanel(sel) { var p = panel(); return p ? p.querySelectorAll(sel) : []; }
+    press(change);
+    await waitFor("her access", function () { var p = panel(); return p && p.querySelector("h4"); });
+    var radios = inPanel('input[type="radio"]'), libs = inPanel('input[name="svc-acc-lib"]'),
+        dl = inPanel('input[name="svc-acc-dl"]')[0];
+    ok("A2 it reads what she has: only Audiobooks, and downloads",
+       radios.length === 2 && radios[1].checked && libs.length === 2 && libs[0].checked && !libs[1].checked &&
+       dl && dl.checked, panel().textContent);
+    ok("A3 a library's name is text, never markup",
+       panel().textContent.indexOf("Podcasts <b>") >= 0 && !panel().querySelector("b"), panel().innerHTML);
+    ok("A4 it says whose account, on which server", panel().textContent.indexOf("emily on " + CFG.absHost) >= 0 &&
+       !/Their login uses/.test(panel().textContent), panel().textContent);
+    ok("A5 focus moved into it", panel().contains(document.activeElement), document.activeElement && document.activeElement.outerHTML);
+
+    libs[1].click();
+    dl.click();
+    press(panel().querySelector('[data-act="svc-access-save"]'));
+    var saved = await waitFor("the saved line", function () { var p = panel(); return p && p.querySelector(".good"); });
+    ok("A6 saved, saying what she has now", saved.textContent === "Saved. emily sees 2 of 2 libraries and can't download.",
+       saved.textContent);
+    await checkpoint("access");
+
+    // Every library: the boxes follow the choice, and the save says so.
+    radios = inPanel('input[type="radio"]');
+    radios[0].click();
+    libs = inPanel('input[name="svc-acc-lib"]');
+    ok("A7 All libraries ticks and locks every box", libs[0].disabled && libs[1].disabled && libs[0].checked &&
+       libs[1].checked, libs.length);
+    press(panel().querySelector('[data-act="svc-access-save"]'));
+    await waitFor("the second save", function () {
+      var g = panel() && panel().querySelector(".good");
+      return g && /every library/.test(g.textContent) ? g : null;
+    });
+    await checkpoint("access-all");
+
+    // None ticked under "Only these" is refused on the page.
+    inPanel('input[type="radio"]')[1].click();
+    libs = inPanel('input[name="svc-acc-lib"]');
+    libs[0].click();
+    libs[1].click();
+    press(panel().querySelector('[data-act="svc-access-save"]'));
+    await waitFor("the refusal", function () {
+      var b = panel() && panel().querySelector(".bad");
+      return b && /at least one library/.test(b.textContent) ? b : null;
+    });
+    ok("A8 no library ticked: refused before anything is sent", true, "");
+    press(panel().querySelector('[data-act="svc-access-close"]'));
+    ok("A9 Close takes the panel away and focus back to the button", !panel() &&
+       document.activeElement === document.querySelector('#acct-services [data-act="svc-access"][data-sid="' + sid + '"]'),
+       document.activeElement && document.activeElement.outerHTML);
+    await checkpoint("access-none");
+
+    // run.sh has made ABS change a right nobody asked about: the change
+    // shows as made, with a warning naming what else moved.
+    step = "access-sneak";
+    press(document.querySelector('#acct-services [data-act="svc-access"][data-sid="' + sid + '"]'));
+    await waitFor("her access again", function () { var p = panel(); return p && p.querySelector("h4"); });
+    inPanel('input[name="svc-acc-dl"]')[0].click();
+    press(panel().querySelector('[data-act="svc-access-save"]'));
+    var warn = await waitFor("the warning", function () { var p = panel(); return p && p.querySelector(".bad"); });
+    ok("A10 a service that changed more than asked is named, not reported done",
+       /also changed permissions\.update/.test(warn.textContent) && !panel().querySelector(".good"), warn.textContent);
+    ok("A11 the panel shows what the account has now",
+       inPanel('input[name="svc-acc-dl"]')[0].checked && inPanel('input[type="radio"]')[0].checked, panel().innerHTML);
+    press(panel().querySelector('[data-act="svc-access-close"]'));
+    await checkpoint("access-sneak");
+
     // "Test accounts" on the kept ABS sign-in: an old test account deleted,
     // a new one made, signed in as and deleted.
     step = "selftest";
@@ -184,8 +262,8 @@
       return r ? r.parentNode : null;
     }, 30000);
     ok("T1 the test passes on ABS", /New accounts work here/.test(result.textContent), result.textContent);
-    ok("T2 four steps, all ticked", result.querySelectorAll("li.ok").length === 4 &&
-       !result.querySelector("li.bad"), result.textContent);
+    ok("T2 five steps, all ticked, Change its access among them", result.querySelectorAll("li.ok").length === 5 &&
+       !result.querySelector("li.bad") && /Change its access/.test(result.textContent), result.textContent);
     ok("T3 the old test account is named as cleared",
        /alexandria-selftest-old111/.test(result.textContent), result.textContent);
     await checkpoint("selftest");

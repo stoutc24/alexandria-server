@@ -6,6 +6,10 @@ GET /api/libraries, POST /api/users, PATCH /api/users/<id>) for the admin
 "admin" / the password in ABS_ADMIN_PASSWORD, and GET /__state with what it
 holds, for run.sh to check. Listens on 127.0.0.1:$PORT. Nothing leaves this
 machine.
+
+PATCH changes an account the way Audiobookshelf's own does: a password if
+one is sent; the boolean permissions named, merged into the account's; and
+the library list only alongside a permissions object.
 """
 import json
 import os
@@ -13,6 +17,10 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ADMIN_PASSWORD = os.environ["ABS_ADMIN_PASSWORD"]
+# A user's permission keys (getDefaultPermissionsForUserType): only these
+# are taken from a PATCH.
+PERMISSION_KEYS = {"download", "update", "delete", "upload", "createEreader", "accessAllLibraries",
+                   "accessAllTags", "accessExplicitContent", "selectedTagsNotAccessible"}
 lock = threading.Lock()
 # A test account an earlier "Test accounts" run left behind: the next run
 # deletes it first.
@@ -21,6 +29,9 @@ users = [{"id": "root-1", "username": "root", "type": "root"},
 passwords = {"alexandria-selftest-old111": "left-over-pass"}
 # Ids are never reused (deletes shorten the list).
 next_id = [10]
+# POST /__sneak {"on": true}: a PATCH also lets the account update items,
+# which nobody asked for (the server must say so).
+sneak = [False]
 # One name carries markup, which the page must show as text.
 libraries = [{"id": "lib-books", "name": "Audiobooks", "mediaType": "book"},
              {"id": "lib-pods", "name": "Podcasts <b>", "mediaType": "podcast"}]
@@ -55,6 +66,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self._body()
         with lock:
+            if self.path == "/__sneak":
+                sneak[0] = bool(body.get("on"))
+                return self._send(200, {"sneak": sneak[0]})
             if self.path == "/login":
                 if body.get("username") == "admin" and body.get("password") == ADMIN_PASSWORD:
                     return self._send(200, {"user": {"accessToken": "stub-jwt"}})
@@ -82,7 +96,18 @@ class Handler(BaseHTTPRequestHandler):
                 uid = self.path.rsplit("/", 1)[1]
                 for u in users:
                     if u["id"] == uid:
-                        passwords[u["username"]] = body["password"]
+                        if body.get("password"):
+                            passwords[u["username"]] = body["password"]
+                        sent = body.get("permissions")
+                        if isinstance(sent, dict):
+                            perms = u.setdefault("permissions", {})
+                            for k, v in sent.items():
+                                if k in PERMISSION_KEYS and isinstance(v, bool):
+                                    perms[k] = v
+                            if isinstance(body.get("librariesAccessible"), list):
+                                u["librariesAccessible"] = body["librariesAccessible"]
+                            if sneak[0]:
+                                perms["update"] = True
                         return self._send(200, {"success": True})
         self._send(404, {"error": "no"})
 

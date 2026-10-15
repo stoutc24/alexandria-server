@@ -13,7 +13,10 @@
 # edits it with a new password (the page asks; her ABS password changes,
 # her libraries do not), tries ABS's root account (refused), then Noah's
 # with no library ticked (refused on the page) and with all of them
-# (every library). The stub's state is checked at each step.
+# (every library). Then "Change access" on Emily's login: both libraries and
+# no downloads, then every library, then none ticked (refused on the page),
+# then a save the stub answers by changing another right too (the page
+# warns). Last, "Test accounts". The stub's state is checked at each step.
 #
 # Needs Go, curl, jq, openssl, python3 and Google Chrome (CHROME=... for
 # another). Nothing leaves this machine. KEEP=1 keeps the work folder.
@@ -190,13 +193,64 @@ else
   flunk "the page reached the all checkpoint"
 fi
 
+if reached access; then
+  curl -fsS "$abs/__state" >"$work/state-access.json"
+  check "ABS: Change access gave emily both libraries, by name, and took downloads away" \
+    jq -e '.users[] | select(.username == "emily") |
+      .permissions.download == false and .permissions.accessAllLibraries == false and
+      .librariesAccessible == ["lib-books", "lib-pods"]' "$work/state-access.json"
+  check "ABS: nothing else about emily moved" \
+    jq -e --arg p "$second" '.passwords.emily == $p and (.users[] | select(.username == "emily") |
+      .permissions.upload == false and .permissions.update == false and .permissions.delete == false and
+      .type == "user")' "$work/state-access.json"
+  check "the server log says what she has, read back" \
+    grep -q 'provision: Audiobookshelf access for "emily" on 127.0.0.1:'"$abs_port"' (Emily) set to 2 of 2 libraries, downloads off' "$work/server.log"
+  go_on access
+else
+  flunk "the page reached the access checkpoint"
+fi
+
+if reached access-all; then
+  curl -fsS "$abs/__state" >"$work/state-access-all.json"
+  check "ABS: every library, the old list cleared" \
+    jq -e '.users[] | select(.username == "emily") |
+      .permissions.accessAllLibraries == true and .librariesAccessible == [] and .permissions.download == false' \
+    "$work/state-access-all.json"
+  go_on access-all
+else
+  flunk "the page reached the access-all checkpoint"
+fi
+
+if reached access-none; then
+  curl -fsS "$abs/__state" >"$work/state-access-none.json"
+  check "ABS: a pick of no library changed nothing" \
+    jq -e '.users[] | select(.username == "emily") | .permissions.accessAllLibraries == true' "$work/state-access-none.json"
+  # The next save also changes a right nobody asked about.
+  curl -fsS -H "Content-Type: application/json" -d '{"on": true}' -o /dev/null "$abs/__sneak"
+  go_on access-none
+else
+  flunk "the page reached the access-none checkpoint"
+fi
+
+if reached access-sneak; then
+  curl -fsS -H "Content-Type: application/json" -d '{"on": false}' -o /dev/null "$abs/__sneak"
+  curl -fsS "$abs/__state" >"$work/state-access-sneak.json"
+  check "ABS: the asked-for change took (downloads back on)" \
+    jq -e '.users[] | select(.username == "emily") | .permissions.download == true' "$work/state-access-sneak.json"
+  check "the server log names what else changed" \
+    grep -q 'provision: Audiobookshelf access for "emily" .* but these changed too: permissions.update' "$work/server.log"
+  go_on access-sneak
+else
+  flunk "the page reached the access-sneak checkpoint"
+fi
+
 if reached selftest; then
   curl -fsS "$abs/__state" >"$work/state6.json"
   check "ABS: no test account left, the people and root untouched" \
     jq -e '(.users | map(select(.username | startswith("alexandria-selftest-"))) | length == 0) and
       (.users | map(.username) | sort == ["emily", "noah", "root"])' "$work/state6.json"
   check "the server log has the test's steps" \
-    grep -q 'provision: test accounts on Audiobookshelf .*cleanup ok; create ok; sign-in ok; remove ok' "$work/server.log"
+    grep -q 'provision: test accounts on Audiobookshelf .*cleanup ok; create ok; sign-in ok; access ok; remove ok' "$work/server.log"
   go_on selftest
 else
   flunk "the page reached the selftest checkpoint"

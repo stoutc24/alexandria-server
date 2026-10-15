@@ -191,6 +191,7 @@ var wantRoutes = []string{
 	"GET /api/v1/admin/profiles",
 	"GET /api/v1/admin/profiles/:id/account",
 	"GET /api/v1/admin/profiles/:id/services",
+	"GET /api/v1/admin/profiles/:id/services/:sid/provision",
 	"GET /api/v1/admin/provision",
 	"GET /api/v1/admin/provision/:type/libraries",
 	"GET /api/v1/admin/service-admins",
@@ -217,6 +218,7 @@ var wantRoutes = []string{
 	"HEAD /api/v1/admin/profiles",
 	"HEAD /api/v1/admin/profiles/:id/account",
 	"HEAD /api/v1/admin/profiles/:id/services",
+	"HEAD /api/v1/admin/profiles/:id/services/:sid/provision",
 	"HEAD /api/v1/admin/provision",
 	"HEAD /api/v1/admin/provision/:type/libraries",
 	"HEAD /api/v1/admin/service-admins",
@@ -263,6 +265,7 @@ var wantRoutes = []string{
 	"POST /api/v1/stats/events",
 	"PUT /api/v1/accounts/device-key",
 	"PUT /api/v1/admin/profiles/:id/admin-access",
+	"PUT /api/v1/admin/profiles/:id/services/:sid/provision",
 	"PUT /api/v1/admin/profiles/:id/services/order",
 	"PUT /api/v1/nowplaying/",
 }

@@ -136,3 +136,99 @@ func (absProvider) Ensure(ctx context.Context, hc *http.Client, admin Admin, p P
 	}
 	return Result{Outcome: Created}, nil
 }
+
+// ---- Change access ----------------------------------------------------------
+//
+// GET /api/users answers each account's permissions (download,
+// accessAllLibraries, …) and librariesAccessible. PATCH /api/users/:id
+// {permissions, librariesAccessible} merges the permissions it names into
+// the account's own, and takes the library list only alongside a
+// permissions object; an empty list with accessAllLibraries clears it, as
+// Audiobookshelf's own page does.
+
+func (absProvider) AccessCapability() AccessCapability {
+	return AccessCapability{Libraries: true, Download: true, LaterLibraries: true, allFlag: true}
+}
+
+type absUser struct {
+	ID                  string         `json:"id"`
+	Username            string         `json:"username"`
+	Type                string         `json:"type"`
+	IsActive            any            `json:"isActive"`
+	Permissions         map[string]any `json:"permissions"`
+	LibrariesAccessible []string       `json:"librariesAccessible"`
+}
+
+// absAccount is the account to read or change: never root or an admin.
+func absAccount(ctx context.Context, c *client, username string) (absUser, error) {
+	var list struct {
+		Users []absUser `json:"users"`
+	}
+	if err := c.call(ctx, http.MethodGet, "/api/users", nil, &list); err != nil {
+		return absUser{}, err
+	}
+	for _, u := range list.Users {
+		if !strings.EqualFold(u.Username, username) {
+			continue
+		}
+		if u.Type == "root" || u.Type == "admin" {
+			return absUser{}, ErrAdminAccount
+		}
+		return u, nil
+	}
+	return absUser{}, ErrNoAccount
+}
+
+func absAccess(ctx context.Context, c *client, username string) (AccessState, error) {
+	u, err := absAccount(ctx, c, username)
+	if err != nil {
+		return AccessState{}, err
+	}
+	all, err := absLibraries(ctx, c)
+	if err != nil {
+		return AccessState{}, err
+	}
+	rest := map[string]any{"type": u.Type, "isActive": u.IsActive}
+	restOf(rest, "permissions.", u.Permissions, "download", "accessAllLibraries")
+	return AccessState{Available: all, rest: rest, Access: Access{
+		AllLibraries: truthy(u.Permissions["accessAllLibraries"]),
+		Libraries:    u.LibrariesAccessible,
+		Download:     truthy(u.Permissions["download"]),
+	}}, nil
+}
+
+func (absProvider) GetAccess(ctx context.Context, hc *http.Client, admin Admin, username string) (AccessState, error) {
+	c, err := absSignIn(ctx, hc, admin)
+	if err != nil {
+		return AccessState{}, err
+	}
+	return absAccess(ctx, c, username)
+}
+
+func (absProvider) SetAccess(ctx context.Context, hc *http.Client, admin Admin, username string, want Access) (AccessState, error) {
+	c, err := absSignIn(ctx, hc, admin)
+	if err != nil {
+		return AccessState{}, err
+	}
+	u, err := absAccount(ctx, c, username)
+	if err != nil {
+		return AccessState{}, err
+	}
+	libs := []string{}
+	if !want.AllLibraries {
+		all, err := absLibraries(ctx, c)
+		if err != nil {
+			return AccessState{}, err
+		}
+		if libs, err = picked(all, want.Libraries); err != nil {
+			return AccessState{}, err
+		}
+	}
+	if err := c.call(ctx, http.MethodPatch, "/api/users/"+url.PathEscape(u.ID), map[string]any{
+		"permissions":         map[string]bool{"download": want.Download, "accessAllLibraries": want.AllLibraries},
+		"librariesAccessible": libs,
+	}, nil); err != nil {
+		return AccessState{}, err
+	}
+	return absAccess(ctx, c, username)
+}

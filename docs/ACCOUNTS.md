@@ -247,9 +247,11 @@ two-step on.
 | `PATCH /admin/profiles/:id/services/:sid` | Edit. A secret left out keeps its value; an empty one clears it. `plex` left out keeps the pick; a new `plex` (a person picked again) needs its `token`. An edit that moves the service (another address, or another `type`) keeps no saved secret: it must carry the login's own (`password`, `token` or `apiKey`), or name `loginKind: none`, else 400 `login-required` and nothing changes |
 | `DELETE /admin/profiles/:id/services/:sid` | Devices sign out of it at their next check |
 | `PUT /admin/profiles/:id/services/order` `{ids}` | Every id once, first to last |
-| `GET /admin/provision` | What this server can do on each service with the Server Admin sign-ins it keeps: `{available, services: [{type, name, create, reset, email, libraries, note?, serverAdmin, host?}]}`. `email` is `optional`, `required` or `username` (Komga signs in with one); `libraries`: the service has libraries to pick (all but Storyteller and Calibre-Web). No secret |
+| `GET /admin/provision` | What this server can do on each service with the Server Admin sign-ins it keeps: `{available, services: [{type, name, create, reset, email, libraries, note?, access?, serverAdmin, host?}]}`. `email` is `optional`, `required` or `username` (Komga signs in with one); `libraries`: the service has libraries to pick (all but Storyteller and Calibre-Web); `access`: what Change access can set there, `{libraries, download, laterLibraries, note?}` (absent on Calibre-Web). No secret |
+| `GET /admin/profiles/:id/services/:sid/provision` | Change access (below): what the account that login's username names has on its service, read with the kept Server Admin sign-in: `{service, host, loginHost, username, can, access: {allLibraries, libraries, download}, libraries: [{id, name}]}`. `host` is where a change goes, `loginHost` the address the login itself uses. `404 no-account`, `409 admin-account`, `409 no-username` (the login has none), `409 no-service-admin`, `400 not-supported`, `404 service-not-found`, and the sign-in and service refusals below. An account's own admin sign-in needs `full` |
+| `PUT /admin/profiles/:id/services/:sid/provision` `{allLibraries, libraries, download}` | Change that account's libraries and downloads, then read it back: the same answer as the `GET`, as the service now has it. `502 not-taken` (the service said yes but the account read back unchanged), `502 also-changed` (the change took, but the account's other rights read back different: the `error` names them), each answer carrying what the account has; `409 nothing-to-change` (Navidrome with one library), `400 no-libraries`, `409 libraries-gone`, and the refusals of the `GET` |
 | `GET /admin/provision/:type/libraries` | That service's libraries, read with the kept Server Admin sign-in, for the forms to pick from: `{libraries: [{id, name}], service, host}` (none on a server with one). The same refusals as below for the sign-in and the service. An account's own admin sign-in needs `full` |
-| `POST /admin/provision/:type/selftest` | "Test accounts" (below): with the kept Server Admin sign-in, delete any account an earlier test left, make a throwaway one, sign in as it, delete it: `{service, host, report: {service, ok, steps: [{name: cleanup\|create\|sign-in\|remove, ok, detail?}], leftover?}}`. A failed step is in the report, not an HTTP error. `409 no-service-admin`, `409 service-admin-unreadable`, `400 not-supported`. An account's own admin sign-in needs `full` |
+| `POST /admin/provision/:type/selftest` | "Test accounts" (below): with the kept Server Admin sign-in, delete any account an earlier test left, make a throwaway one, sign in as it, change its access, delete it: `{service, host, report: {service, ok, steps: [{name: cleanup\|create\|sign-in\|access\|remove, ok, detail?}], leftover?}}`. A failed step is in the report, not an HTTP error. `409 no-service-admin`, `409 service-admin-unreadable`, `400 not-supported`. An account's own admin sign-in needs `full` |
 | `POST /admin/profiles/:id/provision` `{type, username, password, name?, email?, allowReset?, libraries?}` | Make the person's account on that service — or, with `allowReset`, set an existing account's password — signed in with the kept Server Admin sign-in (below): `{outcome: created\|reset, note?, service, host}`. `libraries` is the ids a NEW account may see; left out (or null) is every library. `409 account-exists` (ask, then send `allowReset`), `409 admin-account`, `409 reset-unsupported`, `409 no-service-admin`, `409 service-admin-unreadable`, `409 libraries-gone` (none of the picked ones is there now), `400 email-required`, `400 email-username`, `400 no-libraries` (an empty pick), `400 not-supported`, `502 admin-sign-in-failed`, `502 service-unreachable`, `502 service-refused` (the service's own words). An account's own admin sign-in needs `full` |
 
 ### Making their accounts on your servers
@@ -290,12 +292,42 @@ the picked libraries (Jellyfin, Navidrome, Stump do that in a second step),
 the answer's `note` says so, and what the account can see until it is
 changed there.
 
+**Change access.** A person's username-and-password login on a service
+with a kept Server Admin sign-in has a "Change access" button (owner,
+2026-10-14: "allow the admins to adjust permissions and library access
+from the server"). It reads the account that username names and changes two
+things: which libraries it sees, and whether it can download. Each
+service's own record of the account goes back as it was read, with those
+two changed, so its password, other rights and age limit stay. The account
+is read just before and again afterwards with the same sign-in: "Saved"
+means the service has it; a service that said yes but kept something
+answers `not-taken`, and one whose other rights read back different
+answers `also-changed`, naming them, so they can be put right in the
+service. Both show what the account has.
+
+| Service | Libraries | Downloads | "All libraries" |
+|---|---|---|---|
+| Audiobookshelf | yes | the download permission | includes ones added later |
+| Grimmory | yes, at least one | `canDownload` | the ones there are now |
+| Jellyfin | yes | content downloading | includes ones added later |
+| Komga | yes | the `FILE_DOWNLOAD` role | includes ones added later |
+| Kavita | yes | the `Download` role | the ones there are now |
+| Navidrome | yes, at least one (none to pick with one library) | no: one switch for the whole server | the ones there are now |
+| Stump | yes, by keeping it out of the others | `DOWNLOAD_FILE` | includes ones added later |
+| Storyteller | no: one collection | `bookDownload` | — |
+| Calibre-Web | no Change access: its edit form resets an account's permissions | | |
+
+The change goes to the server the Server Admin sign-in names; when the
+person's login uses another address for it, the panel says both.
+
 **Test accounts.** Each kept sign-in on the Server Admin page has a "Test
 accounts" button (owner, 2026-10-14: "so long as we also have a cleanup on
 it so we don't create a bunch of junk accounts"). It deletes any account an
 earlier test left, makes a throwaway account the same way a person's is
-made, signs in as it with its own password, and deletes it again, even when
-a step before failed. Its accounts, and the only ones it ever deletes, are
+made, signs in as it with its own password, changes its access as Change
+access does (downloads switched over and, with several libraries, only the
+first) and reads it back, and deletes it again, even when a step before
+failed. Its accounts, and the only ones it ever deletes, are
 named `alexandria-selftest-` plus six random characters (on Komga that is
 the email address, at `selftest.invalid`); admin, owner and root accounts
 are never deleted. Each step shows on the page and in the server log

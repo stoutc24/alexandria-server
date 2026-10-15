@@ -203,6 +203,155 @@ func (stumpProvider) Ensure(ctx context.Context, hc *http.Client, admin Admin, p
 	return Result{Outcome: Created}, nil
 }
 
+// ---- Change access ----------------------------------------------------------
+//
+// DOWNLOAD_FILE in an account's permission list is downloading:
+// updateUser takes the whole list back, with the age limit (left out, it
+// is deleted) and the session cap, and no password, so the password stays.
+// An account sees every library it is not kept out of, so a library added
+// later is seen by everyone until someone is kept out of it; each library
+// whose list has to change gets its whole list back with the account put
+// on or taken off.
+
+func (stumpProvider) AccessCapability() AccessCapability {
+	return AccessCapability{Libraries: true, Download: true, LaterLibraries: true}
+}
+
+// stumpAccount is the account to read or change: never the server owner
+// or one that manages users or the server.
+func stumpAccount(ctx context.Context, c *client, username string) (stumpUser, error) {
+	var list struct {
+		Users struct {
+			Nodes []stumpUser `json:"nodes"`
+		} `json:"users"`
+	}
+	if err := stumpQuery(ctx, c, `query { users(pagination: {offset: {page: 1, pageSize: 1000, zeroBased: false}}) {
+		nodes { id username isServerOwner permissions maxSessionsAllowed ageRestriction { age restrictOnUnset } } } }`,
+		nil, &list); err != nil {
+		return stumpUser{}, err
+	}
+	for _, u := range list.Users.Nodes {
+		if !strings.EqualFold(u.Username, username) {
+			continue
+		}
+		if u.IsServerOwner || slices.Contains(u.Permissions, "MANAGE_USERS") || slices.Contains(u.Permissions, "MANAGE_SERVER") {
+			return stumpUser{}, ErrAdminAccount
+		}
+		return u, nil
+	}
+	return stumpUser{}, ErrNoAccount
+}
+
+func stumpKeptOut(l stumpLibrary, userID string) bool {
+	for _, u := range l.ExcludedUsers {
+		if u.ID == userID {
+			return true
+		}
+	}
+	return false
+}
+
+func stumpAccess(ctx context.Context, c *client, username string) (AccessState, error) {
+	u, err := stumpAccount(ctx, c, username)
+	if err != nil {
+		return AccessState{}, err
+	}
+	libs, err := stumpLibraries(ctx, c)
+	if err != nil {
+		return AccessState{}, err
+	}
+	sees := []string{}
+	for _, l := range libs {
+		if !stumpKeptOut(l, u.ID) {
+			sees = append(sees, l.ID)
+		}
+	}
+	rest := map[string]any{"permissions": sortedWithout(u.Permissions, "DOWNLOAD_FILE"), "maxSessionsAllowed": nil, "ageRestriction": nil}
+	if u.MaxSessionsAllowed != nil {
+		rest["maxSessionsAllowed"] = *u.MaxSessionsAllowed
+	}
+	if u.AgeRestriction != nil {
+		rest["ageRestriction"] = *u.AgeRestriction
+	}
+	return AccessState{Available: stumpLibraryList(libs), rest: rest, Access: Access{
+		Libraries: sees,
+		Download:  slices.Contains(u.Permissions, "DOWNLOAD_FILE"),
+	}}, nil
+}
+
+func (stumpProvider) GetAccess(ctx context.Context, hc *http.Client, admin Admin, username string) (AccessState, error) {
+	c, err := stumpSignIn(ctx, hc, admin)
+	if err != nil {
+		return AccessState{}, err
+	}
+	return stumpAccess(ctx, c, username)
+}
+
+func (stumpProvider) SetAccess(ctx context.Context, hc *http.Client, admin Admin, username string, want Access) (AccessState, error) {
+	c, err := stumpSignIn(ctx, hc, admin)
+	if err != nil {
+		return AccessState{}, err
+	}
+	u, err := stumpAccount(ctx, c, username)
+	if err != nil {
+		return AccessState{}, err
+	}
+	libs, err := stumpLibraries(ctx, c)
+	if err != nil {
+		return AccessState{}, err
+	}
+	// The pick is checked before anything changes.
+	keep, err := chosenIDs(stumpLibraryList(libs), want)
+	if err != nil {
+		return AccessState{}, err
+	}
+
+	if slices.Contains(u.Permissions, "DOWNLOAD_FILE") != want.Download {
+		perms := []string{}
+		for _, p := range u.Permissions {
+			if p != "DOWNLOAD_FILE" {
+				perms = append(perms, p)
+			}
+		}
+		if want.Download {
+			perms = append(perms, "DOWNLOAD_FILE")
+		}
+		input := map[string]any{
+			"username":           u.Username,
+			"permissions":        perms,
+			"maxSessionsAllowed": u.MaxSessionsAllowed,
+		}
+		if u.AgeRestriction != nil {
+			input["ageRestriction"] = map[string]any{"age": u.AgeRestriction.Age, "restrictOnUnset": u.AgeRestriction.RestrictOnUnset}
+		}
+		if err := stumpQuery(ctx, c, `mutation($id: ID!, $input: UpdateUserInput!) { updateUser(id: $id, input: $input) { id } }`,
+			map[string]any{"id": u.ID, "input": input}, nil); err != nil {
+			return AccessState{}, err
+		}
+	}
+
+	for _, l := range libs {
+		out := !slices.Contains(keep, l.ID)
+		if stumpKeptOut(l, u.ID) == out {
+			continue
+		}
+		ids := []string{}
+		for _, x := range l.ExcludedUsers {
+			if x.ID != u.ID {
+				ids = append(ids, x.ID)
+			}
+		}
+		if out {
+			ids = append(ids, u.ID)
+		}
+		if err := stumpQuery(ctx, c, `mutation($id: ID!, $userIds: [String!]!) { updateLibraryExcludedUsers(id: $id, userIds: $userIds) { id } }`,
+			map[string]any{"id": l.ID, "userIds": ids}, nil); err != nil {
+			return AccessState{}, err
+		}
+	}
+	return stumpAccess(ctx, c, username)
+}
+
 // stumpQuery runs one GraphQL document; GraphQL's own errors (answered
 // with 200) become a ServiceError.
 func stumpQuery(ctx context.Context, c *client, query string, vars map[string]any, out any) error {

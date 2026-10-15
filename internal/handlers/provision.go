@@ -32,11 +32,26 @@ type ProvisionHandler struct {
 	ensure    func(ctx context.Context, hc *http.Client, serviceType string, admin provision.Admin, p provision.Person, allowReset bool) (provision.Result, error)
 	libraries func(ctx context.Context, hc *http.Client, serviceType string, admin provision.Admin) ([]provision.Library, error)
 	selfTest  func(ctx context.Context, hc *http.Client, serviceType string, admin provision.Admin) (provision.SelfTestReport, error)
+	// getAccess and changeAccess are provision.GetAccess and
+	// provision.ChangeAccess; services lists a person's saved logins
+	// (UseAccounts).
+	getAccess    func(ctx context.Context, hc *http.Client, serviceType string, admin provision.Admin, username string) (provision.AccessState, error)
+	changeAccess func(ctx context.Context, hc *http.Client, serviceType string, admin provision.Admin, username string, want provision.Access) (provision.AccessState, error)
+	services     func(profileID string) ([]repository.AccountService, error)
 }
 
 func NewProvisionHandler(admins *repository.ServiceAdminRepository, profiles *repository.ProfileRepository) *ProvisionHandler {
 	return &ProvisionHandler{admins: admins, profiles: profiles, client: provision.NewHTTPClient(),
-		ensure: provision.Ensure, libraries: provision.Libraries, selfTest: provision.SelfTest}
+		ensure: provision.Ensure, libraries: provision.Libraries, selfTest: provision.SelfTest,
+		getAccess: provision.GetAccess, changeAccess: provision.ChangeAccess}
+}
+
+// UseAccounts gives Change access the people's saved logins: the account
+// to read or change is the one a login names.
+func (h *ProvisionHandler) UseAccounts(accounts *repository.AccountRepository) {
+	h.services = func(profileID string) ([]repository.AccountService, error) {
+		return accounts.ListServices(profileID, false)
+	}
 }
 
 type provisionService struct {
@@ -193,6 +208,170 @@ func (h *ProvisionHandler) SelfTest(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"service": name, "host": hostOf(admin.BaseURL), "report": rep})
 }
 
+// accessTarget is what Change access works on: a person's saved login, its
+// service, and the kept Server Admin sign-in for that kind of service.
+type accessTarget struct {
+	person  string
+	service repository.AccountService
+	name    string
+	admin   provision.Admin
+	can     provision.AccessCapability
+}
+
+// accessTargetOf is the login a Change access request names. ok is false
+// when a refusal was sent instead (err is what sending it gave).
+func (h *ProvisionHandler) accessTargetOf(c *fiber.Ctx) (t accessTarget, ok bool, err error) {
+	p, err := h.profiles.GetByID(c.Params("id"))
+	if errors.Is(err, repository.ErrProfileNotFound) {
+		return t, false, refuse(c, fiber.StatusNotFound, "profile-not-found", "profile not found")
+	}
+	if err != nil {
+		return t, false, serverError(c, "could not read the profile", err)
+	}
+	if h.services == nil {
+		return t, false, serverError(c, "could not read the logins", errors.New("no accounts store"))
+	}
+	list, err := h.services(p.ID)
+	if err != nil {
+		return t, false, serverError(c, "could not read the logins", err)
+	}
+	found := false
+	for _, s := range list {
+		if s.ID == c.Params("sid") {
+			t.service, found = s, true
+		}
+	}
+	if !found {
+		return t, false, refuse(c, fiber.StatusNotFound, "service-not-found", "service not found")
+	}
+	t.person = p.Name
+	t.name = repository.ServiceAdminTypes[t.service.Type]
+	can, supported := provision.AccessCapabilityOf(t.service.Type)
+	if !supported || t.name == "" {
+		return t, false, refuse(c, fiber.StatusBadRequest, "not-supported", provision.ErrAccessUnsupported.Error())
+	}
+	t.can = can
+	if t.service.LoginKind != "password" || strings.TrimSpace(t.service.Username) == "" {
+		return t, false, refuse(c, fiber.StatusConflict, "no-username",
+			"this login has no username to look up on "+t.name+"; edit it to add one")
+	}
+	admin, ok, err := h.openAdmin(c, t.service.Type, t.name)
+	if !ok {
+		return t, false, err
+	}
+	t.admin = provision.Admin{BaseURL: admin.BaseURL, Username: admin.Username, Password: admin.Password}
+	return t, true, nil
+}
+
+// accessJSON is an account's access as the page shows it. host is where
+// the change goes (the Server Admin sign-in's server); loginHost is the
+// address the person's own login uses, which may name the same server
+// differently.
+func accessJSON(t accessTarget, st provision.AccessState) fiber.Map {
+	return fiber.Map{
+		"service":   t.name,
+		"host":      hostOf(t.admin.BaseURL),
+		"loginHost": hostOf(t.service.BaseURL),
+		"username":  strings.TrimSpace(t.service.Username),
+		"can":       t.can,
+		"access":    st.Access,
+		"libraries": st.Available,
+	}
+}
+
+// accessSummary is an account's access in a log line.
+func accessSummary(can provision.AccessCapability, st provision.AccessState) string {
+	parts := []string{}
+	if can.Libraries && len(st.Available) > 0 {
+		if st.AllLibraries {
+			parts = append(parts, "every library")
+		} else {
+			parts = append(parts, fmt.Sprintf("%d of %d libraries", len(st.Libraries), len(st.Available)))
+		}
+	}
+	if can.Download {
+		if st.Download {
+			parts = append(parts, "downloads on")
+		} else {
+			parts = append(parts, "downloads off")
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// Access reads what a person's saved login may see and do on its service
+// — its libraries, and whether it may download — with the kept Server
+// Admin sign-in (Change access; provision.GetAccess). No secret crosses it.
+// GET /api/v1/admin/profiles/:id/services/:sid/provision
+func (h *ProvisionHandler) Access(c *fiber.Ctx) error {
+	t, ok, err := h.accessTargetOf(c)
+	if !ok {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(c.UserContext(), 30*time.Second)
+	defer cancel()
+	st, err := h.getAccess(ctx, h.client, t.service.Type, t.admin, t.service.Username)
+	if err != nil {
+		return h.refusal(c, t.name, t.service.Username, err)
+	}
+	return c.JSON(accessJSON(t, st))
+}
+
+type accessBody struct {
+	AllLibraries bool     `json:"allLibraries"`
+	Libraries    []string `json:"libraries"`
+	Download     bool     `json:"download"`
+}
+
+// ChangeAccess sets a person's saved login's libraries and downloads on its
+// service, and answers the account as read back afterwards
+// (provision.ChangeAccess). A service that said yes and kept something as
+// it was answers 502 not-taken, and one that changed other rights too 502
+// also-changed, each with what the account has.
+// PUT /api/v1/admin/profiles/:id/services/:sid/provision
+func (h *ProvisionHandler) ChangeAccess(c *fiber.Ctx) error {
+	var in accessBody
+	if err := c.BodyParser(&in); err != nil {
+		return refuse(c, fiber.StatusBadRequest, "bad-request", "invalid request body")
+	}
+	t, ok, err := h.accessTargetOf(c)
+	if !ok {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(c.UserContext(), 60*time.Second)
+	defer cancel()
+	st, err := h.changeAccess(ctx, h.client, t.service.Type, t.admin, t.service.Username,
+		provision.Access{AllLibraries: in.AllLibraries, Libraries: in.Libraries, Download: in.Download})
+	var nt *provision.NotTakenError
+	if errors.As(err, &nt) {
+		log.Printf("provision: %s answered yes for %q on %s (%s) but kept its %s: %s%s", t.name,
+			strings.TrimSpace(t.service.Username), hostOf(t.admin.BaseURL), t.person,
+			strings.Join(nt.Parts, " and "), accessSummary(t.can, nt.State), callerForLog(c))
+		out := accessJSON(t, nt.State)
+		out["reason"] = "not-taken"
+		out["error"] = t.name + " said yes, but reading the account back shows its " +
+			strings.Join(nt.Parts, " and ") + " unchanged"
+		return c.Status(fiber.StatusBadGateway).JSON(out)
+	}
+	var ac *provision.AlsoChangedError
+	if errors.As(err, &ac) {
+		log.Printf("provision: %s access for %q on %s (%s) set to %s, but these changed too: %s%s", t.name,
+			strings.TrimSpace(t.service.Username), hostOf(t.admin.BaseURL), t.person,
+			accessSummary(t.can, ac.State), strings.Join(ac.Fields, ", "), callerForLog(c))
+		out := accessJSON(t, ac.State)
+		out["reason"] = "also-changed"
+		out["error"] = "The change was made, but " + t.name + " also changed " +
+			strings.Join(ac.Fields, ", ") + " on this account; check it in " + t.name
+		return c.Status(fiber.StatusBadGateway).JSON(out)
+	}
+	if err != nil {
+		return h.refusal(c, t.name, t.service.Username, err)
+	}
+	log.Printf("provision: %s access for %q on %s (%s) set to %s%s", t.name,
+		strings.TrimSpace(t.service.Username), hostOf(t.admin.BaseURL), t.person, accessSummary(t.can, st), callerForLog(c))
+	return c.JSON(accessJSON(t, st))
+}
+
 // openAdmin is the kept Server Admin sign-in for a service, opened. ok is
 // false when there is none to use: the refusal is then sent already, and
 // err is what sending it gave (nil, usually).
@@ -231,8 +410,14 @@ func (h *ProvisionHandler) refusal(c *fiber.Ctx, name, username string, err erro
 	case errors.Is(err, provision.ErrResetUnsupported):
 		return refuse(c, fiber.StatusConflict, "reset-unsupported",
 			strings.TrimSpace(username)+" already has an account on "+name+", and "+name+" can't set someone else's password; use theirs")
-	case errors.Is(err, provision.ErrUnsupported):
+	case errors.Is(err, provision.ErrUnsupported), errors.Is(err, provision.ErrAccessUnsupported):
 		return refuse(c, fiber.StatusBadRequest, "not-supported", err.Error())
+	case errors.Is(err, provision.ErrNoAccount):
+		return refuse(c, fiber.StatusNotFound, "no-account",
+			strings.TrimSpace(username)+" has no account on "+name)
+	case errors.Is(err, provision.ErrNothingToChange):
+		return refuse(c, fiber.StatusConflict, "nothing-to-change",
+			name+" has one library, and it sets downloads for everyone: there is nothing to change here")
 	case errors.Is(err, provision.ErrNoLibraries):
 		return refuse(c, fiber.StatusBadRequest, "no-libraries", "pick at least one "+name+" library")
 	case errors.Is(err, provision.ErrLibrariesGone):

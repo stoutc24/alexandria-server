@@ -176,3 +176,100 @@ func (navidromeProvider) Ensure(ctx context.Context, hc *http.Client, admin Admi
 	}
 	return Result{Outcome: Created}, nil
 }
+
+// ---- Change access ----------------------------------------------------------
+//
+// GET /api/user/{id}/library (admin) answers the libraries an account has;
+// PUT the same {libraryIds} replaces them (at least one, never an
+// admin's). Downloads are one switch for the whole server
+// (EnableDownloads), not a person's, so they are not offered; and a server
+// from before multiple libraries has nothing to change.
+
+func (navidromeProvider) AccessCapability() AccessCapability {
+	return AccessCapability{Libraries: true,
+		Note: "Navidrome turns downloads on or off for the whole server, not for each person."}
+}
+
+// navidromeAccount is the account to read or change: never an admin.
+func navidromeAccount(ctx context.Context, c *client, username string) (string, error) {
+	var users []struct {
+		ID       string `json:"id"`
+		UserName string `json:"userName"`
+		IsAdmin  bool   `json:"isAdmin"`
+	}
+	if err := c.call(ctx, http.MethodGet, "/api/user", nil, &users); err != nil {
+		return "", err
+	}
+	for _, u := range users {
+		if !strings.EqualFold(u.UserName, username) {
+			continue
+		}
+		if u.IsAdmin {
+			return "", ErrAdminAccount
+		}
+		return u.ID, nil
+	}
+	return "", ErrNoAccount
+}
+
+func navidromeAccess(ctx context.Context, c *client, username string) (AccessState, error) {
+	id, err := navidromeAccount(ctx, c, username)
+	if err != nil {
+		return AccessState{}, err
+	}
+	all, err := navidromeLibraries(ctx, c)
+	if err != nil || len(all) == 0 {
+		return AccessState{Available: all}, err
+	}
+	var has []struct {
+		ID int `json:"id"`
+	}
+	if err := c.call(ctx, http.MethodGet, "/api/user/"+url.PathEscape(id)+"/library", nil, &has); err != nil {
+		return AccessState{}, err
+	}
+	libs := []string{}
+	for _, l := range has {
+		libs = append(libs, strconv.Itoa(l.ID))
+	}
+	return AccessState{Available: all, Access: Access{Libraries: libs}}, nil
+}
+
+func (navidromeProvider) GetAccess(ctx context.Context, hc *http.Client, admin Admin, username string) (AccessState, error) {
+	c, err := navidromeSignIn(ctx, hc, admin)
+	if err != nil {
+		return AccessState{}, err
+	}
+	return navidromeAccess(ctx, c, username)
+}
+
+func (navidromeProvider) SetAccess(ctx context.Context, hc *http.Client, admin Admin, username string, want Access) (AccessState, error) {
+	c, err := navidromeSignIn(ctx, hc, admin)
+	if err != nil {
+		return AccessState{}, err
+	}
+	id, err := navidromeAccount(ctx, c, username)
+	if err != nil {
+		return AccessState{}, err
+	}
+	all, err := navidromeLibraries(ctx, c)
+	if err != nil {
+		return AccessState{}, err
+	}
+	if len(all) == 0 {
+		return AccessState{}, ErrNothingToChange
+	}
+	chosen, err := chosenIDs(all, want)
+	if err != nil {
+		return AccessState{}, err
+	}
+	ids := []int{}
+	for _, l := range chosen {
+		n, _ := strconv.Atoi(l)
+		ids = append(ids, n)
+	}
+	if err := c.call(ctx, http.MethodPut, "/api/user/"+url.PathEscape(id)+"/library",
+		map[string]any{"libraryIds": ids}, nil); err != nil {
+		return AccessState{}, err
+	}
+	return navidromeAccess(ctx, c, username)
+}

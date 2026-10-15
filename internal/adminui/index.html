@@ -186,6 +186,12 @@
   .selftest li { padding: 1px 0; }
   .selftest .ok { color: var(--ok); }
   .selftest .bad { color: var(--danger); }
+  /* Change access, under a person's login (svcAccessHTML). */
+  .svc-access { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 14px; }
+  .svc-access h4 { margin: 0 0 2px; }
+  .svc-access .svc-acc-libs { margin-left: 26px; }
+  .svc-access .good { color: var(--ok); margin-top: 8px; }
+  .svc-access .bad { margin-top: 8px; }
   .empty { color: var(--muted); font-size: 14px; padding: 6px 0; }
   .admin-device { min-width: 0; overflow-wrap: anywhere; }
   .toast {
@@ -626,6 +632,8 @@
           // The short cause the account routes add next to the sentence
           // (e.g. "secrets-key-missing"), so a caller can act on it.
           err.reason = b.reason;
+          // The whole answer: some refusals say what is there now.
+          err.body = b;
           throw err;
         });
       }
@@ -1431,7 +1439,7 @@
   var selfTests = {};
   var selfTestSteps = {
     cleanup: "Clear old test accounts", create: "Make a test account",
-    "sign-in": "Sign in as it", remove: "Delete it"
+    "sign-in": "Sign in as it", access: "Change its access", remove: "Delete it"
   };
 
   function selfTestHTML(type) {
@@ -1596,7 +1604,7 @@
 
   function newAcct(id, name) {
     return { id: id, name: name, data: null, reveal: null, form: null,
-             busy: false, seq: 0, prov: null, libs: {} };
+             busy: false, seq: 0, prov: null, libs: {}, access: {} };
   }
 
   // Writes only when the markup changed, so a rebuild that would change
@@ -1668,6 +1676,8 @@
       ((r && r.services) || []).forEach(function (s) { by[s.type] = s; });
       st.prov = r && r.available ? by : null;
       if (st.form && $("sf-type")) syncForm();
+      // Change access shows on the logins it can reach.
+      renderServices();
     }).catch(function () {
       if (acct === st) st.prov = null;
     });
@@ -1797,13 +1807,19 @@
       '<div class="note" style="margin:0 0 4px">' + NO_KEY + '</div>');
     setHTML($("acct-status"), statusHTML(d));
     setHTML($("acct-access"), accessHTML(d));
-    setHTML($("acct-services"), servicesHTML(d));
-    fillPlexLines(d.services || []);
+    renderServices();
     // The service being edited was removed elsewhere: nothing to save to.
     if (acct.form && acct.form.mode === "edit" && !findService(acct.form.id)) {
       acct.form = null;
     }
     renderAcctForm();
+  }
+
+  function renderServices() {
+    var d = acct.data;
+    if (!d) return;
+    setHTML($("acct-services"), servicesHTML(d));
+    fillPlexLines(d.services || []);
   }
 
   // ---- admin access ----
@@ -1993,11 +2009,190 @@
             ' down"' + (i === list.length - 1 ? ' disabled' : '') + '>Move down</button>' +
           '<button data-act="edit" data-sid="' + id + '" aria-label="Edit ' + label +
             '"' + (frozen ? ' disabled' : '') + '>Edit</button>' +
+          (svcAccessCap(s) ? '<button data-act="svc-access" data-sid="' + id +
+            '" aria-label="Change access on ' + label + '">Change access</button>' : '') +
           '<button class="danger" data-act="delete-svc" data-sid="' + id +
             '" aria-label="Remove ' + label + '">Remove</button>' +
         '</div>' +
+        svcAccessHTML(s) +
       '</div>';
     }).join("");
+  }
+
+  // ---- Change access ----
+  //
+  // Owner, 2026-10-14: "allow the admins to adjust permissions and library
+  // access from the server". A login's account on its service — the one
+  // its username names — read and changed with the kept Server Admin
+  // sign-in: which libraries it sees, and whether it can download. The
+  // server reads the account back after a change, so "Saved" means the
+  // service has it. sid → {state: loading|ok|error, data, draft, saving,
+  // note, bad}, kept on acct so the list's rebuilds keep it; the draft
+  // follows each tick, so a rebuild draws what the admin picked.
+
+  // The service's Change access abilities, when it has any here: a kept
+  // Server Admin sign-in and a username to look up.
+  function svcAccessCap(s) {
+    var p = acct.prov && acct.prov[s.type];
+    if (!p || !p.access || !p.serverAdmin) return null;
+    if (s.loginKind !== "password" || !String(s.username || "").trim()) return null;
+    return p.access;
+  }
+
+  function svcAccessPath(sid) {
+    return acctPath("/services/" + encodeURIComponent(sid) + "/provision");
+  }
+
+  function svcAccessDraft(access) {
+    var libs = {};
+    (access.libraries || []).forEach(function (id) { libs[id] = true; });
+    return { all: !!access.allLibraries, libs: libs, download: !!access.download };
+  }
+
+  // What the account has, in words.
+  function svcAccessSaid(r) {
+    var a = r.access || {}, can = r.can || {}, libs = r.libraries || [], parts = [];
+    if (can.libraries && libs.length) {
+      parts.push(a.allLibraries ? "sees every library"
+        : "sees " + (a.libraries || []).length + " of " + libs.length + " libraries");
+    }
+    if (can.download) parts.push(a.download ? "can download" : "can't download");
+    return parts.length ? r.username + " " + parts.join(" and ") + "." : "";
+  }
+
+  function openSvcAccess(sid) {
+    var st = acct, a = { state: "loading" };
+    st.access[sid] = a;
+    renderServices();
+    api(svcAccessPath(sid)).then(function (r) {
+      a.state = "ok";
+      a.data = r;
+      a.draft = svcAccessDraft(r.access || {});
+    }).catch(function (e) {
+      a.state = "error";
+      a.message = e.message;
+    }).then(function () {
+      if (acct !== st || st.access[sid] !== a) return;
+      renderServices();
+      var first = $("acct-services").querySelector('[data-access="' + sid + '"] input, ' +
+        '[data-access="' + sid + '"] button');
+      if (first) first.focus();
+    });
+  }
+
+  function closeSvcAccess(sid) {
+    delete acct.access[sid];
+    renderServices();
+    var b = $("acct-services").querySelector('[data-act="svc-access"][data-sid="' + sid + '"]');
+    if (b) b.focus();
+  }
+
+  function saveSvcAccess(sid) {
+    var st = acct, a = st.access[sid];
+    if (!a || a.state !== "ok" || a.saving) return;
+    var d = a.draft, r = a.data, can = r.can || {}, libs = r.libraries || [];
+    var body = { allLibraries: d.all, libraries: [], download: d.download };
+    libs.forEach(function (l) { if (d.libs[l.id]) body.libraries.push(l.id); });
+    a.note = a.bad = null;
+    if (can.libraries && libs.length && !d.all && !body.libraries.length) {
+      a.bad = "Tick at least one library, or pick All libraries.";
+      renderServices();
+      return;
+    }
+    a.saving = true;
+    renderServices();
+    api(svcAccessPath(sid), { method: "PUT", body: JSON.stringify(body) }).then(function (r) {
+      a.data = r;
+      a.draft = svcAccessDraft(r.access || {});
+      a.note = "Saved. " + svcAccessSaid(r);
+    }).catch(function (e) {
+      a.bad = e.message;
+      // "Said yes, but kept…": what the account really has is drawn.
+      if (e.body && e.body.access) {
+        a.data = e.body;
+        a.draft = svcAccessDraft(e.body.access);
+      }
+    }).then(function () {
+      a.saving = false;
+      if (acct === st && st.access[sid] === a) renderServices();
+    });
+  }
+
+  // A tick or a choice in a panel: kept in its draft, and the library
+  // boxes follow "All libraries" without a rebuild (focus stays put).
+  function svcAccessChanged(t) {
+    var sid = t.dataset.sid, a = acct.access[sid];
+    if (!a || !a.draft) return;
+    if (t.name === "svc-acc-dl") {
+      a.draft.download = t.checked;
+    } else if (t.name === "svc-acc-lib") {
+      a.draft.libs[t.value] = t.checked;
+    } else {
+      a.draft.all = t.value === "all";
+      var panel = t.closest("[data-access]");
+      Array.prototype.forEach.call(panel.querySelectorAll('input[name="svc-acc-lib"]'), function (b) {
+        b.disabled = a.draft.all;
+        b.checked = a.draft.all || !!a.draft.libs[b.value];
+      });
+    }
+  }
+
+  function svcAccessHTML(s) {
+    var a = acct.access[s.id];
+    if (!a) return "";
+    var sid = esc(s.id);
+    var close = '<button data-act="svc-access-close" data-sid="' + sid + '">Close</button>';
+    if (a.state === "loading") {
+      return '<div class="svc-access meta" data-access="' + sid + '">Reading their access…</div>';
+    }
+    if (a.state === "error") {
+      return '<div class="svc-access" data-access="' + sid + '"><div class="bad">' + esc(a.message) + '</div>' +
+        '<div class="row"><button data-act="svc-access" data-sid="' + sid + '">Try again</button>' +
+        close + '</div></div>';
+    }
+    var r = a.data, can = r.can || {}, d = a.draft, libs = r.libraries || [];
+    var html = '<div class="svc-access" data-access="' + sid + '">' +
+      '<h4>Access on ' + esc(r.service) + '</h4>' +
+      '<div class="meta">' + esc(r.username) + ' on ' + esc(r.host) + '</div>';
+    if (r.loginHost && r.loginHost !== r.host) {
+      html += '<div class="meta">Their login uses ' + esc(r.loginHost) + '. Changes go to ' +
+        esc(r.host) + ', where your Server Admin sign-in is.</div>';
+    }
+    var any = false;
+    if (can.libraries && libs.length) {
+      any = true;
+      var group = "svc-acc-all-" + sid;
+      html += '<fieldset class="pick"><legend>Libraries</legend>' +
+        '<label class="choice"><input type="radio" name="' + group + '" value="all" data-sid="' + sid + '"' +
+          (d.all ? ' checked' : '') + '><span class="wrap">' +
+          (can.laterLibraries ? 'All libraries, and ones added later' : 'All libraries there are now') +
+        '</span></label>' +
+        '<label class="choice"><input type="radio" name="' + group + '" value="some" data-sid="' + sid + '"' +
+          (d.all ? '' : ' checked') + '><span class="wrap">Only these</span></label>' +
+        '<div class="svc-acc-libs">' + libs.map(function (l) {
+          return '<label class="tick"><input type="checkbox" name="svc-acc-lib" data-sid="' + sid +
+            '" value="' + esc(l.id) + '"' + (d.all || d.libs[l.id] ? ' checked' : '') +
+            (d.all ? ' disabled' : '') + '><span>' + esc(l.name) + '</span></label>';
+        }).join("") + '</div></fieldset>';
+      if (!can.laterLibraries) {
+        html += '<div class="meta">A library added later goes to nobody until it is ticked here.</div>';
+      }
+    } else if (can.libraries) {
+      html += '<div class="meta">One library here: nothing to pick.</div>';
+    }
+    if (can.download) {
+      any = true;
+      html += '<label class="tick"><input type="checkbox" name="svc-acc-dl" data-sid="' + sid + '"' +
+        (d.download ? ' checked' : '') + '><span>Can download to keep</span></label>';
+    }
+    if (can.note) html += '<div class="meta">' + esc(can.note) + '</div>';
+    if (!any) html += '<div class="meta">Nothing to change here.</div>';
+    if (a.bad) html += '<div class="bad" role="alert">' + esc(a.bad) + '</div>';
+    if (a.note) html += '<div class="good" role="status">' + esc(a.note) + '</div>';
+    return html + '<div class="row" style="margin-top:11px">' +
+      (any ? '<button class="primary" data-act="svc-access-save" data-sid="' + sid + '"' +
+        (a.saving ? ' disabled' : '') + '>' + (a.saving ? 'Saving…' : 'Save access') + '</button>' : '') +
+      close + '</div></div>';
   }
 
   // ---- sign-in actions ----
@@ -3457,6 +3652,9 @@
       case "delete-svc":
         if (findService(sid)) removeService(findService(sid));
         break;
+      case "svc-access": if (findService(sid)) openSvcAccess(sid); break;
+      case "svc-access-save": saveSvcAccess(sid); break;
+      case "svc-access-close": closeSvcAccess(sid); break;
       case "save": saveService(); break;
       case "cancel-form": closeForm(); break;
       case "plex-signin": plexSignIn(); break;
@@ -3467,6 +3665,7 @@
   $("acct").addEventListener("change", function (e) {
     var t = e.target;
     if (t.name === "acct-access") setAccess(t.value);
+    else if (t.dataset && t.dataset.sid && /^svc-acc-/.test(t.name || "")) svcAccessChanged(t);
     else if (t.id === "sf-type" || t.id === "sf-kind" || t.id === "sf-prov-on") syncForm();
     else if (t.name === "sf-plex-server") plexServerPicked(Number(t.value));
     else if (t.name === "sf-plex-person") plexPersonPicked(Number(t.value));

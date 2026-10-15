@@ -2,6 +2,7 @@ package provision
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -161,4 +162,139 @@ func (kavitaProvider) Ensure(ctx context.Context, hc *http.Client, admin Admin, 
 		res.Note = "Kavita also emailed an invite to " + email + "; the account is ready without it."
 	}
 	return res, nil
+}
+
+// ---- Change access ----------------------------------------------------------
+//
+// GET /api/Users answers each member's roles ("Download" is downloading),
+// libraries [{id}], ageRestriction and, on newer Kavita, identityProvider.
+// POST /api/Account/update {userId, username, email, roles, libraries,
+// ageRestriction, identityProvider} (admin) sets them ALL, so the member's
+// own go back as read with those two changed — identityProvider above all:
+// a different one there is the only thing Kavita applies. Kavita has no
+// "every library" setting.
+
+func (kavitaProvider) AccessCapability() AccessCapability {
+	return AccessCapability{Libraries: true, Download: true}
+}
+
+type kavitaMember struct {
+	ID       int      `json:"id"`
+	Username string   `json:"username"`
+	Email    *string  `json:"email"`
+	Roles    []string `json:"roles"`
+	// Libraries lists what the member can see.
+	Libraries []struct {
+		ID int `json:"id"`
+	} `json:"libraries"`
+	// As Kavita has them: they go back unchanged.
+	AgeRestriction   json.RawMessage `json:"ageRestriction"`
+	IdentityProvider json.RawMessage `json:"identityProvider"`
+}
+
+// kavitaAccount is the member to read or change: never an admin.
+func kavitaAccount(ctx context.Context, c *client, username string) (kavitaMember, error) {
+	var users []kavitaMember
+	if err := c.call(ctx, http.MethodGet, "/api/Users?includePending=true", nil, &users); err != nil {
+		return kavitaMember{}, err
+	}
+	for _, u := range users {
+		if !strings.EqualFold(u.Username, username) {
+			continue
+		}
+		if hasRole(u.Roles, "Admin") {
+			return kavitaMember{}, ErrAdminAccount
+		}
+		return u, nil
+	}
+	return kavitaMember{}, ErrNoAccount
+}
+
+func kavitaAccess(ctx context.Context, c *client, username string) (AccessState, error) {
+	u, err := kavitaAccount(ctx, c, username)
+	if err != nil {
+		return AccessState{}, err
+	}
+	all, err := kavitaLibraries(ctx, c)
+	if err != nil {
+		return AccessState{}, err
+	}
+	libs := []string{}
+	for _, l := range u.Libraries {
+		libs = append(libs, strconv.Itoa(l.ID))
+	}
+	// Pleb is Kavita's own, added to every non-admin on each update.
+	rest := map[string]any{
+		"username":         u.Username,
+		"email":            u.Email,
+		"roles":            sortedWithout(u.Roles, "Download", "Pleb"),
+		"ageRestriction":   parsed(u.AgeRestriction),
+		"identityProvider": parsed(u.IdentityProvider),
+	}
+	return AccessState{Available: all, rest: rest,
+		Access: Access{Libraries: libs, Download: hasRole(u.Roles, "Download")}}, nil
+}
+
+func (kavitaProvider) GetAccess(ctx context.Context, hc *http.Client, admin Admin, username string) (AccessState, error) {
+	c, err := kavitaSignIn(ctx, hc, admin)
+	if err != nil {
+		return AccessState{}, err
+	}
+	return kavitaAccess(ctx, c, username)
+}
+
+func (kavitaProvider) SetAccess(ctx context.Context, hc *http.Client, admin Admin, username string, want Access) (AccessState, error) {
+	c, err := kavitaSignIn(ctx, hc, admin)
+	if err != nil {
+		return AccessState{}, err
+	}
+	u, err := kavitaAccount(ctx, c, username)
+	if err != nil {
+		return AccessState{}, err
+	}
+	all, err := kavitaLibraries(ctx, c)
+	if err != nil {
+		return AccessState{}, err
+	}
+	chosen, err := chosenIDs(all, want)
+	if err != nil {
+		return AccessState{}, err
+	}
+	ids := []int{}
+	for _, id := range chosen {
+		n, _ := strconv.Atoi(id)
+		ids = append(ids, n)
+	}
+	roles := []string{}
+	for _, r := range u.Roles {
+		if r != "Download" {
+			roles = append(roles, r)
+		}
+	}
+	if want.Download {
+		roles = append(roles, "Download")
+	}
+	email := ""
+	if u.Email != nil {
+		email = *u.Email
+	}
+	body := map[string]any{
+		"userId":    u.ID,
+		"username":  u.Username,
+		"email":     email,
+		"roles":     roles,
+		"libraries": ids,
+		// NotApplicable, as a new account gets, if Kavita gave none.
+		"ageRestriction": map[string]any{"ageRating": -1, "includeUnknowns": true},
+	}
+	if raw := strings.TrimSpace(string(u.AgeRestriction)); raw != "" && raw != "null" {
+		body["ageRestriction"] = u.AgeRestriction
+	}
+	if raw := strings.TrimSpace(string(u.IdentityProvider)); raw != "" && raw != "null" {
+		body["identityProvider"] = u.IdentityProvider
+	}
+	if err := c.call(ctx, http.MethodPost, "/api/Account/update", body, nil); err != nil {
+		return AccessState{}, err
+	}
+	return kavitaAccess(ctx, c, username)
 }

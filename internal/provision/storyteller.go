@@ -100,3 +100,100 @@ func (storytellerProvider) Ensure(ctx context.Context, hc *http.Client, admin Ad
 	return Result{Outcome: Created,
 		Note: "Storyteller may also have emailed the invite to " + p.Email + "; the account is ready without it."}, nil
 }
+
+// ---- Change access ----------------------------------------------------------
+//
+// bookDownload in an account's permissions is downloading. PUT
+// /api/v2/users/{id} {permissions} (userUpdate) sets every flag Storyteller
+// knows from what it is sent, a missing one becoming false, so each flag
+// goes back as read, with bookDownload changed; an answer missing one of
+// them changes nothing. One collection: no libraries to pick.
+
+// storytellerFlags is every flag that update sets (users.ts,
+// updateUserPermissions).
+var storytellerFlags = []string{
+	"bookCreate", "bookDelete", "bookRead", "bookProcess", "bookDownload", "bookUpdate", "bookList",
+	"collectionCreate", "inviteList", "inviteDelete", "userCreate", "userList", "userRead",
+	"userDelete", "userUpdate", "userPasswordReset", "settingsUpdate",
+}
+
+func (storytellerProvider) AccessCapability() AccessCapability {
+	return AccessCapability{Download: true}
+}
+
+type storytellerUser struct {
+	ID          string         `json:"id"`
+	Username    string         `json:"username"`
+	Email       string         `json:"email"`
+	Permissions map[string]any `json:"permissions"`
+}
+
+// storytellerAccount is the account to read or change, by username or
+// email (Storyteller signs in with either): never one that makes users or
+// changes settings.
+func storytellerAccount(ctx context.Context, c *client, username string) (storytellerUser, error) {
+	var users []storytellerUser
+	if err := c.call(ctx, http.MethodGet, "/api/v2/users", nil, &users); err != nil {
+		return storytellerUser{}, err
+	}
+	for _, u := range users {
+		if !strings.EqualFold(u.Username, username) && !strings.EqualFold(u.Email, username) {
+			continue
+		}
+		if truthy(u.Permissions["userCreate"]) || truthy(u.Permissions["settingsUpdate"]) {
+			return storytellerUser{}, ErrAdminAccount
+		}
+		return u, nil
+	}
+	return storytellerUser{}, ErrNoAccount
+}
+
+func storytellerAccess(ctx context.Context, c *client, username string) (AccessState, error) {
+	u, err := storytellerAccount(ctx, c, username)
+	if err != nil {
+		return AccessState{}, err
+	}
+	// As flags, whether they arrive as true/false or 1/0.
+	rest := map[string]any{}
+	for k, v := range u.Permissions {
+		if k != "bookDownload" {
+			rest["permissions."+k] = truthy(v)
+		}
+	}
+	return AccessState{rest: rest, Access: Access{Download: truthy(u.Permissions["bookDownload"])}}, nil
+}
+
+func (storytellerProvider) GetAccess(ctx context.Context, hc *http.Client, admin Admin, username string) (AccessState, error) {
+	c, err := storytellerSignIn(ctx, hc, admin)
+	if err != nil {
+		return AccessState{}, err
+	}
+	return storytellerAccess(ctx, c, username)
+}
+
+func (storytellerProvider) SetAccess(ctx context.Context, hc *http.Client, admin Admin, username string, want Access) (AccessState, error) {
+	c, err := storytellerSignIn(ctx, hc, admin)
+	if err != nil {
+		return AccessState{}, err
+	}
+	u, err := storytellerAccount(ctx, c, username)
+	if err != nil {
+		return AccessState{}, err
+	}
+	perms := map[string]bool{}
+	for k, v := range u.Permissions {
+		perms[k] = truthy(v)
+	}
+	for _, k := range storytellerFlags {
+		if _, ok := u.Permissions[k]; !ok {
+			return AccessState{}, &ServiceError{Status: http.StatusBadGateway,
+				Message: "Storyteller's answer left out the account's " + k + " permission; nothing was changed"}
+		}
+	}
+	perms["bookDownload"] = want.Download
+	if err := c.call(ctx, http.MethodPut, "/api/v2/users/"+url.PathEscape(u.ID),
+		map[string]any{"permissions": perms}, nil); err != nil {
+		return AccessState{}, err
+	}
+	return storytellerAccess(ctx, c, username)
+}

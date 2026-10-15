@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,18 +16,30 @@ import (
 )
 
 // absStub is a small Audiobookshelf: the calls internal/provision makes,
-// with a user list that remembers what was made.
+// with a user list that remembers what was made. An account's permissions
+// and libraries change as Audiobookshelf's own PATCH changes them: the
+// permissions named are merged in, and the library list is taken only
+// alongside them. With ignore it says yes and changes neither.
 type absStub struct {
 	mu        sync.Mutex
 	users     []map[string]any
 	passwords map[string]string
 	// made is each new account's whole body, by username.
-	made map[string]map[string]any
+	made   map[string]map[string]any
+	ignore bool
+	// sneak: a PATCH also lets the account update items, unasked.
+	sneak bool
+}
+
+func absUserPermissions() map[string]any {
+	return map[string]any{"download": true, "update": false, "delete": false, "upload": false,
+		"createEreader": false, "accessAllLibraries": true, "accessAllTags": true, "accessExplicitContent": false}
 }
 
 func newABSStub(t *testing.T) (*absStub, *httptest.Server) {
 	a := &absStub{
-		users:     []map[string]any{{"id": "r1", "username": "root", "type": "root"}},
+		users: []map[string]any{{"id": "r1", "username": "root", "type": "root",
+			"permissions": absUserPermissions(), "librariesAccessible": []any{}}},
 		passwords: map[string]string{},
 		made:      map[string]map[string]any{},
 	}
@@ -60,15 +73,43 @@ func newABSStub(t *testing.T) (*absStub, *httptest.Server) {
 			}})
 		case r.Method == "POST" && r.URL.Path == "/api/users":
 			id := "u" + string(rune('0'+len(a.users)))
-			a.users = append(a.users, map[string]any{"id": id, "username": in["username"], "type": in["type"]})
+			perms := absUserPermissions()
+			if sent, ok := in["permissions"].(map[string]any); ok {
+				for k, v := range sent {
+					perms[k] = v
+				}
+			}
+			libs, _ := in["librariesAccessible"].([]any)
+			if libs == nil {
+				libs = []any{}
+			}
+			a.users = append(a.users, map[string]any{"id": id, "username": in["username"], "type": in["type"],
+				"permissions": perms, "librariesAccessible": libs})
 			a.passwords[in["username"].(string)] = in["password"].(string)
 			a.made[in["username"].(string)] = in
 			_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]any{"id": id}})
 		case r.Method == "PATCH" && strings.HasPrefix(r.URL.Path, "/api/users/"):
 			id := strings.TrimPrefix(r.URL.Path, "/api/users/")
 			for _, u := range a.users {
-				if u["id"] == id {
-					a.passwords[u["username"].(string)] = in["password"].(string)
+				if u["id"] != id {
+					continue
+				}
+				if pw, ok := in["password"].(string); ok && pw != "" {
+					a.passwords[u["username"].(string)] = pw
+				}
+				if sent, ok := in["permissions"].(map[string]any); ok && !a.ignore {
+					perms := u["permissions"].(map[string]any)
+					for k, v := range sent {
+						if b, isBool := v.(bool); isBool && perms[k] != nil {
+							perms[k] = b
+						}
+					}
+					if libs, ok := in["librariesAccessible"].([]any); ok {
+						u["librariesAccessible"] = libs
+					}
+					if a.sneak {
+						perms["update"] = true
+					}
 				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
@@ -106,6 +147,20 @@ func (a *absStub) password(user string) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.passwords[user]
+}
+
+// access is what an account has now, in a line.
+func (a *absStub) access(user string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, u := range a.users {
+		if u["username"] == user {
+			p := u["permissions"].(map[string]any)
+			raw, _ := json.Marshal(u["librariesAccessible"])
+			return fmt.Sprintf("download=%v all=%v libraries=%s update=%v", p["download"], p["accessAllLibraries"], raw, p["update"])
+		}
+	}
+	return ""
 }
 
 // libraries is what a new account was given: "all", or the ids.
@@ -288,7 +343,10 @@ func TestProvisionLibrariesSayWhenTheKeptSignInFails(t *testing.T) {
 func TestProvisionNeedsFullAdminAccess(t *testing.T) {
 	s := newTestServer(t, withSecretsKey)
 	sam := newPerson(t, s, "Sam")
-	path := "/api/v1/admin/profiles/" + newPerson(t, s, "Emily") + "/provision"
+	emily := newPerson(t, s, "Emily")
+	path := "/api/v1/admin/profiles/" + emily + "/provision"
+	// Change access too: people and media servers both.
+	access := "/api/v1/admin/profiles/" + emily + "/services/nope/provision"
 	body := map[string]any{"type": "abs", "username": "emily", "password": "x"}
 	// Phones' admin sign-ins exist once an admin login is enrolled.
 	enrollDirect(t)
@@ -306,8 +364,12 @@ func TestProvisionNeedsFullAdminAccess(t *testing.T) {
 			s.refused(http.StatusConflict, "no-service-admin", "GET", "/api/v1/admin/provision/abs/libraries", nil, bearer(raw))
 			s.refused(http.StatusConflict, "no-service-admin", "POST", "/api/v1/admin/provision/abs/selftest", nil, bearer(raw))
 			s.refused(http.StatusBadRequest, "not-supported", "POST", "/api/v1/admin/provision/plex/selftest", nil, bearer(raw))
+			s.refused(http.StatusNotFound, "service-not-found", "GET", access, nil, bearer(raw))
+			s.refused(http.StatusNotFound, "service-not-found", "PUT", access, map[string]any{"allLibraries": true}, bearer(raw))
 			continue
 		}
+		s.refused(http.StatusForbidden, "access-denied", "GET", access, nil, bearer(raw))
+		s.refused(http.StatusForbidden, "access-denied", "PUT", access, map[string]any{"allLibraries": true}, bearer(raw))
 		s.refused(http.StatusForbidden, "access-denied", "POST", path, body, bearer(raw))
 		s.refused(http.StatusForbidden, "access-denied", "GET", "/api/v1/admin/provision", nil, bearer(raw))
 		s.refused(http.StatusForbidden, "access-denied", "GET", "/api/v1/admin/provision/abs/libraries", nil, bearer(raw))
@@ -327,10 +389,111 @@ func TestProvisionSelfTestMakesSignsInAndDeletesWithTheKeptSignIn(t *testing.T) 
 	r := s.expectStatus(http.StatusOK, "POST", "/api/v1/admin/provision/abs/selftest", nil, admin)
 	report, _ := r.body["report"].(map[string]any)
 	steps, _ := report["steps"].([]any)
-	if r.body["service"] != "Audiobookshelf" || report["ok"] != true || len(steps) != 4 {
+	// cleanup, create, sign-in, access (changed and read back), remove.
+	if r.body["service"] != "Audiobookshelf" || report["ok"] != true || len(steps) != 5 ||
+		steps[3].(map[string]any)["name"] != "access" {
 		t.Fatalf("%v", r.body)
 	}
 	if got := abs.usernames(); len(got) != 1 || got[0] != "root" {
 		t.Fatalf("accounts after the test: %v, want only root", got)
+	}
+}
+
+// addLogin saves one of a person's logins and says its id.
+func addLogin(t *testing.T, s *testServer, profile string, body map[string]any) string {
+	t.Helper()
+	r := s.do("POST", "/api/v1/admin/profiles/"+profile+"/services", body, bearer(testAPIToken))
+	if r.status != 201 {
+		t.Fatalf("add login: %d %v", r.status, r)
+	}
+	return r.body["service"].(map[string]any)["id"].(string)
+}
+
+// Owner, 2026-10-14: "allow the admins to adjust permissions and library
+// access from the server". The account a saved login names is read and
+// changed with the kept sign-in, then read back.
+func TestChangeAccessReadsAndChangesTheAccountASavedLoginNames(t *testing.T) {
+	s := newTestServer(t, withSecretsKey)
+	admin := bearer(testAPIToken)
+	abs, srv := newABSStub(t)
+	s.expectStatus(http.StatusOK, "POST", serviceAdminsPath, map[string]string{
+		"type": "abs", "baseUrl": srv.URL + "/", "username": "admin", "password": "admin-pass"}, admin)
+	kate := newPerson(t, s, "Kate")
+	s.expectStatus(http.StatusOK, "POST", "/api/v1/admin/profiles/"+kate+"/provision", map[string]any{
+		"type": "abs", "username": "kate", "password": "pw-1"}, admin)
+	accessOf := func(login string) string {
+		return "/api/v1/admin/profiles/" + kate + "/services/" + login + "/provision"
+	}
+	path := accessOf(addLogin(t, s, kate, map[string]any{"type": "abs", "baseUrl": "http://abs.lan:13378",
+		"loginKind": "password", "username": "Kate", "password": "pw-1"}))
+
+	// Read: what it has, where the change would go, and no secret.
+	r := s.expectStatus(http.StatusOK, "GET", path, nil, admin)
+	raw, _ := json.Marshal(r.body)
+	host := strings.TrimPrefix(srv.URL, "http://")
+	if string(raw) != `{"access":{"allLibraries":true,"download":true,"libraries":["lib-books","lib-kids"]},`+
+		`"can":{"download":true,"laterLibraries":true,"libraries":true},"host":"`+host+`",`+
+		`"libraries":[{"id":"lib-books","name":"Audiobooks"},{"id":"lib-kids","name":"Kids"}],`+
+		`"loginHost":"abs.lan:13378","service":"Audiobookshelf","username":"Kate"}` {
+		t.Fatalf("read: %s", raw)
+	}
+
+	// Changed, and the answer is the account read back.
+	r = s.expectStatus(http.StatusOK, "PUT", path, map[string]any{
+		"allLibraries": false, "libraries": []string{"lib-kids"}, "download": false}, admin)
+	if got, _ := json.Marshal(r.body["access"]); string(got) != `{"allLibraries":false,"download":false,"libraries":["lib-kids"]}` {
+		t.Fatalf("answer: %s", got)
+	}
+	if got := abs.access("kate"); got != `download=false all=false libraries=["lib-kids"] update=false` {
+		t.Fatalf("on the service: %s", got)
+	}
+
+	// Refused before anything changes.
+	s.refused(http.StatusBadRequest, "no-libraries", "PUT", path, map[string]any{"libraries": []string{}}, admin)
+	s.refused(http.StatusConflict, "libraries-gone", "PUT", path, map[string]any{"libraries": []string{"lib-gone"}}, admin)
+	root := accessOf(addLogin(t, s, kate, map[string]any{"type": "abs", "baseUrl": srv.URL,
+		"loginKind": "password", "username": "root", "password": "x"}))
+	s.refused(http.StatusConflict, "admin-account", "GET", root, nil, admin)
+	s.refused(http.StatusConflict, "admin-account", "PUT", root, map[string]any{"allLibraries": true}, admin)
+	nobody := accessOf(addLogin(t, s, kate, map[string]any{"type": "abs", "baseUrl": srv.URL,
+		"loginKind": "password", "username": "nobody", "password": "x"}))
+	s.refused(http.StatusNotFound, "no-account", "GET", nobody, nil, admin)
+	keyed := accessOf(addLogin(t, s, kate, map[string]any{"type": "abs", "baseUrl": srv.URL,
+		"loginKind": "apikey", "apiKey": "k-1"}))
+	s.refused(http.StatusConflict, "no-username", "GET", keyed, nil, admin)
+	cw := accessOf(addLogin(t, s, kate, map[string]any{"type": "calibreweb", "baseUrl": "http://cw.lan",
+		"loginKind": "password", "username": "kate", "password": "x"}))
+	s.refused(http.StatusBadRequest, "not-supported", "GET", cw, nil, admin)
+	jf := accessOf(addLogin(t, s, kate, map[string]any{"type": "jellyfin", "baseUrl": "http://jf.lan",
+		"loginKind": "password", "username": "kate", "password": "x"}))
+	s.refused(http.StatusConflict, "no-service-admin", "GET", jf, nil, admin)
+	s.refused(http.StatusNotFound, "service-not-found", "GET", accessOf("nope"), nil, admin)
+	s.refused(http.StatusNotFound, "profile-not-found", "GET", "/api/v1/admin/profiles/nobody/services/x/provision", nil, admin)
+	if got := abs.access("kate"); got != `download=false all=false libraries=["lib-kids"] update=false` {
+		t.Fatalf("a refusal changed the account: %s", got)
+	}
+
+	// A service that says yes and keeps things as they were is no success:
+	// the answer says so, with what the account has.
+	abs.mu.Lock()
+	abs.ignore = true
+	abs.mu.Unlock()
+	r = s.do("PUT", path, map[string]any{"allLibraries": true, "download": true}, admin)
+	if got, _ := json.Marshal(r.body["access"]); r.status != http.StatusBadGateway || r.str("reason") != "not-taken" ||
+		string(got) != `{"allLibraries":false,"download":false,"libraries":["lib-kids"]}` ||
+		!strings.Contains(r.str("error"), "downloads and libraries unchanged") {
+		t.Fatalf("not taken: %d %v", r.status, r.body)
+	}
+
+	// Nor is one that changes a right nobody asked about: the change took,
+	// and the answer names what else moved.
+	abs.mu.Lock()
+	abs.ignore, abs.sneak = false, true
+	abs.mu.Unlock()
+	r = s.do("PUT", path, map[string]any{"allLibraries": true, "download": true}, admin)
+	if got, _ := json.Marshal(r.body["access"]); r.status != http.StatusBadGateway || r.str("reason") != "also-changed" ||
+		string(got) != `{"allLibraries":true,"download":true,"libraries":["lib-books","lib-kids"]}` ||
+		!strings.Contains(r.str("error"), "also changed permissions.update") {
+		t.Fatalf("also changed: %d %v", r.status, r.body)
 	}
 }

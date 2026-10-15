@@ -103,6 +103,8 @@ func buildApp(cfg *config.Config) *fiber.App {
 	// A person's account on one of those servers, made (or its password
 	// set) by this server with the kept sign-in.
 	provisionHandler := handlers.NewProvisionHandler(serviceAdminRepo, profileRepo)
+	// Change access works on the account a person's saved login names.
+	provisionHandler.UseAccounts(accountRepo)
 
 	// Unauthenticated on purpose: the app needs to know whether a
 	// companion exists and what it can do before it has been given a
@@ -253,6 +255,10 @@ func buildApp(cfg *config.Config) *fiber.App {
 	// "Test accounts": a throwaway account made, signed in as, deleted.
 	admin.Post("/provision/:type/selftest", provisionHandler.SelfTest)
 	admin.Post("/profiles/:id/provision", provisionHandler.Provision)
+	// "Change access": the libraries and downloads of the account a saved
+	// login names, read and changed with the same kept sign-in.
+	admin.Get("/profiles/:id/services/:sid/provision", provisionHandler.Access)
+	admin.Put("/profiles/:id/services/:sid/provision", provisionHandler.ChangeAccess)
 
 	// Device linking, device half. Unauthenticated by necessity — the
 	// device has no token yet, which is the problem being solved. Rate

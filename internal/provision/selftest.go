@@ -38,7 +38,7 @@ const SelfTestPrefix = "alexandria-selftest-"
 
 // SelfTestStep is one step of a run, as the page shows it.
 type SelfTestStep struct {
-	Name   string `json:"name"` // cleanup, create, sign-in, remove
+	Name   string `json:"name"` // cleanup, create, sign-in, access, remove
 	OK     bool   `json:"ok"`
 	Detail string `json:"detail,omitempty"`
 }
@@ -111,7 +111,14 @@ func SelfTest(ctx context.Context, hc *http.Client, serviceType string, admin Ad
 		step("sign-in", t.signInAs(ctx, hc, admin.BaseURL, p.Username, p.Password), "")
 	}
 
-	// 4. Gone again, whatever happened above (a create that failed half
+	// 4. Its access changed and read back, as Change access does it, where
+	// the service has access to change.
+	if _, ok := prov.(AccessEditor); ok && created {
+		detail, err := selfTestAccess(ctx, hc, serviceType, admin, p.Username)
+		step("access", err, detail)
+	}
+
+	// 5. Gone again, whatever happened above (a create that failed half
 	// way can still have left the account behind).
 	removed, err = t.removeTestAccounts(ctx, hc, admin, SelfTestPrefix)
 	gone := false
@@ -132,6 +139,39 @@ func SelfTest(ctx context.Context, hc *http.Client, serviceType string, admin Ad
 		rep.Leftover = p.Username
 	}
 	return rep, nil
+}
+
+// selfTestAccess changes the test account's access the way an admin would
+// — downloads switched over and, where there are several libraries, only
+// the first — and ChangeAccess reads it back.
+func selfTestAccess(ctx context.Context, hc *http.Client, serviceType string, admin Admin, username string) (string, error) {
+	st, err := GetAccess(ctx, hc, serviceType, admin, username)
+	if err != nil {
+		return "", err
+	}
+	can, _ := AccessCapabilityOf(serviceType)
+	want := st.Access
+	var did []string
+	if can.Download {
+		want.Download = !st.Download
+		if want.Download {
+			did = append(did, "downloads on")
+		} else {
+			did = append(did, "downloads off")
+		}
+	}
+	if can.Libraries && len(st.Available) > 1 {
+		want.AllLibraries = false
+		want.Libraries = []string{st.Available[0].ID}
+		did = append(did, fmt.Sprintf("1 of %d libraries", len(st.Available)))
+	}
+	if len(did) == 0 {
+		return "nothing to change on this service", nil
+	}
+	if _, err := ChangeAccess(ctx, hc, serviceType, admin, username, want); err != nil {
+		return "", err
+	}
+	return "changed and read back: " + strings.Join(did, ", "), nil
 }
 
 func leftoverNote(removed []string) string {
