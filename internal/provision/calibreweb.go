@@ -12,16 +12,21 @@ import (
 	"strings"
 )
 
-// Calibre-Web (janeczku/calibre-web cps/admin.py and cps/web.py, read
-// 2026-10-14) has no API for accounts, only its own web forms, so the
-// admin's browser session is played: GET /login for the form's CSRF
-// token, POST /login; GET /admin/user/new for a fresh token and the
-// server's OWN defaults for a new user (its pre-ticked roles and sidebar,
-// its default language and locale), POST it back with the person's name,
-// email and password. Admin is never ticked.
+// Calibre-Web (janeczku/calibre-web cps/admin.py, cps/web.py and
+// cps/constants.py, read 2026-10-14) has no API for accounts, only its own
+// web forms, so the admin's browser session is played: GET /login for the
+// form's CSRF token, POST /login; GET /admin/user/new for a fresh token and
+// the server's OWN defaults for a new user (its sidebar, its default
+// language and locale), POST it back with the person's name, email and
+// password.
 //
-//   - _handle_new_user needs name, email and password, and reads
-//     default_language unconditionally;
+//   - the roles are this server's, not the defaults': downloads and the
+//     book viewer, nothing else (owner, 2026-10-14: "read only, plus
+//     download for media"). Out of the box Calibre-Web's defaults give a
+//     new user no roles at all, so no downloads;
+//   - _handle_new_user needs name, email and password, reads
+//     default_language unconditionally, adds up the show_<n> sidebar
+//     boxes, and takes the roles from ALL_ROLES' box names;
 //   - success is a redirect; a refusal re-renders the form with a flash;
 //   - GET /ajax/listusers (admin) → {rows: [{id, name, email, role}]},
 //     role bit 1 being admin.
@@ -45,6 +50,10 @@ var (
 	cwFlash    = regexp.MustCompile(`(?is)<div[^>]*class="[^"]*alert-danger[^"]*"[^>]*>(.*?)</div>`)
 	cwTags     = regexp.MustCompile(`(?s)<[^>]*>`)
 )
+
+// cwRoles is what a new Calibre-Web account may do: download, and read in
+// the book viewer.
+var cwRoles = []string{"download_role", "viewer_role"}
 
 func cwSelected(page, name string) string {
 	re := regexp.MustCompile(`(?is)<select[^>]*name="` + regexp.QuoteMeta(name) + `"[^>]*>(.*?)</select>`)
@@ -188,14 +197,19 @@ func (calibreWebProvider) Ensure(ctx context.Context, hc *http.Client, admin Adm
 	if v := cwSelected(page, "locale"); v != "" {
 		form.Set("locale", v)
 	}
+	// The server's own sidebar...
 	for _, box := range cwCheckbox.FindAllString(page, -1) {
 		name := cwName.FindStringSubmatch(box)
-		if name == nil || name[1] == "admin_role" || !cwChecked.MatchString(box) {
+		if name == nil || !cwChecked.MatchString(box) {
 			continue
 		}
-		if strings.HasPrefix(name[1], "show_") || strings.HasSuffix(name[1], "_role") {
+		if strings.HasPrefix(name[1], "show_") {
 			form.Set(name[1], "on")
 		}
+	}
+	// ...and read-and-download, whatever its defaults are.
+	for _, role := range cwRoles {
+		form.Set(role, "on")
 	}
 	status, _, body, err := post("/admin/user/new", form)
 	if err != nil {

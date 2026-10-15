@@ -303,6 +303,9 @@
     font-size: 14px; cursor: pointer;
   }
   label.tick input { margin-top: 3px; flex: none; }
+  /* The libraries a new account may see, under that tick. */
+  #sf-prov-libs { margin-left: 26px; }
+  #sf-prov-libs label.tick { margin: 8px 0 2px; }
   .wrap { min-width: 0; overflow-wrap: anywhere; }
   .bad { color: var(--danger); font-size: 13px; margin-top: 6px; }
   .card.invite { border-color: var(--accent); }
@@ -1534,7 +1537,7 @@
 
   function newAcct(id, name) {
     return { id: id, name: name, data: null, reveal: null, form: null,
-             busy: false, seq: 0, prov: null };
+             busy: false, seq: 0, prov: null, libs: {} };
   }
 
   // Writes only when the markup changed, so a rebuild that would change
@@ -2158,6 +2161,12 @@
             '<input type="email" id="sf-prov-email" autocomplete="off" autocapitalize="off" ' +
               'spellcheck="false" data-1p-ignore data-lpignore="true">' +
           '</div>' +
+          // The libraries a new account may see, all ticked (syncProvLibs).
+          '<div id="sf-prov-libs" hidden>' +
+            '<p class="field" id="sf-prov-libs-title" style="margin-bottom:0">Libraries they can see</p>' +
+            '<p class="meta" id="sf-prov-libs-state" style="margin:4px 0 0"></p>' +
+            '<div id="sf-prov-libs-list" role="group" aria-labelledby="sf-prov-libs-title"></div>' +
+          '</div>' +
         '</div>' +
       '</div>' +
       '<div data-kind="token" hidden>' +
@@ -2232,6 +2241,69 @@
     var on = $("sf-prov-on").checked;
     $("sf-prov-mail").hidden = !on || (cap.email !== "required" && cap.email !== "optional");
     $("sf-prov-email-opt").textContent = cap.email === "optional" ? "(optional)" : "";
+    syncProvLibs(type, on && cap.libraries ? cap : null);
+  }
+
+  // The libraries a new account may see (owner, 2026-10-14: "need to also
+  // pick libraries available"): listed by this server with the kept Server
+  // Admin sign-in, once per service while the panel is open, all ticked.
+  // Unticking hides one; nothing unticked sends no list, which is every
+  // library, the ones added later included. A service with one collection
+  // (Storyteller, Calibre-Web) has none to pick. Names land as text.
+  function syncProvLibs(type, cap) {
+    var box = $("sf-prov-libs");
+    if (!box) return;
+    var st = acct, libs = cap ? st.libs[type] : null;
+    if (cap && !libs) {
+      libs = st.libs[type] = { state: "loading" };
+      api("/admin/provision/" + encodeURIComponent(type) + "/libraries").then(function (r) {
+        libs.state = "ok";
+        libs.list = (r && r.libraries) || [];
+      }).catch(function (e) {
+        libs.state = "error";
+        libs.message = (e && e.message) || "it did not answer";
+      }).then(function () {
+        if (acct === st && $("sf-type") && $("sf-type").value === type) syncForm();
+      });
+    }
+    var list = $("sf-prov-libs-list"), state = $("sf-prov-libs-state");
+    box.hidden = !libs || (libs.state === "ok" && !libs.list.length);
+    if (box.hidden) return;
+    if (libs.state !== "ok") {
+      state.textContent = libs.state === "loading"
+        ? "Getting the libraries from " + cap.name + "…"
+        : "Couldn't list the libraries: " + libs.message +
+          ". Saved as it is, the account would see every library.";
+      state.className = libs.state === "error" ? "bad" : "meta";
+      state.hidden = false;
+      list.innerHTML = "";
+      delete list.dataset.type;
+      return;
+    }
+    state.textContent = "Untick any they shouldn't see.";
+    state.className = "meta";
+    state.hidden = false;
+    // Drawn once per service, so unticking and reticking the box above
+    // keeps the picks.
+    if (list.dataset.type !== type) {
+      list.dataset.type = type;
+      list.innerHTML = libs.list.map(function (l) {
+        return '<label class="tick"><input type="checkbox" checked data-lib="' + esc(l.id) + '">' +
+          '<span class="wrap">' + esc(l.name || l.id) + '</span></label>';
+      }).join("");
+    }
+  }
+
+  // What saveService sends for the libraries: undefined for every library
+  // (nothing to pick, or all ticked), [] for none, else the ticked ids.
+  function pickedLibs(type, cap) {
+    var libs = cap && cap.libraries ? acct.libs[type] : null;
+    var list = $("sf-prov-libs-list");
+    if (!libs || libs.state !== "ok" || !libs.list.length || !list || list.dataset.type !== type) return undefined;
+    var boxes = Array.prototype.slice.call(list.querySelectorAll("input[data-lib]"));
+    var ticked = boxes.filter(function (b) { return b.checked; });
+    if (ticked.length === boxes.length) return undefined;
+    return ticked.map(function (b) { return b.getAttribute("data-lib"); });
   }
 
   // Mirrors the server's sameServiceAddress: scheme and host without case,
@@ -2309,6 +2381,13 @@
       if (prov && cap.email === "required" && !email) {
         return complain(cap.name + " needs their email for a new account.", "sf-prov-email");
       }
+      var libraries = prov ? pickedLibs(type, cap) : undefined;
+      if (libraries && !libraries.length) {
+        var first = $("sf-prov-libs-list").querySelector("input[data-lib]");
+        toast("Tick at least one library they can see, or untick the box.", true);
+        if (first) first.focus();
+        return;
+      }
     } else if (kind === "token" && !tok && need) {
       return complain("Enter the token." + again, "sf-token");
     } else if (kind === "apikey" && !key && need) {
@@ -2345,13 +2424,16 @@
       };
       if (!prov) return save();
       var req = { type: type, username: user, password: pass, email: email };
+      if (libraries) req.libraries = libraries;
       var ask = function (allowReset) {
         req.allowReset = allowReset;
         return api(acctPath("/provision"), { method: "POST", body: JSON.stringify(req) });
       };
       return ask(false).catch(function (e) {
         if (e.reason !== "account-exists") throw e;
-        if (!confirm(e.message + ".\n\nChange its password to the one you typed?")) {
+        // A reset sets the password and nothing else.
+        var kept = libraries ? " Its libraries stay as they are on " + cap.name + "." : "";
+        if (!confirm(e.message + ".\n\nChange its password to the one you typed?" + kept)) {
           var stop = new Error("Nothing was changed: their " + cap.name + " password stays as it is.");
           stop.reason = "prov-cancelled";
           throw stop;

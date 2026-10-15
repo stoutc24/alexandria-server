@@ -249,6 +249,7 @@ func buildApp(cfg *config.Config) *fiber.App {
 	// admin phones call it before saving the person's login for that
 	// service. "full" access only (middleware.AdminScopeGate).
 	admin.Get("/provision", provisionHandler.Capabilities)
+	admin.Get("/provision/:type/libraries", provisionHandler.Libraries)
 	admin.Post("/profiles/:id/provision", provisionHandler.Provision)
 
 	// Device linking, device half. Unauthenticated by necessity — the

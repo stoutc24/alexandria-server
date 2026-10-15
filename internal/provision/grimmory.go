@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -14,7 +16,8 @@ import (
 //     (Lombok's isAdmin becomes "admin"; "isAdmin" is read as well);
 //   - POST /api/v1/auth/register (admin) UserCreateRequest: username,
 //     password of 8 to 72 characters, name and email both required,
-//     permission* flags, selectedLibraries. A new account is flagged
+//     permission* flags, selectedLibraries (GET /api/v1/libraries → [{id,
+//     name}]). A new account is flagged
 //     defaultPassword, so Grimmory's website asks for a new one on the
 //     first sign-in there;
 //   - PUT /api/v1/users/change-user-password (admin) {userId, newPassword}.
@@ -24,19 +27,50 @@ func (grimmoryProvider) Capability() Capability {
 	return Capability{Type: "booklore", Create: true, Reset: true, Email: EmailRequired}
 }
 
-func (grimmoryProvider) Ensure(ctx context.Context, hc *http.Client, admin Admin, p Person, allowReset bool) (Result, error) {
+func grimmorySignIn(ctx context.Context, hc *http.Client, admin Admin) (*client, error) {
 	c := newClient(hc, admin.BaseURL)
 	var login struct {
 		AccessToken string `json:"accessToken"`
 	}
 	if err := c.call(ctx, http.MethodPost, "/api/v1/auth/login",
 		map[string]string{"username": admin.Username, "password": admin.Password}, &login); err != nil {
-		return Result{}, signIn(err)
+		return nil, signIn(err)
 	}
 	if login.AccessToken == "" {
-		return Result{}, &SignInError{Err: errors.New("Grimmory gave no token")}
+		return nil, &SignInError{Err: errors.New("Grimmory gave no token")}
 	}
 	c.header.Set("Authorization", "Bearer "+login.AccessToken)
+	return c, nil
+}
+
+func grimmoryLibraries(ctx context.Context, c *client) ([]Library, error) {
+	var libraries []struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := c.call(ctx, http.MethodGet, "/api/v1/libraries", nil, &libraries); err != nil {
+		return nil, err
+	}
+	out := make([]Library, 0, len(libraries))
+	for _, l := range libraries {
+		out = append(out, Library{ID: strconv.FormatInt(l.ID, 10), Name: l.Name})
+	}
+	return out, nil
+}
+
+func (grimmoryProvider) Libraries(ctx context.Context, hc *http.Client, admin Admin) ([]Library, error) {
+	c, err := grimmorySignIn(ctx, hc, admin)
+	if err != nil {
+		return nil, err
+	}
+	return grimmoryLibraries(ctx, c)
+}
+
+func (grimmoryProvider) Ensure(ctx context.Context, hc *http.Client, admin Admin, p Person, allowReset bool) (Result, error) {
+	c, err := grimmorySignIn(ctx, hc, admin)
+	if err != nil {
+		return Result{}, err
+	}
 
 	var users []struct {
 		ID          int64          `json:"id"`
@@ -66,16 +100,22 @@ func (grimmoryProvider) Ensure(ctx context.Context, hc *http.Client, admin Admin
 	if p.Email == "" {
 		return Result{}, ErrEmailRequired
 	}
-	// Every library: a new account with none would see nothing.
-	var libraries []struct {
-		ID int64 `json:"id"`
-	}
-	if err := c.call(ctx, http.MethodGet, "/api/v1/libraries", nil, &libraries); err != nil {
+	// The picked libraries, else every one: a new account with none would
+	// see nothing.
+	all, err := grimmoryLibraries(ctx, c)
+	if err != nil {
 		return Result{}, err
 	}
-	ids := make([]int64, 0, len(libraries))
-	for _, l := range libraries {
-		ids = append(ids, l.ID)
+	chosen, err := picked(all, p.Libraries)
+	if err != nil {
+		return Result{}, err
+	}
+	ids := []int64{}
+	for _, l := range all {
+		if chosen == nil || slices.Contains(chosen, l.ID) {
+			id, _ := strconv.ParseInt(l.ID, 10, 64)
+			ids = append(ids, id)
+		}
 	}
 	body := map[string]any{
 		"username":               p.Username,

@@ -79,9 +79,11 @@ ask: it connects only to your own servers, and only to create or reset an
 account you asked for. When the administrator sets up a person's service
 with "create this account" ticked, the server signs in to that service
 (your Audiobookshelf, Jellyfin and the like, at the address saved with
-its Server Admin sign-in) and makes the person's account there, or sets
-its password. That request carries the person's username and password,
-and for the services that need them, their name and email address.
+its Server Admin sign-in), lists its libraries so the administrator can
+pick the ones the person may see, and makes the person's account there,
+or sets its password. That request carries the person's username and
+password, the picked libraries, and for the services that need them,
+their name and email address.
 
 When the administrator picks a Plex person for an Alexandria account,
 their own browser or phone asks plex.tv, with their own Plex sign-in, for

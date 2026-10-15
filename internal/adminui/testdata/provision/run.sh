@@ -8,10 +8,12 @@
 # API token and secrets key) and a small Audiobookshelf (abs_stub.py),
 # enrols the admin login, keeps an ABS Server Admin sign-in and makes a
 # person, Emily, with curl. Headless Chrome then adds Emily's ABS service
-# through the page with the "create this account" tick (her ABS account is
-# made), edits it with a new password (the page asks; her ABS password
-# changes), and tries ABS's root account (refused). The stub's state is
-# checked at each step.
+# through the page with the "create this account" tick and one of ABS's two
+# libraries unticked (her ABS account is made, seeing the other only),
+# edits it with a new password (the page asks; her ABS password changes,
+# her libraries do not), tries ABS's root account (refused), then Noah's
+# with no library ticked (refused on the page) and with all of them
+# (every library). The stub's state is checked at each step.
 #
 # Needs Go, curl, jq, openssl, python3 and Google Chrome (CHROME=... for
 # another). Nothing leaves this machine. KEEP=1 keeps the work folder.
@@ -134,6 +136,11 @@ if reached created; then
     jq -e --arg p "$first" '(.users | map(select(.username == "emily")) | length == 1) and
       (.users[] | select(.username == "emily") | .type == "user" and .isActive == true) and
       .passwords.emily == $p' "$work/state1.json"
+  check "ABS: emily reads and downloads, and sees only the library left ticked" \
+    jq -e '.users[] | select(.username == "emily") |
+      .permissions.download == true and .permissions.upload == false and .permissions.delete == false and
+      .permissions.update == false and .permissions.accessAllLibraries == false and
+      .librariesAccessible == ["lib-books"]' "$work/state1.json"
   admin "$base/api/v1/admin/profiles/$emily/services" >"$work/services.json"
   check "Alexandria keeps her ABS login (username emily)" \
     jq -e '.services | length == 1 and .[0].type == "abs" and .[0].username == "emily"' "$work/services.json"
@@ -149,6 +156,8 @@ if reached reset; then
   curl -fsS "$abs/__state" >"$work/state2.json"
   check "ABS: emily's password is the new one" \
     jq -e --arg p "$second" '.passwords.emily == $p' "$work/state2.json"
+  check "ABS: a reset leaves her libraries as they were" \
+    jq -e '.users[] | select(.username == "emily") | .librariesAccessible == ["lib-books"]' "$work/state2.json"
   go_on reset
 else
   flunk "the page reached the reset checkpoint"
@@ -160,6 +169,25 @@ if reached admin; then
   go_on admin
 else
   flunk "the page reached the admin checkpoint"
+fi
+
+if reached none; then
+  curl -fsS "$abs/__state" >"$work/state4.json"
+  check "ABS: no account for noah with no library ticked" \
+    jq -e '(.users | map(select(.username == "noah")) | length == 0) and .passwords.noah == null' "$work/state4.json"
+  go_on none
+else
+  flunk "the page reached the none checkpoint"
+fi
+
+if reached all; then
+  curl -fsS "$abs/__state" >"$work/state5.json"
+  check "ABS: noah sees every library, the ones added later included" \
+    jq -e '.users[] | select(.username == "noah") |
+      .permissions.accessAllLibraries == true and .librariesAccessible == null' "$work/state5.json"
+  go_on all
+else
+  flunk "the page reached the all checkpoint"
 fi
 
 for _ in $(seq 1 600); do [ -e "$work/report.json" ] && break; sleep 0.1; done

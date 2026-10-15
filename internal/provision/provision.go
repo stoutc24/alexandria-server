@@ -11,15 +11,22 @@
 //
 // These are the only outbound connections the server makes: to the
 // household's own servers, at the addresses the admin saved, and only when
-// an admin asks for an account to be created or reset.
+// an admin asks for an account to be created or reset (or, for that, for
+// the service's libraries to pick from).
 //
 // Every service's calls were read from its own source (2026-10-14):
 // Audiobookshelf, Grimmory, Jellyfin, Navidrome, Komga, Kavita, Stump,
-// Storyteller and Calibre-Web. Two rules hold everywhere:
+// Storyteller and Calibre-Web. These rules hold everywhere:
 //   - an admin (or owner/root) account is never touched, so a mistyped
 //     username can never reset the admin's own password;
 //   - an existing account's password changes only when the caller says so
-//     (Request.AllowReset), after the admin was asked.
+//     (Request.AllowReset), after the admin was asked;
+//   - a new account can read and download, and nothing more: no uploads,
+//     edits, deletes or admin rights (owner, 2026-10-14: "by default we
+//     should be doing read only, plus download for media");
+//   - it sees every library unless the admin picked some (Person.Libraries:
+//     "need to also pick libraries available"). A reset leaves an account's
+//     libraries as they are.
 package provision
 
 import (
@@ -51,6 +58,16 @@ type Person struct {
 	// Email is asked for by the services that need one.
 	Name  string
 	Email string
+	// Libraries is what a NEW account may see: nil is every library (and,
+	// where the service has the notion, the ones added later); otherwise
+	// only these, by the ids Libraries lists. A reset never changes them.
+	Libraries []string
+}
+
+// Library is one of a service's libraries, for the admin to pick from.
+type Library struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // Outcome is what happened to the account.
@@ -82,6 +99,10 @@ var (
 	ErrResetUnsupported = errors.New("this service cannot set someone else's password")
 	// ErrUnsupported: accounts cannot be made on this service at all.
 	ErrUnsupported = errors.New("accounts cannot be created on this service from here")
+	// ErrNoLibraries: libraries were picked, and none was.
+	ErrNoLibraries = errors.New("pick at least one library")
+	// ErrLibrariesGone: none of the picked libraries is on the service now.
+	ErrLibrariesGone = errors.New("none of the picked libraries is on the service any more")
 )
 
 // ServiceError is the service saying no: its status and its own words.
@@ -128,6 +149,9 @@ type Capability struct {
 	Create bool   `json:"create"`
 	Reset  bool   `json:"reset"`
 	Email  Email  `json:"email"`
+	// Libraries: the service has libraries to pick from (Libraries). The
+	// others have one collection, so there is nothing to pick.
+	Libraries bool `json:"libraries"`
 	// Note is a sentence the forms show (for example why reset is off).
 	Note string `json:"note,omitempty"`
 }
@@ -136,6 +160,11 @@ type Capability struct {
 type Provider interface {
 	Capability() Capability
 	Ensure(ctx context.Context, hc *http.Client, admin Admin, p Person, allowReset bool) (Result, error)
+}
+
+// Librarian is a Provider whose service has libraries to pick from.
+type Librarian interface {
+	Libraries(ctx context.Context, hc *http.Client, admin Admin) ([]Library, error)
 }
 
 var providers = map[string]Provider{
@@ -161,10 +190,57 @@ func For(serviceType string) (Provider, bool) {
 func Capabilities() []Capability {
 	out := make([]Capability, 0, len(providers))
 	for _, p := range providers {
-		out = append(out, p.Capability())
+		c := p.Capability()
+		_, c.Libraries = p.(Librarian)
+		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
 	return out
+}
+
+// Libraries is a service's libraries, read with the kept admin sign-in, in
+// the service's own order; none for a service without libraries to pick.
+func Libraries(ctx context.Context, hc *http.Client, serviceType string, admin Admin) ([]Library, error) {
+	prov, ok := For(serviceType)
+	if !ok {
+		return nil, ErrUnsupported
+	}
+	lib, ok := prov.(Librarian)
+	if !ok {
+		return []Library{}, nil
+	}
+	list, err := lib.Libraries(ctx, hc, admin)
+	if err != nil {
+		return nil, err
+	}
+	if list == nil {
+		list = []Library{}
+	}
+	return list, nil
+}
+
+// picked is the ids of the libraries a new account may see, out of every
+// one the service has, in the service's order: nil when the admin picked
+// none (every library). Ids the service no longer has are dropped; when
+// none is left, ErrLibrariesGone.
+func picked(all []Library, chosen []string) ([]string, error) {
+	if chosen == nil {
+		return nil, nil
+	}
+	want := map[string]bool{}
+	for _, id := range chosen {
+		want[strings.TrimSpace(id)] = true
+	}
+	out := []string{}
+	for _, l := range all {
+		if want[l.ID] {
+			out = append(out, l.ID)
+		}
+	}
+	if len(out) == 0 {
+		return nil, ErrLibrariesGone
+	}
+	return out, nil
 }
 
 // NewHTTPClient is the client the handler uses: a bounded wait, TLS
@@ -191,6 +267,13 @@ func Ensure(ctx context.Context, hc *http.Client, serviceType string, admin Admi
 	}
 	if p.Name == "" {
 		p.Name = p.Username
+	}
+	if p.Libraries != nil {
+		if _, ok := prov.(Librarian); !ok {
+			p.Libraries = nil // one collection: nothing to pick
+		} else if len(p.Libraries) == 0 {
+			return Result{}, ErrNoLibraries
+		}
 	}
 	switch prov.Capability().Email {
 	case EmailUsername:

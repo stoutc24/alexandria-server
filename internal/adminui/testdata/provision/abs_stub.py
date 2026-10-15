@@ -2,9 +2,10 @@
 """A small Audiobookshelf for the provisioning page test. TEST-ONLY.
 
 Answers the calls internal/provision makes (POST /login, GET /api/users,
-POST /api/users, PATCH /api/users/<id>) for the admin "admin" / the
-password in ABS_ADMIN_PASSWORD, and GET /__state with what it holds, for
-run.sh to check. Listens on 127.0.0.1:$PORT. Nothing leaves this machine.
+GET /api/libraries, POST /api/users, PATCH /api/users/<id>) for the admin
+"admin" / the password in ABS_ADMIN_PASSWORD, and GET /__state with what it
+holds, for run.sh to check. Listens on 127.0.0.1:$PORT. Nothing leaves this
+machine.
 """
 import json
 import os
@@ -15,6 +16,9 @@ ADMIN_PASSWORD = os.environ["ABS_ADMIN_PASSWORD"]
 lock = threading.Lock()
 users = [{"id": "root-1", "username": "root", "type": "root"}]
 passwords = {}
+# One name carries markup, which the page must show as text.
+libraries = [{"id": "lib-books", "name": "Audiobooks", "mediaType": "book"},
+             {"id": "lib-pods", "name": "Podcasts <b>", "mediaType": "podcast"}]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -39,6 +43,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"users": users, "passwords": passwords})
             if self.path == "/api/users" and self._authed():
                 return self._send(200, {"users": users})
+            if self.path == "/api/libraries" and self._authed():
+                return self._send(200, {"libraries": libraries})
         self._send(401 if self.path.startswith("/api/") else 404, {"error": "no"})
 
     def do_POST(self):
@@ -52,8 +58,10 @@ class Handler(BaseHTTPRequestHandler):
                 if any(u["username"].lower() == body["username"].lower() for u in users):
                     return self._send(400, {"error": "Username already taken"})
                 uid = "u-%d" % len(users)
+                perms = body.get("permissions") or {}
                 users.append({"id": uid, "username": body["username"], "type": body.get("type"),
-                              "isActive": body.get("isActive")})
+                              "isActive": body.get("isActive"), "permissions": perms,
+                              "librariesAccessible": body.get("librariesAccessible")})
                 passwords[body["username"]] = body["password"]
                 return self._send(200, {"user": {"id": uid}})
         self._send(404, {"error": "no"})

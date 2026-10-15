@@ -70,9 +70,9 @@ server**.
 - **It does not phone home.** It sends nothing to the developer and needs
   no internet access once its image is downloaded. It connects only to
   your own servers, and only to create or reset an account you asked for:
-  with the Server Admin sign-in you saved for a service, it can make a
-  person's account there (or set its password) when you set up their
-  services. (Picking a Plex person for an account is done by your own
+  with the Server Admin sign-in you saved for a service, it can list that
+  server's libraries for you to pick from, and make a person's account
+  there (or set its password), when you set up their services. (Picking a Plex person for an account is done by your own
   browser or phone talking to plex.tv, not by this server.) See
   [legal/PRIVACY_POLICY.md](legal/PRIVACY_POLICY.md).
 

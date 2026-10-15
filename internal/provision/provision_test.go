@@ -211,6 +211,116 @@ func TestABSNeverTouchesAnAdmin(t *testing.T) {
 	}
 }
 
+func TestABSListsLibrariesAndGivesANewAccountThePickedOnes(t *testing.T) {
+	f, srv := absFake(t, []map[string]any{{"id": "u7", "username": "kate", "type": "user"}})
+	f.json("GET /api/libraries", 200, map[string]any{"libraries": []map[string]any{
+		{"id": "lib-a", "name": "Audiobooks", "mediaType": "book"},
+		{"id": "lib-p", "name": "Podcasts", "mediaType": "podcast"},
+	}})
+	list, err := Libraries(context.Background(), srv.Client(), "abs",
+		Admin{BaseURL: srv.URL, Username: "admin", Password: "admin-pass"})
+	if err != nil || len(list) != 2 || list[1] != (Library{ID: "lib-p", Name: "Podcasts"}) {
+		t.Fatalf("libraries: %+v %v", list, err)
+	}
+	if f.called("GET /api/libraries")[0].auth != "Bearer jwt-1" {
+		t.Fatal("listed without the admin's token")
+	}
+
+	// Picked: only those, and an id the server no longer has is dropped.
+	p := emily
+	p.Libraries = []string{"lib-p", "lib-gone"}
+	if _, err := run(t, "abs", srv, p, false); err != nil {
+		t.Fatal(err)
+	}
+	b := bodyOf(t, f.called("POST /api/users")[0])
+	if perms := b["permissions"].(map[string]any); perms["accessAllLibraries"] != false || perms["download"] != true {
+		t.Fatalf("permissions: %v", perms)
+	}
+	if libs, _ := json.Marshal(b["librariesAccessible"]); string(libs) != `["lib-p"]` {
+		t.Fatalf("libraries: %s", libs)
+	}
+
+	// Nothing picked: every library, now and later.
+	f2, srv2 := absFake(t, nil)
+	if _, err := run(t, "abs", srv2, emily, false); err != nil {
+		t.Fatal(err)
+	}
+	b = bodyOf(t, f2.called("POST /api/users")[0])
+	if _, has := b["librariesAccessible"]; has || b["permissions"].(map[string]any)["accessAllLibraries"] != true {
+		t.Fatalf("every library: %v", b)
+	}
+	if len(f2.called("GET /api/libraries")) != 0 {
+		t.Fatal("listed libraries with nothing picked")
+	}
+
+	// None of the picks is there any more: nothing is made.
+	p.Username = "newbie"
+	p.Libraries = []string{"lib-gone"}
+	if _, err := run(t, "abs", srv, p, false); !errors.Is(err, ErrLibrariesGone) {
+		t.Fatalf("gone: %v", err)
+	}
+	if n := len(f.called("POST /api/users")); n != 1 {
+		t.Fatalf("made anyway: %d creates", n)
+	}
+
+	// A reset sets the password and nothing else, picks or not.
+	p.Username = "kate"
+	p.Libraries = []string{"lib-a"}
+	if _, err := run(t, "abs", srv, p, true); err != nil {
+		t.Fatal(err)
+	}
+	if b := bodyOf(t, f.called("PATCH /api/users/u7")[0]); len(b) != 1 || b["password"] != p.Password {
+		t.Fatalf("reset body: %v", b)
+	}
+}
+
+func TestPickingNoLibraryIsRefusedBeforeAnyCall(t *testing.T) {
+	f, srv := newFake(t)
+	p := emily
+	p.Libraries = []string{}
+	for _, typ := range []string{"abs", "booklore", "jellyfin", "kavita", "navidrome", "stump"} {
+		if _, err := run(t, typ, srv, p, false); !errors.Is(err, ErrNoLibraries) {
+			t.Fatalf("%s: %v", typ, err)
+		}
+	}
+	p.Username = "emily@example.com"
+	if _, err := run(t, "komga", srv, p, false); !errors.Is(err, ErrNoLibraries) {
+		t.Fatalf("komga: %v", err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("the service was called: %+v", f.calls)
+	}
+}
+
+func TestEveryServiceSaysWhetherItHasLibrariesToPick(t *testing.T) {
+	want := map[string]bool{"abs": true, "booklore": true, "jellyfin": true, "komga": true, "kavita": true,
+		"navidrome": true, "stump": true, "storyteller": false, "calibreweb": false}
+	for _, c := range Capabilities() {
+		if c.Libraries != want[c.Type] {
+			t.Errorf("%s libraries = %v", c.Type, c.Libraries)
+		}
+	}
+	// One collection: nothing listed, nothing called.
+	f, srv := newFake(t)
+	list, err := Libraries(context.Background(), srv.Client(), "storyteller", Admin{BaseURL: srv.URL})
+	if err != nil || list == nil || len(list) != 0 || len(f.calls) != 0 {
+		t.Fatalf("storyteller: %+v %v %d calls", list, err, len(f.calls))
+	}
+	if _, err := Libraries(context.Background(), srv.Client(), "plex", Admin{BaseURL: srv.URL}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("plex: %v", err)
+	}
+}
+
+func TestListingLibrariesWithAStaleAdminPasswordIsASignInError(t *testing.T) {
+	_, srv := absFake(t, nil)
+	_, err := Libraries(context.Background(), srv.Client(), "abs",
+		Admin{BaseURL: srv.URL, Username: "admin", Password: "wrong"})
+	var s *SignInError
+	if !errors.As(err, &s) {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestABSWrongAdminPasswordIsASignInError(t *testing.T) {
 	_, srv := absFake(t, nil)
 	_, err := Ensure(context.Background(), srv.Client(), "abs",
@@ -253,6 +363,24 @@ func TestGrimmoryCreatesWithEveryLibraryAndNeedsAnEmail(t *testing.T) {
 	}
 	if _, admin := b["permissionAdmin"]; admin {
 		t.Fatal("admin permission sent")
+	}
+}
+
+func TestGrimmoryGivesANewAccountThePickedLibraries(t *testing.T) {
+	f, srv := grimmoryFake(t, nil)
+	f.json("GET /api/v1/libraries", 200, []map[string]any{{"id": 3, "name": "Books"}, {"id": 5, "name": "Comics"}})
+	list, err := Libraries(context.Background(), srv.Client(), "booklore", Admin{BaseURL: srv.URL, Username: "admin", Password: "p"})
+	if err != nil || len(list) != 2 || list[0] != (Library{ID: "3", Name: "Books"}) {
+		t.Fatalf("libraries: %+v %v", list, err)
+	}
+	p := emily
+	p.Libraries = []string{"5"}
+	if _, err := run(t, "booklore", srv, p, false); err != nil {
+		t.Fatal(err)
+	}
+	b := bodyOf(t, f.called("POST /api/v1/auth/register")[0])
+	if libs, _ := json.Marshal(b["selectedLibraries"]); string(libs) != "[5]" {
+		t.Fatalf("libraries: %s", libs)
 	}
 }
 
@@ -315,6 +443,62 @@ func TestJellyfinCreatesResetsAndSignsOut(t *testing.T) {
 	}
 }
 
+func TestJellyfinGivesANewAccountThePickedLibraries(t *testing.T) {
+	f, srv := jellyfinFake(t, nil)
+	f.json("GET /Library/MediaFolders", 200, map[string]any{"Items": []map[string]any{
+		{"Id": "f-movies", "Name": "Movies", "CollectionType": "movies"},
+		{"Id": "f-music", "Name": "Music", "CollectionType": "music"},
+	}})
+	f.json("POST /Users/New", 200, map[string]any{"Id": "n1", "Policy": map[string]any{
+		"IsAdministrator": false, "EnableAllFolders": true, "EnabledFolders": []string{},
+		"EnableContentDownloading": true, "AuthenticationProviderId": "Default", "PasswordResetProviderId": "DefaultReset",
+	}})
+	f.on("POST /Users/n1/Policy", func(w http.ResponseWriter, _ *http.Request, _ []byte) { w.WriteHeader(204) })
+
+	list, err := Libraries(context.Background(), srv.Client(), "jellyfin", Admin{BaseURL: srv.URL, Username: "admin", Password: "p"})
+	if err != nil || len(list) != 2 || list[1] != (Library{ID: "f-music", Name: "Music"}) {
+		t.Fatalf("libraries: %+v %v", list, err)
+	}
+	if q := f.called("GET /Library/MediaFolders")[0].query; q != "isHidden=false" {
+		t.Fatalf("query: %q", q)
+	}
+	if len(f.called("POST /Sessions/Logout")) != 1 {
+		t.Fatal("the listing left the admin session open")
+	}
+
+	p := emily
+	p.Libraries = []string{"f-music"}
+	res, err := run(t, "jellyfin", srv, p, false)
+	if err != nil || res.Outcome != Created || res.Note != "" {
+		t.Fatalf("%+v %v", res, err)
+	}
+	pol := bodyOf(t, f.called("POST /Users/n1/Policy")[0])
+	if pol["EnableAllFolders"] != false || pol["AuthenticationProviderId"] != "Default" || pol["EnableContentDownloading"] != true {
+		t.Fatalf("policy: %v", pol)
+	}
+	if folders, _ := json.Marshal(pol["EnabledFolders"]); string(folders) != `["f-music"]` {
+		t.Fatalf("folders: %s", folders)
+	}
+
+	// Jellyfin saying no to the policy: made, and the note says what it can see.
+	f.on("POST /Users/n1/Policy", func(w http.ResponseWriter, _ *http.Request, _ []byte) { http.Error(w, "nope", 400) })
+	p.Username = "kate"
+	res, err = run(t, "jellyfin", srv, p, false)
+	if err != nil || res.Outcome != Created || !strings.Contains(res.Note, "every library") {
+		t.Fatalf("%+v %v", res, err)
+	}
+}
+
+func TestJellyfinWithNothingPickedLeavesItsDefaults(t *testing.T) {
+	f, srv := jellyfinFake(t, nil)
+	if _, err := run(t, "jellyfin", srv, emily, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.called("POST /Users/n1/Policy")) != 0 || len(f.called("GET /Library/MediaFolders")) != 0 {
+		t.Fatal("the policy was touched with nothing picked")
+	}
+}
+
 // ---- Navidrome ------------------------------------------------------------
 
 func navidromeFake(t *testing.T, users []map[string]any, libraries bool) (*fake, *httptest.Server) {
@@ -354,6 +538,43 @@ func TestNavidromeBeforeMultipleLibrariesNeedsNone(t *testing.T) {
 	res, err := run(t, "navidrome", srv, emily, false)
 	if err != nil || res.Outcome != Created || res.Note != "" {
 		t.Fatalf("%+v %v", res, err)
+	}
+	list, err := Libraries(context.Background(), srv.Client(), "navidrome", Admin{BaseURL: srv.URL, Username: "admin", Password: "p"})
+	if err != nil || list == nil || len(list) != 0 {
+		t.Fatalf("one library lists none: %+v %v", list, err)
+	}
+	// A pick for it is moot.
+	p := emily
+	p.Username = "kate"
+	p.Libraries = []string{"1"}
+	if res, err := run(t, "navidrome", srv, p, false); err != nil || res.Outcome != Created {
+		t.Fatalf("%+v %v", res, err)
+	}
+}
+
+func TestNavidromeGivesANewAccountThePickedLibraries(t *testing.T) {
+	f, srv := navidromeFake(t, nil, true)
+	f.json("GET /api/library", 200, []map[string]any{{"id": 1, "name": "Music"}, {"id": 2, "name": "Kids"}})
+	list, err := Libraries(context.Background(), srv.Client(), "navidrome", Admin{BaseURL: srv.URL, Username: "admin", Password: "p"})
+	if err != nil || len(list) != 2 || list[1] != (Library{ID: "2", Name: "Kids"}) {
+		t.Fatalf("libraries: %+v %v", list, err)
+	}
+	p := emily
+	p.Libraries = []string{"2"}
+	if _, err := run(t, "navidrome", srv, p, false); err != nil {
+		t.Fatal(err)
+	}
+	if libs := f.called("PUT /api/user/new-1/library"); len(libs) != 1 || string(libs[0].body) != `{"libraryIds":[2]}` {
+		t.Fatalf("libraries: %+v", libs)
+	}
+	// A pick that is gone is refused before the account is made.
+	p.Username = "kate"
+	p.Libraries = []string{"9"}
+	if _, err := run(t, "navidrome", srv, p, false); !errors.Is(err, ErrLibrariesGone) {
+		t.Fatalf("gone: %v", err)
+	}
+	if n := len(f.called("POST /api/user")); n != 1 {
+		t.Fatalf("made anyway: %d", n)
 	}
 }
 
@@ -395,6 +616,35 @@ func TestKomgaUsesEmailsAndBasicAuth(t *testing.T) {
 	}
 	if _, err := run(t, "komga", srv, Person{Username: "BOSS@x.io", Password: "x"}, true); !errors.Is(err, ErrAdminAccount) {
 		t.Fatalf("admin: %v", err)
+	}
+}
+
+func TestKomgaSharesOnlyThePickedLibraries(t *testing.T) {
+	f, srv := newFake(t)
+	f.json("GET /api/v2/users", 200, []map[string]any{})
+	f.json("GET /api/v1/libraries", 200, []map[string]any{{"id": "0A1", "name": "Comics"}, {"id": "0B2", "name": "Manga"}})
+	f.json("POST /api/v2/users", 201, map[string]any{"id": "k2"})
+	list, err := Libraries(context.Background(), srv.Client(), "komga", Admin{BaseURL: srv.URL, Username: "admin", Password: "p"})
+	if err != nil || len(list) != 2 || list[0] != (Library{ID: "0A1", Name: "Comics"}) {
+		t.Fatalf("libraries: %+v %v", list, err)
+	}
+	p := emily
+	p.Username = "emily@example.com"
+	p.Libraries = []string{"0B2"}
+	if _, err := run(t, "komga", srv, p, false); err != nil {
+		t.Fatal(err)
+	}
+	b := bodyOf(t, f.called("POST /api/v2/users")[0])
+	if shared, _ := json.Marshal(b["sharedLibraries"]); string(shared) != `{"all":false,"libraryIds":["0B2"]}` {
+		t.Fatalf("shared: %s", shared)
+	}
+	// Nothing picked: no sharedLibraries, which Komga reads as every one.
+	p.Libraries = nil
+	if _, err := run(t, "komga", srv, p, false); err != nil {
+		t.Fatal(err)
+	}
+	if b := bodyOf(t, f.called("POST /api/v2/users")[1]); b["sharedLibraries"] != nil {
+		t.Fatalf("shared with nothing picked: %v", b)
 	}
 }
 
@@ -442,6 +692,27 @@ func TestKavitaInvitesThenAcceptsWithTheLoginRole(t *testing.T) {
 	}
 	if f.called("GET /api/Users")[0].query != "includePending=true" {
 		t.Fatal("pending invites are not looked at")
+	}
+}
+
+func TestKavitaInvitesWithThePickedLibraries(t *testing.T) {
+	f, srv := newFake(t)
+	f.json("POST /api/Account/login", 200, map[string]any{"token": "kv-1"})
+	f.json("GET /api/Users", 200, []map[string]any{})
+	f.json("GET /api/Library/libraries", 200, []map[string]any{{"id": 4, "name": "Manga"}, {"id": 6, "name": "Books"}})
+	f.json("POST /api/Account/invite", 200, map[string]any{"emailLink": "http://kavita/registration/confirm-email?token=t1"})
+	f.json("POST /api/Account/confirm-email", 200, map[string]any{"username": "emily"})
+	list, err := Libraries(context.Background(), srv.Client(), "kavita", Admin{BaseURL: srv.URL, Username: "admin", Password: "p"})
+	if err != nil || len(list) != 2 || list[1] != (Library{ID: "6", Name: "Books"}) {
+		t.Fatalf("libraries: %+v %v", list, err)
+	}
+	p := emily
+	p.Libraries = []string{"6"}
+	if _, err := run(t, "kavita", srv, p, false); err != nil {
+		t.Fatal(err)
+	}
+	if libs, _ := json.Marshal(bodyOf(t, f.called("POST /api/Account/invite")[0])["libraries"]); string(libs) != "[6]" {
+		t.Fatalf("libraries: %s", libs)
 	}
 }
 
@@ -522,6 +793,80 @@ func TestStumpOverGraphQL(t *testing.T) {
 	}
 }
 
+func TestStumpKeepsANewAccountOutOfTheLibrariesNotPicked(t *testing.T) {
+	f, srv := newFake(t)
+	f.json("POST /api/v2/auth/login", 200, map[string]any{"accessToken": "st-1"})
+	var mu sync.Mutex
+	var excluded []map[string]any
+	f.on("POST /api/graphql", func(w http.ResponseWriter, _ *http.Request, body []byte) {
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		q := req["query"].(string)
+		switch {
+		case strings.Contains(q, "users("):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"users": map[string]any{"nodes": []map[string]any{}}}})
+		case strings.Contains(q, "libraries("):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"libraries": map[string]any{"nodes": []map[string]any{
+				{"id": "L1", "name": "Comics", "excludedUsers": []map[string]any{}},
+				{"id": "L2", "name": "Adults", "excludedUsers": []map[string]any{{"id": "kid-1"}}},
+				{"id": "L3", "name": "Manga", "excludedUsers": []map[string]any{}},
+			}}}})
+		case strings.Contains(q, "createUser"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"createUser": map[string]any{"id": "s9"}}})
+		case strings.Contains(q, "updateLibraryExcludedUsers"):
+			mu.Lock()
+			excluded = append(excluded, req["variables"].(map[string]any))
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"updateLibraryExcludedUsers": map[string]any{"id": "x"}}})
+		default:
+			t.Errorf("unexpected query: %s", q)
+		}
+	})
+	list, err := Libraries(context.Background(), srv.Client(), "stump", Admin{BaseURL: srv.URL, Username: "admin", Password: "p"})
+	if err != nil || len(list) != 3 || list[1] != (Library{ID: "L2", Name: "Adults"}) {
+		t.Fatalf("libraries: %+v %v", list, err)
+	}
+	p := emily
+	p.Libraries = []string{"L1"}
+	res, err := run(t, "stump", srv, p, false)
+	if err != nil || res.Outcome != Created || res.Note != "" {
+		t.Fatalf("%+v %v", res, err)
+	}
+	got, _ := json.Marshal(excluded)
+	if string(got) != `[{"id":"L2","userIds":["kid-1","s9"]},{"id":"L3","userIds":["s9"]}]` {
+		t.Fatalf("exclusions: %s", got)
+	}
+}
+
+func TestStumpSaysWhichLibrariesItCouldNotHide(t *testing.T) {
+	f, srv := newFake(t)
+	f.json("POST /api/v2/auth/login", 200, map[string]any{"accessToken": "st-1"})
+	f.on("POST /api/graphql", func(w http.ResponseWriter, _ *http.Request, body []byte) {
+		var req map[string]any
+		_ = json.Unmarshal(body, &req)
+		q := req["query"].(string)
+		switch {
+		case strings.Contains(q, "users("):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"users": map[string]any{"nodes": []map[string]any{}}}})
+		case strings.Contains(q, "libraries("):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"libraries": map[string]any{"nodes": []map[string]any{
+				{"id": "L1", "name": "Comics", "excludedUsers": []map[string]any{}},
+				{"id": "L2", "name": "Adults", "excludedUsers": []map[string]any{}},
+			}}}})
+		case strings.Contains(q, "createUser"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"createUser": map[string]any{"id": "s9"}}})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"errors": []map[string]any{{"message": "Forbidden"}}})
+		}
+	})
+	p := emily
+	p.Libraries = []string{"L1"}
+	res, err := run(t, "stump", srv, p, false)
+	if err != nil || res.Outcome != Created || !strings.Contains(res.Note, "Adults") {
+		t.Fatalf("%+v %v", res, err)
+	}
+}
+
 func TestStumpGraphQLErrorsAreRefusals(t *testing.T) {
 	f, srv := newFake(t)
 	f.json("POST /api/v2/auth/login", 200, map[string]any{"accessToken": "st-1"})
@@ -564,6 +909,19 @@ func TestStorytellerInvitesAndAccepts(t *testing.T) {
 	}
 }
 
+func TestStorytellerHasOneCollectionSoAPickIsMoot(t *testing.T) {
+	f, srv := newFake(t)
+	f.json("POST /api/v2/token", 200, map[string]any{"access_token": "sty-1"})
+	f.json("GET /api/v2/users", 200, []map[string]any{})
+	f.json("POST /api/v2/invites", 200, map[string]any{"key": "k1"})
+	f.on("POST /api/v2/users", func(w http.ResponseWriter, _ *http.Request, _ []byte) { w.WriteHeader(204) })
+	p := emily
+	p.Libraries = []string{}
+	if res, err := run(t, "storyteller", srv, p, false); err != nil || res.Outcome != Created {
+		t.Fatalf("%+v %v", res, err)
+	}
+}
+
 func TestStorytellerCannotResetSomeoneElse(t *testing.T) {
 	f, srv := newFake(t)
 	f.json("POST /api/v2/token", 200, map[string]any{"access_token": "sty-1"})
@@ -585,10 +943,13 @@ const cwNewUserForm = `<form method="post">
 <select name="default_language"><option value="all" selected>Show all</option><option value="eng">English</option></select>
 <input type="checkbox" name="show_2" id="show_2" checked>
 <input type="checkbox" name="show_4" id="show_4">
+<input type="checkbox" name="Show_detail_random" id="Show_detail_random" checked>
 <input type="checkbox" name="admin_role" id="admin_role" checked>
-<input type="checkbox" name="download_role" id="download_role" checked>
-<input type="checkbox" name="upload_role" id="upload_role">
-<input type="checkbox" name="viewer_role" id="viewer_role" checked="checked">
+<input type="checkbox" name="download_role" id="download_role">
+<input type="checkbox" name="upload_role" id="upload_role" checked>
+<input type="checkbox" name="edit_role" id="edit_role" checked="checked">
+<input type="checkbox" name="delete_role" id="delete_role" checked>
+<input type="checkbox" name="viewer_role" id="viewer_role">
 </form>`
 
 func calibreWebFake(t *testing.T, existing []map[string]any) (*fake, *httptest.Server) {
@@ -637,7 +998,11 @@ func calibreWebFake(t *testing.T, existing []map[string]any) (*fake, *httptest.S
 	return f, srv
 }
 
-func TestCalibreWebCreatesThroughItsFormWithTheServersDefaults(t *testing.T) {
+// The server's own sidebar and language, but read-and-download whatever its
+// defaults for new users say: here they tick admin, uploads, edits and
+// deletes, and leave downloads and the viewer off (owner, 2026-10-14: "read
+// only, plus download for media").
+func TestCalibreWebCreatesThroughItsFormAsAReaderWhoCanDownload(t *testing.T) {
 	f, srv := calibreWebFake(t, []map[string]any{{"id": 1, "name": "admin", "role": 1}})
 	res, err := run(t, "calibreweb", srv, emily, false)
 	if err != nil || res.Outcome != Created {
@@ -650,11 +1015,21 @@ func TestCalibreWebCreatesThroughItsFormWithTheServersDefaults(t *testing.T) {
 	if form.Get("locale") != "en" || form.Get("default_language") != "all" {
 		t.Fatalf("defaults: %v", form)
 	}
-	if form.Get("show_2") != "on" || form.Has("show_4") || form.Get("download_role") != "on" || form.Get("viewer_role") != "on" {
-		t.Fatalf("ticks: %v", form)
+	if form.Get("show_2") != "on" || form.Has("show_4") {
+		t.Fatalf("sidebar: %v", form)
 	}
-	if form.Has("admin_role") || form.Has("upload_role") {
-		t.Fatalf("admin (or an unticked role) sent: %v", form)
+	if form.Get("download_role") != "on" || form.Get("viewer_role") != "on" {
+		t.Fatalf("read and download not given: %v", form)
+	}
+	for _, role := range []string{"admin_role", "upload_role", "edit_role", "delete_role", "passwd_role", "edit_shelf_role"} {
+		if form.Has(role) {
+			t.Fatalf("%s sent: %v", role, form)
+		}
+	}
+	for k := range form {
+		if strings.HasSuffix(k, "_role") && k != "download_role" && k != "viewer_role" {
+			t.Fatalf("another role sent: %s", k)
+		}
 	}
 }
 

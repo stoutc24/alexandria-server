@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -27,12 +28,14 @@ type ProvisionHandler struct {
 	admins   *repository.ServiceAdminRepository
 	profiles *repository.ProfileRepository
 	client   *http.Client
-	// ensure is provision.Ensure; tests swap it.
-	ensure func(ctx context.Context, hc *http.Client, serviceType string, admin provision.Admin, p provision.Person, allowReset bool) (provision.Result, error)
+	// ensure is provision.Ensure, libraries provision.Libraries; tests swap them.
+	ensure    func(ctx context.Context, hc *http.Client, serviceType string, admin provision.Admin, p provision.Person, allowReset bool) (provision.Result, error)
+	libraries func(ctx context.Context, hc *http.Client, serviceType string, admin provision.Admin) ([]provision.Library, error)
 }
 
 func NewProvisionHandler(admins *repository.ServiceAdminRepository, profiles *repository.ProfileRepository) *ProvisionHandler {
-	return &ProvisionHandler{admins: admins, profiles: profiles, client: provision.NewHTTPClient(), ensure: provision.Ensure}
+	return &ProvisionHandler{admins: admins, profiles: profiles, client: provision.NewHTTPClient(),
+		ensure: provision.Ensure, libraries: provision.Libraries}
 }
 
 type provisionService struct {
@@ -76,13 +79,16 @@ type provisionBody struct {
 	// AllowReset: the admin was told the account exists and said to
 	// change its password.
 	AllowReset bool `json:"allowReset"`
+	// Libraries: the ids (from Libraries) a NEW account may see; absent or
+	// null is every library. A reset leaves them alone.
+	Libraries []string `json:"libraries"`
 }
 
 // Provision makes the person's account on the service, or (with
 // allowReset) sets its password. Refusals carry a reason the forms act on:
 // account-exists (ask, then send allowReset), admin-account, email-required,
-// email-username, reset-unsupported, no-service-admin, and the service's own
-// answer.
+// email-username, reset-unsupported, no-service-admin, no-libraries,
+// libraries-gone, and the service's own answer.
 func (h *ProvisionHandler) Provision(c *fiber.Ctx) error {
 	var in provisionBody
 	if err := c.BodyParser(&in); err != nil {
@@ -102,20 +108,12 @@ func (h *ProvisionHandler) Provision(c *fiber.Ctx) error {
 	if strings.TrimSpace(in.Username) == "" || in.Password == "" {
 		return refuse(c, fiber.StatusBadRequest, "bad-request", "a username and a password are needed")
 	}
-	admin, err := h.admins.Open(in.Type)
-	switch {
-	case errors.Is(err, repository.ErrVaultOff):
-		return refuse(c, fiber.StatusServiceUnavailable, "no-secrets-key", err.Error())
-	case errors.Is(err, repository.ErrServiceAdminNotFound):
-		return refuse(c, fiber.StatusConflict, "no-service-admin",
-			"save your own "+name+" admin sign-in under Server Admin first")
-	case err != nil:
-		return serverError(c, "could not read the sign-in", err)
-	case admin.Unreadable:
-		return refuse(c, fiber.StatusConflict, "service-admin-unreadable",
-			"the saved "+name+" admin sign-in was sealed with another secrets key; save it again")
+	admin, ok, err := h.openAdmin(c, in.Type, name)
+	if !ok {
+		return err
 	}
-	person := provision.Person{Username: in.Username, Password: in.Password, Name: in.Name, Email: in.Email}
+	person := provision.Person{Username: in.Username, Password: in.Password, Name: in.Name, Email: in.Email,
+		Libraries: in.Libraries}
 	if strings.TrimSpace(person.Name) == "" {
 		person.Name = p.Name
 	}
@@ -128,9 +126,56 @@ func (h *ProvisionHandler) Provision(c *fiber.Ctx) error {
 	if err != nil {
 		return h.refusal(c, name, in.Username, err)
 	}
-	log.Printf("provision: %s account %q %s on %s (%s)%s", name, strings.TrimSpace(in.Username),
-		res.Outcome, hostOf(admin.BaseURL), p.Name, callerForLog(c))
+	picks := ""
+	if in.Libraries != nil && res.Outcome == provision.Created {
+		picks = fmt.Sprintf(" with %d picked libraries", len(in.Libraries))
+	}
+	log.Printf("provision: %s account %q %s on %s (%s)%s%s", name, strings.TrimSpace(in.Username),
+		res.Outcome, hostOf(admin.BaseURL), p.Name, picks, callerForLog(c))
 	return c.JSON(fiber.Map{"outcome": res.Outcome, "note": res.Note, "service": name, "host": hostOf(admin.BaseURL)})
+}
+
+// Libraries lists a service's libraries with its kept Server Admin
+// sign-in, for the forms to pick the ones a new account may see. Only ids
+// and names cross it.
+func (h *ProvisionHandler) Libraries(c *fiber.Ctx) error {
+	typ := c.Params("type")
+	name := repository.ServiceAdminTypes[typ]
+	if _, ok := provision.For(typ); !ok || name == "" {
+		return refuse(c, fiber.StatusBadRequest, "not-supported", provision.ErrUnsupported.Error())
+	}
+	admin, ok, err := h.openAdmin(c, typ, name)
+	if !ok {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(c.UserContext(), 30*time.Second)
+	defer cancel()
+	list, err := h.libraries(ctx, h.client, typ,
+		provision.Admin{BaseURL: admin.BaseURL, Username: admin.Username, Password: admin.Password})
+	if err != nil {
+		return h.refusal(c, name, "", err)
+	}
+	return c.JSON(fiber.Map{"service": name, "host": hostOf(admin.BaseURL), "libraries": list})
+}
+
+// openAdmin is the kept Server Admin sign-in for a service, opened. ok is
+// false when there is none to use: the refusal is then sent already, and
+// err is what sending it gave (nil, usually).
+func (h *ProvisionHandler) openAdmin(c *fiber.Ctx, typ, name string) (admin *repository.OpenedServiceAdmin, ok bool, err error) {
+	admin, err = h.admins.Open(typ)
+	switch {
+	case errors.Is(err, repository.ErrVaultOff):
+		return nil, false, refuse(c, fiber.StatusServiceUnavailable, "no-secrets-key", err.Error())
+	case errors.Is(err, repository.ErrServiceAdminNotFound):
+		return nil, false, refuse(c, fiber.StatusConflict, "no-service-admin",
+			"save your own "+name+" admin sign-in under Server Admin first")
+	case err != nil:
+		return nil, false, serverError(c, "could not read the sign-in", err)
+	case admin.Unreadable:
+		return nil, false, refuse(c, fiber.StatusConflict, "service-admin-unreadable",
+			"the saved "+name+" admin sign-in was sealed with another secrets key; save it again")
+	}
+	return admin, true, nil
 }
 
 func (h *ProvisionHandler) refusal(c *fiber.Ctx, name, username string, err error) error {
@@ -153,6 +198,11 @@ func (h *ProvisionHandler) refusal(c *fiber.Ctx, name, username string, err erro
 			strings.TrimSpace(username)+" already has an account on "+name+", and "+name+" can't set someone else's password; use theirs")
 	case errors.Is(err, provision.ErrUnsupported):
 		return refuse(c, fiber.StatusBadRequest, "not-supported", err.Error())
+	case errors.Is(err, provision.ErrNoLibraries):
+		return refuse(c, fiber.StatusBadRequest, "no-libraries", "pick at least one "+name+" library")
+	case errors.Is(err, provision.ErrLibrariesGone):
+		return refuse(c, fiber.StatusConflict, "libraries-gone",
+			"none of the picked libraries is on "+name+" any more; open the list again")
 	case errors.As(err, &si):
 		log.Printf("provision: the %s admin sign-in failed: %v", name, err)
 		return refuse(c, fiber.StatusBadGateway, "admin-sign-in-failed",

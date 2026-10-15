@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -15,6 +17,7 @@ import (
 //   - POST /api/Account/login {username, password, apiKey} → {token};
 //   - GET /api/Users?includePending=true (admin) → [{id, username, email,
 //     roles}];
+//   - GET /api/Library/libraries → [{id, name}];
 //   - POST /api/Account/invite (admin) {email, roles, libraries,
 //     ageRestriction} → {emailLink, emailSent}. The link carries the
 //     token. Without a usable email address (or mail set up) Kavita sends
@@ -32,19 +35,50 @@ func (kavitaProvider) Capability() Capability {
 	return Capability{Type: "kavita", Create: true, Reset: true, Email: EmailOptional}
 }
 
-func (kavitaProvider) Ensure(ctx context.Context, hc *http.Client, admin Admin, p Person, allowReset bool) (Result, error) {
+func kavitaSignIn(ctx context.Context, hc *http.Client, admin Admin) (*client, error) {
 	c := newClient(hc, admin.BaseURL)
 	var login struct {
 		Token string `json:"token"`
 	}
 	if err := c.call(ctx, http.MethodPost, "/api/Account/login",
 		map[string]string{"username": admin.Username, "password": admin.Password, "apiKey": ""}, &login); err != nil {
-		return Result{}, signIn(err)
+		return nil, signIn(err)
 	}
 	if login.Token == "" {
-		return Result{}, &SignInError{Err: errors.New("Kavita gave no token")}
+		return nil, &SignInError{Err: errors.New("Kavita gave no token")}
 	}
 	c.header.Set("Authorization", "Bearer "+login.Token)
+	return c, nil
+}
+
+func kavitaLibraries(ctx context.Context, c *client) ([]Library, error) {
+	var libraries []struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := c.call(ctx, http.MethodGet, "/api/Library/libraries", nil, &libraries); err != nil {
+		return nil, err
+	}
+	out := make([]Library, 0, len(libraries))
+	for _, l := range libraries {
+		out = append(out, Library{ID: strconv.Itoa(l.ID), Name: l.Name})
+	}
+	return out, nil
+}
+
+func (kavitaProvider) Libraries(ctx context.Context, hc *http.Client, admin Admin) ([]Library, error) {
+	c, err := kavitaSignIn(ctx, hc, admin)
+	if err != nil {
+		return nil, err
+	}
+	return kavitaLibraries(ctx, c)
+}
+
+func (kavitaProvider) Ensure(ctx context.Context, hc *http.Client, admin Admin, p Person, allowReset bool) (Result, error) {
+	c, err := kavitaSignIn(ctx, hc, admin)
+	if err != nil {
+		return Result{}, err
+	}
 
 	var users []struct {
 		ID       int      `json:"id"`
@@ -75,15 +109,22 @@ func (kavitaProvider) Ensure(ctx context.Context, hc *http.Client, admin Admin, 
 		return Result{Outcome: Reset}, nil
 	}
 
-	var libraries []struct {
-		ID int `json:"id"`
-	}
-	if err := c.call(ctx, http.MethodGet, "/api/Library/libraries", nil, &libraries); err != nil {
+	// The picked libraries, else every one: Kavita gives an invite only
+	// those it names.
+	all, err := kavitaLibraries(ctx, c)
+	if err != nil {
 		return Result{}, err
 	}
-	ids := make([]int, 0, len(libraries))
-	for _, l := range libraries {
-		ids = append(ids, l.ID)
+	chosen, err := picked(all, p.Libraries)
+	if err != nil {
+		return Result{}, err
+	}
+	ids := []int{}
+	for _, l := range all {
+		if chosen == nil || slices.Contains(chosen, l.ID) {
+			id, _ := strconv.Atoi(l.ID)
+			ids = append(ids, id)
+		}
 	}
 	email := p.Email
 	if email == "" {

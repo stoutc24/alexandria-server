@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 )
 
@@ -18,7 +19,11 @@ import (
 //     createUser(input: {username, password, permissions}) needs
 //     MANAGE_USERS; updateUser(id, input) takes the whole permission list
 //     (and age restriction and session cap), so those are sent back as
-//     they are, with the new password.
+//     they are, with the new password;
+//     libraries(pagination) { nodes { id name excludedUsers { id } } };
+//     a person sees every library they are not kept out of, and
+//     updateLibraryExcludedUsers(id, userIds) REPLACES a library's list
+//     (MANAGE_LIBRARY and READ_USERS; never the owner or oneself).
 type stumpProvider struct{}
 
 func (stumpProvider) Capability() Capability {
@@ -37,19 +42,69 @@ type stumpUser struct {
 	} `json:"ageRestriction"`
 }
 
-func (stumpProvider) Ensure(ctx context.Context, hc *http.Client, admin Admin, p Person, allowReset bool) (Result, error) {
+func stumpSignIn(ctx context.Context, hc *http.Client, admin Admin) (*client, error) {
 	c := newClient(hc, admin.BaseURL)
 	var login struct {
 		AccessToken string `json:"accessToken"`
 	}
 	if err := c.call(ctx, http.MethodPost, "/api/v2/auth/login?generate_token=true&create_session=false",
 		map[string]string{"username": admin.Username, "password": admin.Password}, &login); err != nil {
-		return Result{}, signIn(err)
+		return nil, signIn(err)
 	}
 	if login.AccessToken == "" {
-		return Result{}, &SignInError{Err: errors.New("Stump gave no token")}
+		return nil, &SignInError{Err: errors.New("Stump gave no token")}
 	}
 	c.header.Set("Authorization", "Bearer "+login.AccessToken)
+	return c, nil
+}
+
+// stumpLibrary is a library and who is kept out of it.
+type stumpLibrary struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	ExcludedUsers []struct {
+		ID string `json:"id"`
+	} `json:"excludedUsers"`
+}
+
+func stumpLibraries(ctx context.Context, c *client) ([]stumpLibrary, error) {
+	var out struct {
+		Libraries struct {
+			Nodes []stumpLibrary `json:"nodes"`
+		} `json:"libraries"`
+	}
+	if err := stumpQuery(ctx, c, `query { libraries(pagination: {offset: {page: 1, pageSize: 1000, zeroBased: false}}) {
+		nodes { id name excludedUsers { id } } } }`, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Libraries.Nodes, nil
+}
+
+func stumpLibraryList(libs []stumpLibrary) []Library {
+	out := make([]Library, 0, len(libs))
+	for _, l := range libs {
+		out = append(out, Library{ID: l.ID, Name: l.Name})
+	}
+	return out
+}
+
+func (stumpProvider) Libraries(ctx context.Context, hc *http.Client, admin Admin) ([]Library, error) {
+	c, err := stumpSignIn(ctx, hc, admin)
+	if err != nil {
+		return nil, err
+	}
+	libs, err := stumpLibraries(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return stumpLibraryList(libs), nil
+}
+
+func (stumpProvider) Ensure(ctx context.Context, hc *http.Client, admin Admin, p Person, allowReset bool) (Result, error) {
+	c, err := stumpSignIn(ctx, hc, admin)
+	if err != nil {
+		return Result{}, err
+	}
 
 	var list struct {
 		Users struct {
@@ -92,13 +147,58 @@ func (stumpProvider) Ensure(ctx context.Context, hc *http.Client, admin Admin, p
 		return Result{Outcome: Reset}, nil
 	}
 
+	// Stump shows a person every library they are not kept out of: the
+	// ones not picked are found (and the pick checked) before anything is
+	// made.
+	var hide []stumpLibrary
+	if p.Libraries != nil {
+		libs, err := stumpLibraries(ctx, c)
+		if err != nil {
+			return Result{}, err
+		}
+		chosen, err := picked(stumpLibraryList(libs), p.Libraries)
+		if err != nil {
+			return Result{}, err
+		}
+		for _, l := range libs {
+			if !slices.Contains(chosen, l.ID) {
+				hide = append(hide, l)
+			}
+		}
+	}
+	var made struct {
+		CreateUser struct {
+			ID string `json:"id"`
+		} `json:"createUser"`
+	}
 	if err := stumpQuery(ctx, c, `mutation($input: CreateUserInput!) { createUser(input: $input) { id } }`,
 		map[string]any{"input": map[string]any{
 			"username":    p.Username,
 			"password":    p.Password,
 			"permissions": []string{"DOWNLOAD_FILE", "CHANGE_PASSWORD", "ACCESS_KOREADER_SYNC"},
-		}}, nil); err != nil {
+		}}, &made); err != nil {
 		return Result{}, err
+	}
+	// Each library's whole list of who is kept out goes back, with them on it.
+	var missed []string
+	for _, l := range hide {
+		ids := []string{}
+		for _, u := range l.ExcludedUsers {
+			ids = append(ids, u.ID)
+		}
+		err := errors.New("Stump did not say which account it made")
+		if made.CreateUser.ID != "" {
+			err = stumpQuery(ctx, c, `mutation($id: ID!, $userIds: [String!]!) { updateLibraryExcludedUsers(id: $id, userIds: $userIds) { id } }`,
+				map[string]any{"id": l.ID, "userIds": append(ids, made.CreateUser.ID)}, nil)
+		}
+		if err != nil {
+			missed = append(missed, l.Name)
+		}
+	}
+	if len(missed) > 0 {
+		return Result{Outcome: Created,
+			Note: "The account was made, but Stump did not hide " + strings.Join(missed, ", ") +
+				" from it: it can see them until you change that in Stump."}, nil
 	}
 	return Result{Outcome: Created}, nil
 }

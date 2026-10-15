@@ -5,8 +5,11 @@
 // server, which calls run.sh's small Audiobookshelf.
 //
 // Emily gets an Audiobookshelf service with the "create this account"
-// tick: her ABS account is made. Then her service is edited with a new
-// password and the tick: the page asks, and her ABS password changes.
+// tick, and ABS's libraries listed under it: one is unticked, and her ABS
+// account is made seeing only the other. Then her service is edited with a
+// new password and the tick: the page asks (her libraries stay as they
+// are), and her ABS password changes. Noah's account is refused with no
+// library ticked, then made with all of them ticked: every library.
 (function () {
   "use strict";
   var CFG = window.__FLOW__;
@@ -82,6 +85,23 @@
     $("sf-kind").dispatchEvent(new Event("change", { bubbles: true }));
     ok("P6 back for a password", visible($("sf-prov")), "hidden");
 
+    step = "libraries";
+    var boxes = await waitFor("ABS's libraries under the tick", function () {
+      var b = $("sf-prov-libs-list").querySelectorAll("input[data-lib]");
+      return b.length === 2 ? b : null;
+    });
+    ok("L1 every library listed, all ticked", boxes[0].checked && boxes[1].checked &&
+       boxes[0].getAttribute("data-lib") === "lib-books", boxes.length);
+    var listText = $("sf-prov-libs-list").textContent;
+    ok("L2 a library's name is text, never markup",
+       listText.indexOf("Podcasts <b>") >= 0 && !$("sf-prov-libs-list").querySelector("b"), listText);
+    $("sf-prov-on").click();
+    ok("L3 unticking the account box hides the libraries", !visible($("sf-prov-libs")), "still shown");
+    $("sf-prov-on").click();
+    boxes = $("sf-prov-libs-list").querySelectorAll("input[data-lib]");
+    ok("L4 ticked again, they are back", visible($("sf-prov-libs")) && boxes.length === 2, boxes.length);
+    boxes[1].click();
+
     step = "create";
     press(act("save"));
     await waitFor("the created toast", function () { return /Account created on Audiobookshelf/.test(toastText()); });
@@ -101,10 +121,17 @@
     ok("P10 not ticked on an edit", !$("sf-prov-on").checked, "ticked");
     $("sf-pass").value = CFG.secondPassword;
     $("sf-prov-on").click();
+    var editBoxes = await waitFor("the libraries on the edit", function () {
+      var b = $("sf-prov-libs-list").querySelectorAll("input[data-lib]");
+      return b.length === 2 ? b : null;
+    });
+    editBoxes[0].click();
     press(act("save"));
     await waitFor("the reset toast", function () { return /Password changed on Audiobookshelf/.test(toastText()); });
     ok("P11 asked once, naming the account and the service",
        asked.length === 1 && /emily already has an account on Audiobookshelf/.test(asked[0]), asked.join(" | "));
+    ok("L5 the question says her libraries stay as they are",
+       /libraries stay as they are/.test(asked[0] || ""), asked[0]);
     await checkpoint("reset");
 
     step = "admin";
@@ -121,6 +148,28 @@
     ok("P12 an admin account is refused, the form left open", !!$("sf-type"), "form closed");
     ok("P13 no second question", asked.length === 1, asked.join(" | "));
     await checkpoint("admin");
+
+    step = "none-ticked";
+    $("sf-user").value = "noah";
+    $("sf-pass").value = "noah-pass-1";
+    var noah = await waitFor("the libraries for Noah", function () {
+      var b = $("sf-prov-libs-list").querySelectorAll("input[data-lib]");
+      return b.length === 2 ? b : null;
+    });
+    noah[0].click();
+    noah[1].click();
+    press(act("save"));
+    await waitFor("the no-library refusal", function () { return /at least one library/.test(toastText()); });
+    ok("L6 no library ticked: refused on the page, the form left open", !!$("sf-type"), "form closed");
+    await checkpoint("none");
+
+    step = "all-ticked";
+    noah[0].click();
+    noah[1].click();
+    press(act("save"));
+    await waitFor("Noah's created toast", function () { return /Account created on Audiobookshelf/.test(toastText()); });
+    ok("L7 all ticked: made", true, "");
+    await checkpoint("all");
   }
 
   document.addEventListener("DOMContentLoaded", function () {
