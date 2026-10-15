@@ -909,6 +909,29 @@ func TestStorytellerInvitesAndAccepts(t *testing.T) {
 	}
 }
 
+// The owner's Storyteller (2026-10-14) sends its flags as SQLite's 1 and 0:
+// reading them as true/false failed every account ("cannot unmarshal number
+// into … permissions.bookCreate of type bool").
+func TestStorytellerReadsFlagsSentAsNumbers(t *testing.T) {
+	f, srv := newFake(t)
+	f.json("POST /api/v2/token", 200, map[string]any{"access_token": "sty-1"})
+	f.json("GET /api/v2/users", 200, []map[string]any{
+		{"id": 1, "username": "boss", "email": "b@x.io", "permissions": map[string]any{"userCreate": 1, "bookRead": 1}},
+		{"id": 2, "username": "reader", "email": "r@x.io", "permissions": map[string]any{"userCreate": 0, "bookRead": 1}},
+	})
+	f.json("POST /api/v2/invites", 200, map[string]any{"email": emily.Email, "key": "k9"})
+	f.on("POST /api/v2/users", func(w http.ResponseWriter, _ *http.Request, _ []byte) { w.WriteHeader(204) })
+	if res, err := run(t, "storyteller", srv, emily, false); err != nil || res.Outcome != Created {
+		t.Fatalf("a new account: %+v %v", res, err)
+	}
+	if _, err := run(t, "storyteller", srv, Person{Username: "boss", Password: "x"}, true); !errors.Is(err, ErrAdminAccount) {
+		t.Fatalf("an admin sent as 1: %v", err)
+	}
+	if _, err := run(t, "storyteller", srv, Person{Username: "reader", Password: "x"}, true); !errors.Is(err, ErrResetUnsupported) {
+		t.Fatalf("a reader sent as 0: %v", err)
+	}
+}
+
 func TestStorytellerHasOneCollectionSoAPickIsMoot(t *testing.T) {
 	f, srv := newFake(t)
 	f.json("POST /api/v2/token", 200, map[string]any{"access_token": "sty-1"})

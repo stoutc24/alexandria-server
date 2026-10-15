@@ -351,7 +351,11 @@ func (kavitaProvider) removeTestAccounts(ctx context.Context, hc *http.Client, a
 		if !isTestAccount(u.Username, prefix) || hasRole(u.Roles, "Admin") {
 			continue
 		}
-		if err := c.call(ctx, http.MethodDelete, fmt.Sprintf("/api/Users/delete-user?userId=%d", u.ID), nil, nil); err != nil {
+		// Kavita's delete takes userId today and took username before
+		// (the owner's answered 400, "One or more validation errors
+		// occurred", to userId alone): both go, each version reads its own.
+		if err := c.call(ctx, http.MethodDelete, fmt.Sprintf("/api/Users/delete-user?userId=%d&username=%s",
+			u.ID, url.QueryEscape(u.Username)), nil, nil); err != nil {
 			return removed, err
 		}
 		removed = append(removed, u.Username)
@@ -454,10 +458,10 @@ func (storytellerProvider) removeTestAccounts(ctx context.Context, hc *http.Clie
 		return nil, err
 	}
 	var users []struct {
-		ID          any             `json:"id"`
-		Username    string          `json:"username"`
-		Email       string          `json:"email"`
-		Permissions map[string]bool `json:"permissions"`
+		ID          any            `json:"id"`
+		Username    string         `json:"username"`
+		Email       string         `json:"email"`
+		Permissions map[string]any `json:"permissions"` // true/false or 1/0
 	}
 	if err := c.call(ctx, http.MethodGet, "/api/v2/users", nil, &users); err != nil {
 		return nil, err
@@ -469,7 +473,8 @@ func (storytellerProvider) removeTestAccounts(ctx context.Context, hc *http.Clie
 		if name == "" {
 			name = u.Email
 		}
-		if !isTestAccount(name, prefix) || u.Permissions["userCreate"] || u.Permissions["settingsUpdate"] {
+		if !isTestAccount(name, prefix) ||
+			truthy(u.Permissions["userCreate"]) || truthy(u.Permissions["settingsUpdate"]) {
 			continue
 		}
 		if err := c.call(ctx, http.MethodDelete, "/api/v2/users/"+url.PathEscape(fmt.Sprint(u.ID)), nil, nil); err != nil {

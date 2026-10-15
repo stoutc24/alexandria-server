@@ -287,7 +287,9 @@ func TestKavitaDeletesOnlyTestUsersById(t *testing.T) {
 	})
 	f.on("DELETE /api/Users/delete-user", noContent)
 	removeOn(t, "kavita", srv)
-	expectDeletes(t, f, "/api/Users/delete-user?userId=11")
+	// The owner's Kavita answered 400 to userId alone (an older one reads
+	// username): both go.
+	expectDeletes(t, f, "/api/Users/delete-user?userId=11&username="+testA)
 }
 
 func TestNavidromeDeletesOnlyTestUsers(t *testing.T) {
@@ -335,10 +337,12 @@ func TestStorytellerDeletesTestUsersAndUnacceptedTestInvites(t *testing.T) {
 	f, srv := newFake(t)
 	f.json("POST /api/v2/token", 200, map[string]any{"access_token": "tok"})
 	f.json("GET /api/v2/users", 200, []map[string]any{
-		{"id": "s1", "username": testA, "email": testA + "@selftest.invalid", "permissions": map[string]bool{"bookRead": true}},
-		{"id": "s2", "username": "", "email": testB + "@selftest.invalid", "permissions": map[string]bool{}},
-		{"id": "s3", "username": testCC, "email": "x@y.z", "permissions": map[string]bool{"userCreate": true}},
-		{"id": "s4", "username": "emily", "email": "emily@example.com", "permissions": map[string]bool{}},
+		// Flags as true/false, and as SQLite's 1/0 (the owner's Storyteller).
+		{"id": "s1", "username": testA, "email": testA + "@selftest.invalid", "permissions": map[string]any{"bookRead": 1, "userCreate": 0}},
+		{"id": "s2", "username": "", "email": testB + "@selftest.invalid", "permissions": map[string]any{}},
+		{"id": "s3", "username": testCC, "email": "x@y.z", "permissions": map[string]any{"userCreate": 1}},
+		{"id": "s4", "username": "emily", "email": "emily@example.com", "permissions": map[string]any{"bookRead": true}},
+		{"id": "s5", "username": SelfTestPrefix + "dddddd", "email": "d@y.z", "permissions": map[string]any{"settingsUpdate": true}},
 	})
 	f.on("DELETE /api/v2/users/s1", noContent)
 	f.on("DELETE /api/v2/users/s2", noContent)

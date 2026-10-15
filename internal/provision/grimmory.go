@@ -135,7 +135,18 @@ func (grimmoryProvider) Ensure(ctx context.Context, hc *http.Client, admin Admin
 		Note: "Grimmory's own website asks for a new password the first time this account signs in there."}, nil
 }
 
+// truthy reads a permission flag: JSON true, or a non-zero number —
+// Storyteller keeps its flags in SQLite and sends them as 1 and 0 (owner's
+// server, 2026-10-14: "cannot unmarshal number into … permissions.bookCreate
+// of type bool").
 func truthy(v any) bool {
-	b, ok := v.(bool)
-	return ok && b
+	switch x := v.(type) {
+	case bool:
+		return x
+	case float64:
+		return x != 0
+	case string:
+		return x == "true" || x == "1"
+	}
+	return false
 }

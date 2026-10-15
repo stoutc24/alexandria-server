@@ -40,10 +40,11 @@ func (storytellerProvider) Ensure(ctx context.Context, hc *http.Client, admin Ad
 	}
 	c.header.Set("Authorization", "Bearer "+login.AccessToken)
 
+	// Its flags arrive as true/false or as 1/0 (SQLite), by version.
 	var users []struct {
-		Username    string          `json:"username"`
-		Email       string          `json:"email"`
-		Permissions map[string]bool `json:"permissions"`
+		Username    string         `json:"username"`
+		Email       string         `json:"email"`
+		Permissions map[string]any `json:"permissions"`
 	}
 	if err := c.call(ctx, http.MethodGet, "/api/v2/users", nil, &users); err != nil {
 		return Result{}, err
@@ -53,7 +54,7 @@ func (storytellerProvider) Ensure(ctx context.Context, hc *http.Client, admin Ad
 			(p.Email == "" || !strings.EqualFold(u.Email, p.Email)) {
 			continue
 		}
-		if u.Permissions["userCreate"] || u.Permissions["settingsUpdate"] {
+		if truthy(u.Permissions["userCreate"]) || truthy(u.Permissions["settingsUpdate"]) {
 			return Result{}, ErrAdminAccount
 		}
 		return Result{}, ErrResetUnsupported
