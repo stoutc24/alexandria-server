@@ -250,6 +250,7 @@ var wantRoutes = []string{
 	"POST /api/v1/admin/profiles/:id/invite",
 	"POST /api/v1/admin/profiles/:id/provision",
 	"POST /api/v1/admin/profiles/:id/services",
+	"POST /api/v1/admin/provision/:type/selftest",
 	"POST /api/v1/admin/service-admins",
 	"POST /api/v1/admin/service-admins/open",
 	"POST /api/v1/catalog/sync",

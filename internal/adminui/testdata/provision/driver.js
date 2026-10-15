@@ -170,6 +170,25 @@
     await waitFor("Noah's created toast", function () { return /Account created on Audiobookshelf/.test(toastText()); });
     ok("L7 all ticked: made", true, "");
     await checkpoint("all");
+
+    // "Test accounts" on the kept ABS sign-in: an old test account deleted,
+    // a new one made, signed in as and deleted.
+    step = "selftest";
+    press(document.querySelector('#areas [data-area="admin"]'));
+    var test = await waitFor("the Test accounts button", function () {
+      return document.querySelector('#svc-admins [data-selftest="abs"]');
+    });
+    press(test);
+    var result = await waitFor("the test's result", function () {
+      var r = document.querySelector("#svc-admins .selftest strong");
+      return r ? r.parentNode : null;
+    }, 30000);
+    ok("T1 the test passes on ABS", /New accounts work here/.test(result.textContent), result.textContent);
+    ok("T2 four steps, all ticked", result.querySelectorAll("li.ok").length === 4 &&
+       !result.querySelector("li.bad"), result.textContent);
+    ok("T3 the old test account is named as cleared",
+       /alexandria-selftest-old111/.test(result.textContent), result.textContent);
+    await checkpoint("selftest");
   }
 
   document.addEventListener("DOMContentLoaded", function () {

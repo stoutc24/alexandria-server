@@ -190,6 +190,18 @@ else
   flunk "the page reached the all checkpoint"
 fi
 
+if reached selftest; then
+  curl -fsS "$abs/__state" >"$work/state6.json"
+  check "ABS: no test account left, the people and root untouched" \
+    jq -e '(.users | map(select(.username | startswith("alexandria-selftest-"))) | length == 0) and
+      (.users | map(.username) | sort == ["emily", "noah", "root"])' "$work/state6.json"
+  check "the server log has the test's steps" \
+    grep -q 'provision: test accounts on Audiobookshelf .*cleanup ok; create ok; sign-in ok; remove ok' "$work/server.log"
+  go_on selftest
+else
+  flunk "the page reached the selftest checkpoint"
+fi
+
 for _ in $(seq 1 600); do [ -e "$work/report.json" ] && break; sleep 0.1; done
 if [ -e "$work/report.json" ]; then
   jq -r '.checks[] | (if .ok then "PASS page: " else "FAIL page: " end) + .name +

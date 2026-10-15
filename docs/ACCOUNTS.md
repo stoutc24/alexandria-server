@@ -249,6 +249,7 @@ two-step on.
 | `PUT /admin/profiles/:id/services/order` `{ids}` | Every id once, first to last |
 | `GET /admin/provision` | What this server can do on each service with the Server Admin sign-ins it keeps: `{available, services: [{type, name, create, reset, email, libraries, note?, serverAdmin, host?}]}`. `email` is `optional`, `required` or `username` (Komga signs in with one); `libraries`: the service has libraries to pick (all but Storyteller and Calibre-Web). No secret |
 | `GET /admin/provision/:type/libraries` | That service's libraries, read with the kept Server Admin sign-in, for the forms to pick from: `{libraries: [{id, name}], service, host}` (none on a server with one). The same refusals as below for the sign-in and the service. An account's own admin sign-in needs `full` |
+| `POST /admin/provision/:type/selftest` | "Test accounts" (below): with the kept Server Admin sign-in, delete any account an earlier test left, make a throwaway one, sign in as it, delete it: `{service, host, report: {service, ok, steps: [{name: cleanup\|create\|sign-in\|remove, ok, detail?}], leftover?}}`. A failed step is in the report, not an HTTP error. `409 no-service-admin`, `409 service-admin-unreadable`, `400 not-supported`. An account's own admin sign-in needs `full` |
 | `POST /admin/profiles/:id/provision` `{type, username, password, name?, email?, allowReset?, libraries?}` | Make the person's account on that service — or, with `allowReset`, set an existing account's password — signed in with the kept Server Admin sign-in (below): `{outcome: created\|reset, note?, service, host}`. `libraries` is the ids a NEW account may see; left out (or null) is every library. `409 account-exists` (ask, then send `allowReset`), `409 admin-account`, `409 reset-unsupported`, `409 no-service-admin`, `409 service-admin-unreadable`, `409 libraries-gone` (none of the picked ones is there now), `400 email-required`, `400 email-username`, `400 no-libraries` (an empty pick), `400 not-supported`, `502 admin-sign-in-failed`, `502 service-unreachable`, `502 service-refused` (the service's own words). An account's own admin sign-in needs `full` |
 
 ### Making their accounts on your servers
@@ -288,6 +289,19 @@ sign-in's own account. When a service makes the account but will not take
 the picked libraries (Jellyfin, Navidrome, Stump do that in a second step),
 the answer's `note` says so, and what the account can see until it is
 changed there.
+
+**Test accounts.** Each kept sign-in on the Server Admin page has a "Test
+accounts" button (owner, 2026-10-14: "so long as we also have a cleanup on
+it so we don't create a bunch of junk accounts"). It deletes any account an
+earlier test left, makes a throwaway account the same way a person's is
+made, signs in as it with its own password, and deletes it again, even when
+a step before failed. Its accounts, and the only ones it ever deletes, are
+named `alexandria-selftest-` plus six random characters (on Komga that is
+the email address, at `selftest.invalid`); admin, owner and root accounts
+are never deleted. Each step shows on the page and in the server log
+(`provision: test accounts on …`). Stump deletes for good (`hardDelete`);
+deleting there needs the server owner's sign-in. A test account never
+plays anything, so Audiobookshelf has no devices to clear when it goes.
 
 ---
 

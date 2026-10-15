@@ -180,6 +180,12 @@
     font-size: 13px;
   }
   #admin-devices .device:first-child, #svc-admins .device:first-child { border-top: 0; }
+  .row-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .selftest { font-size: 13px; padding: 0 0 10px; }
+  .selftest ul { list-style: none; margin: 4px 0 0; padding: 0; }
+  .selftest li { padding: 1px 0; }
+  .selftest .ok { color: var(--ok); }
+  .selftest .bad { color: var(--danger); }
   .empty { color: var(--muted); font-size: 14px; padding: 6px 0; }
   .admin-device { min-width: 0; overflow-wrap: anywhere; }
   .toast {
@@ -1416,8 +1422,55 @@
   // phones. Written here, never read back: the list has no passwords, and
   // only a phone with a fresh code can fetch them.
   var svcAdminsHTML = null;
+  var lastSvcAdmins = null;
+
+  // "Test accounts" (owner, 2026-10-14): with a kept sign-in the server
+  // makes a throwaway account (alexandria-selftest-…), signs in as it and
+  // deletes it, after deleting any an earlier test left. type → {running}
+  // | {report} | {error}; kept here so the list's rebuilds keep it.
+  var selfTests = {};
+  var selfTestSteps = {
+    cleanup: "Clear old test accounts", create: "Make a test account",
+    "sign-in": "Sign in as it", remove: "Delete it"
+  };
+
+  function selfTestHTML(type) {
+    var s = selfTests[type];
+    if (!s) return "";
+    if (s.running) return '<div class="selftest meta">Testing… a few seconds.</div>';
+    if (s.error) return '<div class="selftest"><span class="bad">' + esc(s.error) + '</span></div>';
+    var rows = (s.report.steps || []).map(function (st) {
+      return '<li class="' + (st.ok ? "ok" : "bad") + '">' + (st.ok ? "✓ " : "✗ ") +
+        esc(selfTestSteps[st.name] || st.name) +
+        (st.detail ? ' <span class="meta">— ' + esc(st.detail) + '</span>' : "") + '</li>';
+    }).join("");
+    if (s.report.leftover) {
+      rows += '<li class="bad">✗ Still there: ' + esc(s.report.leftover) +
+        ' <span class="meta">— the next test deletes it</span></li>';
+    }
+    return '<div class="selftest"><strong>' +
+      (s.report.ok ? "New accounts work here." : "Something failed.") +
+      '</strong><ul>' + rows + '</ul></div>';
+  }
+
+  function runSelfTest(type) {
+    if (selfTests[type] && selfTests[type].running) return;
+    selfTests[type] = { running: true };
+    rerenderServiceAdmins();
+    api("/admin/provision/" + encodeURIComponent(type) + "/selftest", { method: "POST" })
+      .then(function (r) { selfTests[type] = { report: r.report || {} }; })
+      .catch(function (err) { selfTests[type] = { error: err.message }; })
+      .then(rerenderServiceAdmins);
+  }
+
+  function rerenderServiceAdmins() {
+    if (!lastSvcAdmins) return;
+    svcAdminsHTML = null;
+    renderServiceAdmins(lastSvcAdmins);
+  }
 
   function renderServiceAdmins(r) {
+    lastSvcAdmins = r;
     var html;
     if (!r.available) {
       html = '<p class="empty">This server has no secrets key, so it cannot ' +
@@ -1426,11 +1479,17 @@
       html = '<p class="empty">None kept yet.</p>';
     } else {
       html = r.admins.map(function (a) {
+        var running = selfTests[a.type] && selfTests[a.type].running;
         return '<div class="device"><div>' + esc(a.name) +
           ' <span class="meta">· ' + esc(a.username) + '</span>' +
           '<div class="meta">' + esc(a.baseUrl) + '</div></div>' +
+          '<div class="row-actions">' +
+          '<button data-selftest="' + esc(a.type) + '"' + (running ? " disabled" : "") +
+            ' title="Makes a throwaway account (alexandria-selftest-…), signs in as it, then deletes it">' +
+            'Test accounts</button>' +
           '<button class="danger" data-remove-svc-admin="' + esc(a.id) + '" ' +
-            'data-svcname="' + esc(a.name) + '">Remove</button></div>';
+            'data-svcname="' + esc(a.name) + '">Remove</button></div></div>' +
+          selfTestHTML(a.type);
       }).join("");
     }
     $("svc-admin-form").hidden = !r.available;
@@ -3352,6 +3411,7 @@
     else if (d.delete) removeProfile(d.delete, d.pname);
     else if (d.revokeAdmin) revokeAdminDevice(d.revokeAdmin, d.adlabel);
     else if (d.removeSvcAdmin) removeServiceAdmin(d.removeSvcAdmin, d.svcname);
+    else if (d.selftest) runSelfTest(d.selftest);
   });
   // Back and Forward move between areas.
   window.addEventListener("popstate", function () { showArea(areaFromHash() || "overview"); });

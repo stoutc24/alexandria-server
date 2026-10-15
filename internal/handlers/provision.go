@@ -31,11 +31,12 @@ type ProvisionHandler struct {
 	// ensure is provision.Ensure, libraries provision.Libraries; tests swap them.
 	ensure    func(ctx context.Context, hc *http.Client, serviceType string, admin provision.Admin, p provision.Person, allowReset bool) (provision.Result, error)
 	libraries func(ctx context.Context, hc *http.Client, serviceType string, admin provision.Admin) ([]provision.Library, error)
+	selfTest  func(ctx context.Context, hc *http.Client, serviceType string, admin provision.Admin) (provision.SelfTestReport, error)
 }
 
 func NewProvisionHandler(admins *repository.ServiceAdminRepository, profiles *repository.ProfileRepository) *ProvisionHandler {
 	return &ProvisionHandler{admins: admins, profiles: profiles, client: provision.NewHTTPClient(),
-		ensure: provision.Ensure, libraries: provision.Libraries}
+		ensure: provision.Ensure, libraries: provision.Libraries, selfTest: provision.SelfTest}
 }
 
 type provisionService struct {
@@ -156,6 +157,40 @@ func (h *ProvisionHandler) Libraries(c *fiber.Ctx) error {
 		return h.refusal(c, name, "", err)
 	}
 	return c.JSON(fiber.Map{"service": name, "host": hostOf(admin.BaseURL), "libraries": list})
+}
+
+// SelfTest is the "Test accounts" check on one service, with its kept
+// Server Admin sign-in: a throwaway account made, signed in as and deleted,
+// after deleting whatever an earlier run left (provision.SelfTest). The
+// report says how each step went; a step that failed is no HTTP error.
+// POST /api/v1/admin/provision/:type/selftest
+func (h *ProvisionHandler) SelfTest(c *fiber.Ctx) error {
+	typ := c.Params("type")
+	name := repository.ServiceAdminTypes[typ]
+	if !provision.SelfTestable(typ) || name == "" {
+		return refuse(c, fiber.StatusBadRequest, "not-supported", provision.ErrUnsupported.Error())
+	}
+	admin, ok, err := h.openAdmin(c, typ, name)
+	if !ok {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(c.UserContext(), 90*time.Second)
+	defer cancel()
+	rep, err := h.selfTest(ctx, h.client, typ,
+		provision.Admin{BaseURL: admin.BaseURL, Username: admin.Username, Password: admin.Password})
+	if err != nil {
+		return h.refusal(c, name, "", err)
+	}
+	steps := make([]string, 0, len(rep.Steps))
+	for _, s := range rep.Steps {
+		mark := "ok"
+		if !s.OK {
+			mark = "FAILED: " + s.Detail
+		}
+		steps = append(steps, s.Name+" "+mark)
+	}
+	log.Printf("provision: test accounts on %s (%s): %s", name, hostOf(admin.BaseURL), strings.Join(steps, "; "))
+	return c.JSON(fiber.Map{"service": name, "host": hostOf(admin.BaseURL), "report": rep})
 }
 
 // openAdmin is the kept Server Admin sign-in for a service, opened. ok is

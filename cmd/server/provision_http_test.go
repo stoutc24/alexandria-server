@@ -38,6 +38,12 @@ func newABSStub(t *testing.T) (*absStub, *httptest.Server) {
 		defer a.mu.Unlock()
 		switch {
 		case r.Method == "POST" && r.URL.Path == "/login":
+			name, _ := in["username"].(string)
+			if pw, ok := a.passwords[name]; ok && in["password"] == pw {
+				// An account made here signs in with its own password.
+				_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]any{"accessToken": "user-jwt"}})
+				return
+			}
 			if in["username"] != "admin" || in["password"] != "admin-pass" {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
@@ -66,12 +72,34 @@ func newABSStub(t *testing.T) (*absStub, *httptest.Server) {
 				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/api/users/"):
+			id := strings.TrimPrefix(r.URL.Path, "/api/users/")
+			kept := a.users[:0]
+			for _, u := range a.users {
+				if u["id"] == id {
+					delete(a.passwords, u["username"].(string))
+					continue
+				}
+				kept = append(kept, u)
+			}
+			a.users = kept
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(srv.Close)
 	return a, srv
+}
+
+func (a *absStub) usernames() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var out []string
+	for _, u := range a.users {
+		out = append(out, u["username"].(string))
+	}
+	return out
 }
 
 func (a *absStub) password(user string) string {
@@ -276,10 +304,33 @@ func TestProvisionNeedsFullAdminAccess(t *testing.T) {
 			s.refused(http.StatusConflict, "no-service-admin", "POST", path, body, bearer(raw))
 			s.expectStatus(http.StatusOK, "GET", "/api/v1/admin/provision", nil, bearer(raw))
 			s.refused(http.StatusConflict, "no-service-admin", "GET", "/api/v1/admin/provision/abs/libraries", nil, bearer(raw))
+			s.refused(http.StatusConflict, "no-service-admin", "POST", "/api/v1/admin/provision/abs/selftest", nil, bearer(raw))
+			s.refused(http.StatusBadRequest, "not-supported", "POST", "/api/v1/admin/provision/plex/selftest", nil, bearer(raw))
 			continue
 		}
 		s.refused(http.StatusForbidden, "access-denied", "POST", path, body, bearer(raw))
 		s.refused(http.StatusForbidden, "access-denied", "GET", "/api/v1/admin/provision", nil, bearer(raw))
 		s.refused(http.StatusForbidden, "access-denied", "GET", "/api/v1/admin/provision/abs/libraries", nil, bearer(raw))
+		s.refused(http.StatusForbidden, "access-denied", "POST", "/api/v1/admin/provision/abs/selftest", nil, bearer(raw))
+	}
+}
+
+// Owner, 2026-10-14: a test button, "so long as we also have a cleanup on it
+// so we don't create a bunch of junk accounts".
+func TestProvisionSelfTestMakesSignsInAndDeletesWithTheKeptSignIn(t *testing.T) {
+	s := newTestServer(t, withSecretsKey)
+	admin := bearer(testAPIToken)
+	abs, srv := newABSStub(t)
+	s.expectStatus(http.StatusOK, "POST", serviceAdminsPath, map[string]string{
+		"type": "abs", "baseUrl": srv.URL + "/", "username": "admin", "password": "admin-pass"}, admin)
+
+	r := s.expectStatus(http.StatusOK, "POST", "/api/v1/admin/provision/abs/selftest", nil, admin)
+	report, _ := r.body["report"].(map[string]any)
+	steps, _ := report["steps"].([]any)
+	if r.body["service"] != "Audiobookshelf" || report["ok"] != true || len(steps) != 4 {
+		t.Fatalf("%v", r.body)
+	}
+	if got := abs.usernames(); len(got) != 1 || got[0] != "root" {
+		t.Fatalf("accounts after the test: %v, want only root", got)
 	}
 }

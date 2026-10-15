@@ -250,6 +250,8 @@ func buildApp(cfg *config.Config) *fiber.App {
 	// service. "full" access only (middleware.AdminScopeGate).
 	admin.Get("/provision", provisionHandler.Capabilities)
 	admin.Get("/provision/:type/libraries", provisionHandler.Libraries)
+	// "Test accounts": a throwaway account made, signed in as, deleted.
+	admin.Post("/provision/:type/selftest", provisionHandler.SelfTest)
 	admin.Post("/profiles/:id/provision", provisionHandler.Provision)
 
 	// Device linking, device half. Unauthenticated by necessity — the
