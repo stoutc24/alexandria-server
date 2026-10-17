@@ -67,7 +67,38 @@
     await waitFor("the add form", function () { return $("sf-type"); });
     $("sf-type").value = "abs";
     $("sf-type").dispatchEvent(new Event("change", { bubbles: true }));
-    $("sf-url").value = CFG.absUrl;
+
+    // The address (owner, 2026-10-17): the Server Admin sign-in's first,
+    // or another one typed.
+    step = "address";
+    await waitFor("the Server Admin address offered", function () { return visible($("sf-where")); });
+    ok("W1 the Server Admin address comes first, chosen, the box hidden",
+       $("sf-where-url").textContent === CFG.absUrl && $("sf-where-kept").checked && !visible($("sf-url")),
+       $("sf-where-url").textContent + " kept=" + $("sf-where-kept").checked + " box=" + visible($("sf-url")));
+    $("sf-where-new").click();
+    ok("W2 Another address opens the box, empty", visible($("sf-url")) && $("sf-url").value === "", $("sf-url").value);
+    $("sf-url").value = "http://192.0.2.7:13378";
+    $("sf-url").dispatchEvent(new Event("input", { bubbles: true }));
+    ok("W3 another server's address with the tick on: the page says where the account is made",
+       visible($("sf-where-warn")) && $("sf-where-warn").textContent.indexOf(CFG.absHost) >= 0,
+       $("sf-where-warn").textContent);
+    $("sf-url").value = CFG.absUrl + "/";
+    $("sf-url").dispatchEvent(new Event("input", { bubbles: true }));
+    ok("W4 the same address typed: no warning", !visible($("sf-where-warn")), $("sf-where-warn").textContent);
+    $("sf-where-kept").click();
+    ok("W5 back to the Server Admin address: the box hidden again",
+       !visible($("sf-url")) && !visible($("sf-where-warn")), "box=" + visible($("sf-url")));
+    $("sf-where-new").click();
+    $("sf-type").value = "jellyfin";
+    $("sf-type").dispatchEvent(new Event("change", { bubbles: true }));
+    ok("W6 a service with nothing kept: the box alone", !visible($("sf-where")) && visible($("sf-url")),
+       "choice=" + visible($("sf-where")));
+    $("sf-type").value = "abs";
+    $("sf-type").dispatchEvent(new Event("change", { bubbles: true }));
+    ok("W7 another service picked: its Server Admin address is chosen again",
+       visible($("sf-where")) && $("sf-where-kept").checked && !visible($("sf-url")), "kept=" + $("sf-where-kept").checked);
+    // The box holds a typed address: the kept one is still what is saved.
+    $("sf-url").value = "http://192.0.2.7:13378";
     $("sf-user").value = "emily";
     $("sf-pass").value = CFG.firstPassword;
 
@@ -121,6 +152,8 @@
     await waitFor("the edit form", function () { return $("sf-type") && $("sf-prov"); });
     await waitFor("the tick on the edit", function () { return visible($("sf-prov")); });
     ok("P10 not ticked on an edit", !$("sf-prov-on").checked, "ticked");
+    ok("W8 an edit shows the saved address in the box, no choice",
+       !visible($("sf-where")) && visible($("sf-url")) && $("sf-url").value === CFG.absUrl, $("sf-url").value);
     $("sf-pass").value = CFG.secondPassword;
     $("sf-prov-on").click();
     var editBoxes = await waitFor("the libraries on the edit", function () {

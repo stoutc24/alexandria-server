@@ -147,6 +147,8 @@ if reached created; then
   admin "$base/api/v1/admin/profiles/$emily/services" >"$work/services.json"
   check "Alexandria keeps her ABS login (username emily)" \
     jq -e '.services | length == 1 and .[0].type == "abs" and .[0].username == "emily"' "$work/services.json"
+  check "her ABS login has the Server Admin address, not the one left in the box" \
+    jq -e --arg u "$abs" '.services[0].baseUrl == $u' "$work/services.json"
   check "the server log names the account, never the password" \
     bash -c "grep -q 'provision: Audiobookshelf account \"emily\" created' '$work/server.log' &&
       ! grep -qF -- '$first' '$work/server.log'"

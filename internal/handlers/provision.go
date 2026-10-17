@@ -61,6 +61,10 @@ type provisionService struct {
 	// be made; Host is where (shown beside the tick).
 	ServerAdmin bool   `json:"serverAdmin"`
 	Host        string `json:"host,omitempty"`
+	// BaseURL: that sign-in's address, which the forms offer as a new
+	// service's address (owner, 2026-10-17: "the service address from
+	// server admin, or a new url"). Not a secret: Server Admin lists it.
+	BaseURL string `json:"baseUrl,omitempty"`
 }
 
 // Capabilities is what can be done on each service, and where a Server
@@ -80,6 +84,7 @@ func (h *ProvisionHandler) Capabilities(c *fiber.Ctx) error {
 		if a, ok := byType[cap.Type]; ok {
 			s.ServerAdmin = true
 			s.Host = hostOf(a.BaseURL)
+			s.BaseURL = a.BaseURL
 		}
 		out = append(out, s)
 	}

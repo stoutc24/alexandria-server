@@ -2391,9 +2391,18 @@
         'value="' + esc(nameVal) + '">' +
       // Everything a typed service needs; hidden for Plex, which is picked.
       '<div id="sf-classic">' +
-      '<label class="field" for="sf-url">Address</label>' +
+      // A new service's address: the Server Admin sign-in's, or another
+      // (syncWhere). Only when a sign-in is kept for the service; else the
+      // box alone, as before.
+      '<fieldset class="pick" id="sf-where" hidden><legend>Address</legend>' +
+        '<label class="choice"><input type="radio" name="sf-where" id="sf-where-kept" value="kept" checked>' +
+          '<span class="wrap">The one in Server Admin<br><span class="meta" id="sf-where-url"></span></span></label>' +
+        '<label class="choice"><input type="radio" name="sf-where" id="sf-where-new" value="new">' +
+          '<span class="wrap">Another address</span></label>' +
+      '</fieldset>' +
+      '<label class="field" for="sf-url" id="sf-url-label">Address</label>' +
       '<input type="text" id="sf-url" inputmode="url" autocomplete="off" ' +
-        'autocapitalize="off" spellcheck="false" ' +
+        'autocapitalize="off" spellcheck="false" aria-label="Address" ' +
         'placeholder="' + esc(urlExample(type)) + '" value="' + esc(urlVal) + '">' +
       '<label class="field" for="sf-kind">How they sign in</label>' +
       '<select id="sf-kind">' + kindOpts + '</select>' +
@@ -2409,6 +2418,7 @@
           '<label class="tick"><input type="checkbox" id="sf-prov-on"' + (s ? "" : " checked") + '>' +
             '<span id="sf-prov-label"></span></label>' +
           '<p class="meta" id="sf-prov-note" style="margin:0 0 0 26px" hidden></p>' +
+          '<p class="bad" id="sf-where-warn" style="margin:4px 0 0 26px" hidden></p>' +
           '<div id="sf-prov-mail" hidden>' +
             '<label class="field" for="sf-prov-email">Their email ' +
               '<span class="meta" id="sf-prov-email-opt"></span></label>' +
@@ -2463,11 +2473,55 @@
     });
     var same = !!s && kind === s.loginKind && kind !== "none";
     $("sf-lost").hidden = !(same && s.unreadable);
+    syncWhere(type, s);
     syncMoved();
     syncProv(type, kind);
+    syncWhereWarn();
     // Moving off Plex ends a Plex sign-in rather than keeping it unseen.
     if (type !== "plex") dropPlexPick();
     renderPlexBox();
+  }
+
+  // A new service's address (owner, 2026-10-17: "the service address from
+  // server admin, or a new url"): with a Server Admin sign-in kept for the
+  // service, its address comes first and the box is for another one. An
+  // edit, nothing kept, or an older server (no baseUrl): the box alone.
+  function keptAddress(type) {
+    var cap = acct.prov && acct.prov[type];
+    return cap && cap.serverAdmin && cap.baseUrl ? cap.baseUrl : "";
+  }
+
+  function usesKept(type, s) {
+    return !s && !!keptAddress(type) && $("sf-where-kept").checked;
+  }
+
+  // The address the form saves.
+  function formAddress(type, s) {
+    return usesKept(type, s) ? keptAddress(type) : $("sf-url").value.trim();
+  }
+
+  function syncWhere(type, s) {
+    var kept = s ? "" : keptAddress(type);
+    $("sf-where").hidden = !kept;
+    $("sf-where-url").textContent = kept;
+    // The legend names the box when the choice is shown.
+    $("sf-url-label").hidden = !!kept;
+    $("sf-url").hidden = !!kept && !$("sf-where-new").checked;
+  }
+
+  // The tick makes the account where the Server Admin sign-in points,
+  // whatever address the form saves: when the two differ, say so.
+  function syncWhereWarn() {
+    var warn = $("sf-where-warn");
+    if (!warn) return;
+    var type = $("sf-type").value, kind = $("sf-kind").value;
+    var s = acct.form && acct.form.mode === "edit" ? findService(acct.form.id) : null;
+    var cap = provCap(type, kind), url = formAddress(type, s);
+    var show = !!cap && !!cap.baseUrl && !$("sf-prov").hidden && $("sf-prov-on").checked &&
+      /^https?:\/\/\S+$/i.test(url) && !sameAddress(url, cap.baseUrl);
+    warn.hidden = !show;
+    warn.textContent = show ? "Their account is made on " + (cap.host || cap.name) +
+      ", where the Server Admin sign-in points. Check this address reaches that same server." : "";
   }
 
   // The "create this account" tick: only for a username-and-password login
@@ -2604,7 +2658,7 @@
     var s = f.mode === "edit" ? findService(f.id) : null;
     var types = acct.data.serviceTypes || {};
     var type = $("sf-type").value, kind = $("sf-kind").value;
-    var url = $("sf-url").value.trim();
+    var url = formAddress(type, s);
     var user = $("sf-user").value.trim(), pass = $("sf-pass").value;
     var tok = $("sf-token").value.trim(), key = $("sf-key").value.trim();
 
@@ -3666,12 +3720,24 @@
     var t = e.target;
     if (t.name === "acct-access") setAccess(t.value);
     else if (t.dataset && t.dataset.sid && /^svc-acc-/.test(t.name || "")) svcAccessChanged(t);
-    else if (t.id === "sf-type" || t.id === "sf-kind" || t.id === "sf-prov-on") syncForm();
+    else if (t.id === "sf-type") {
+      // Another service: its Server Admin address first again.
+      $("sf-where-kept").checked = true;
+      syncForm();
+    }
+    else if (t.id === "sf-kind" || t.id === "sf-prov-on") syncForm();
+    else if (t.name === "sf-where") {
+      syncForm();
+      if (t.value === "new") $("sf-url").focus();
+    }
     else if (t.name === "sf-plex-server") plexServerPicked(Number(t.value));
     else if (t.name === "sf-plex-person") plexPersonPicked(Number(t.value));
   });
   $("acct").addEventListener("input", function (e) {
-    if (e.target.id === "sf-url") syncMoved();
+    if (e.target.id === "sf-url") {
+      syncMoved();
+      syncWhereWarn();
+    }
   });
   // Leaving the page, or its going into the back-forward cache, ends a Plex
   // sign-in: the admin's Plex token does not outlive the visit.

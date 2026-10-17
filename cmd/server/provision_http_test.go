@@ -214,6 +214,14 @@ func TestProvisionMakesThenResetsWithTheKeptServerAdminSignIn(t *testing.T) {
 		byType["jellyfin"]["serverAdmin"] != false || byType["storyteller"]["reset"] != false || byType["booklore"]["email"] != "required" {
 		t.Fatalf("capabilities: %v", byType)
 	}
+	// The kept address, as it was saved (trailing slash trimmed), for the
+	// forms to offer; none where nothing is kept.
+	if byType["abs"]["baseUrl"] != srv.URL {
+		t.Fatalf("abs baseUrl = %v, want %s", byType["abs"]["baseUrl"], srv.URL)
+	}
+	if _, has := byType["jellyfin"]["baseUrl"]; has {
+		t.Fatalf("jellyfin has no kept sign-in but carries a baseUrl: %v", byType["jellyfin"])
+	}
 
 	// New: made with the given login.
 	r = s.expectStatus(http.StatusOK, "POST", path, map[string]any{
