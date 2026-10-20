@@ -14,6 +14,7 @@ installing and running the Alexandria companion server itself, see the
 | [Use your own AI server](ai-home-server.md) | Ollama, LM Studio, llama.cpp on your network |
 | [The Librarian](librarian.md) | Asking about your library, private chat, history, commands |
 | [The Mac app and wide windows](mac-app.md) | Closing the window, menu bar Now Playing, the docked player |
+| [Alexandria in the car](car.md) | CarPlay and Android Auto: the tabs, radio stations, artists, going deeper |
 
 Contact for questions or problems: stoutservers@gmail.com
 
@@ -27,3 +28,9 @@ These were proven in tests and simulators, not yet on hardware:
 - [ ] Mac and iPad: the docked player sits under every page (build 1231).
 - [ ] iPhone: a key saved before 1231 still works after the update (it moves
       to the strictest keychain class on first launch).
+- [ ] CarPlay and Android Auto: "Stations for you" leads each music page,
+      and a station tapped there plays and keeps going (added 2026-10-20).
+- [ ] CarPlay: music › artist › album › a song › Up Next no longer closes
+      the app, and Up Next opens the Queue tab (fixed 2026-10-20).
+- [ ] CarPlay and Android Auto: a Plex artist's page shows records Plex
+      lists under Compilations (fixed 2026-10-20).
