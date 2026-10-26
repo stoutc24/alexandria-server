@@ -15,6 +15,7 @@ installing and running the Alexandria companion server itself, see the
 | [The Librarian](librarian.md) | Asking about your library, private chat, history, commands |
 | [The Mac app and wide windows](mac-app.md) | Closing the window, menu bar Now Playing, the docked player |
 | [Alexandria in the car](car.md) | CarPlay and Android Auto: the tabs, radio stations, artists, going deeper |
+| [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; intros and skits skipped |
 
 Contact for questions or problems: stoutservers@gmail.com
 
@@ -34,3 +35,6 @@ These were proven in tests and simulators, not yet on hardware:
       the app, and Up Next opens the Queue tab (fixed 2026-10-20).
 - [ ] CarPlay and Android Auto: a Plex artist's page shows records Plex
       lists under Compilations (fixed 2026-10-20).
+- [ ] Stations skip intros and skits, and an artist station with enough
+      similar artists plays no records that only share a genre tag
+      (2026-10-26; proven in unit tests, not on a real library).

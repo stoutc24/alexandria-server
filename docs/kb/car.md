@@ -17,7 +17,8 @@ Each music server's page starts with **Stations for you**: the same
 stations as that server's home on your phone.
 
 - Tap one and it plays without end. When its queue runs out, more of the
-  same station follows.
+  same station follows. What each kind of station plays, and the intros
+  and skits it skips: [Radio stations](radio-stations.md).
 - Stations marked **AI radio** are themes your AI named on the phone. The
   car shows only themes your phone already has. It never asks the AI
   itself, so it never waits on one or adds to your AI spending.
