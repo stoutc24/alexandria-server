@@ -41,3 +41,5 @@ These were proven in tests and simulators, not yet on hardware:
       (2026-10-26; proven in unit tests, not on a real library).
 - [ ] iPhone: Up Next glides to the playing song when you scroll into it
       and at each new song (build 1236; proven on the Android emulator).
+- [ ] Stations skip a track labelled "(Skit)" or "[Interlude]" at any
+      length (build 1236, Apple TV next build; proven in unit tests).

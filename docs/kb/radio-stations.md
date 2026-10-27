@@ -30,12 +30,13 @@ order rather than stopping.
 
 ## Intros and skits are skipped
 
-Stations leave out the short pieces that open or link the tracks on an
-album:
+Stations leave out the pieces that open or link the tracks on an album:
 
 - anything under one minute;
-- tracks called Intro, Interlude, Skit or Outro that are under two and a
-  half minutes.
+- tracks whose title marks them as one in brackets, at any length: for
+  example "Phone Call (Skit)" or "Song [Interlude]";
+- tracks called just Intro, Interlude, Skit or Outro that are under two
+  and a half minutes. A longer one is usually a full song, so it plays.
 
 Play the album itself to hear every track.
 
