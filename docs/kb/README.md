@@ -16,6 +16,7 @@ installing and running the Alexandria companion server itself, see the
 | [The Mac app and wide windows](mac-app.md) | Closing the window, menu bar Now Playing, the docked player |
 | [Alexandria in the car](car.md) | CarPlay and Android Auto: the tabs, radio stations, artists, going deeper |
 | [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; intros and skits skipped |
+| [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag |
 
 Contact for questions or problems: stoutservers@gmail.com
 
@@ -38,3 +39,5 @@ These were proven in tests and simulators, not yet on hardware:
 - [ ] Stations skip intros and skits, and an artist station with enough
       similar artists plays no records that only share a genre tag
       (2026-10-26; proven in unit tests, not on a real library).
+- [ ] iPhone: Up Next glides to the playing song when you scroll into it
+      and at each new song (build 1236; proven on the Android emulator).
