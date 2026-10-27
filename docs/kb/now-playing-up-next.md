@@ -29,4 +29,13 @@ playing song sits lower down.
 Following someone else's Party Play, the list shows their queue: you can
 tap a song to ask the party to play it, but not remove or move songs.
 
+## The Artist tab
+
+The tab next to **Lyrics** shows the playing song's artist. Tap the
+artist's picture or name (marked with **›**) to close Now Playing and open
+their page. On Plex, **Artists you may like** below opens those artists
+the same way. A Jellyfin song carries only its artist's name, so the app
+looks the artist up first: when your Jellyfin has no artist by that name,
+there is no **›**.
+
 Contact for questions or problems: stoutservers@gmail.com

@@ -7,19 +7,27 @@ page in the car.
 
 ## What an artist station plays
 
-"Post Malone Radio" plays:
+"Ye Radio" plays, from what your servers hold:
 
-- Post Malone, about a quarter of the records;
-- artists Last.fm or your Plex server call similar to Post Malone, when you
-  have their music.
+- Ye, about a quarter of the records;
+- artists your Plex server or Last.fm call similar to Ye, when you have
+  their music;
+- on Plex, records that share Ye's **styles**: the finer tags Plex keeps on
+  each album, such as "Midwest Rap" or "Pop-Rap". A style that many of
+  your albums carry counts for less than a rare one.
 
-A record that only shares a genre tag with the artist (for example
-"Pop/Rock", which very different artists share) joins only when your library
-holds fewer than five albums by similar artists. Then the station would
-otherwise be too short to play.
+A genre alone ("Rap", "Pop/Rock") is too broad to go by: on Plex it no
+longer brings a record in. On Jellyfin and Navidrome, which have no styles,
+a record that only shares a genre joins only when your library holds fewer
+than five albums by similar artists.
 
-When the station has played everything it can, it starts over in a new
-order rather than stopping.
+The heart of the station comes first: the artist, the artists like them
+and the records closest in style. Records that only just share the
+artist's styles come later. When the station has played everything it can,
+it starts over in a new order rather than stopping.
+
+**Stations for you** offers an artist's station only when your servers
+hold at least six records it would play, by more than that one artist.
 
 ## Genre, decade and AI stations
 
@@ -43,8 +51,10 @@ Play the album itself to hear every track.
 ## A station that seems wrong
 
 - **Odd artists in an artist station:** the similar-artist lists come from
-  Last.fm and Plex. An artist with few listeners may have little similar
-  data, so the station falls back to shared genre tags.
+  your Plex server and Last.fm. Last.fm is used only when it answers for
+  the same artist: asked about "Ye", it answers for the band Yes, so its
+  list is left out. On Jellyfin and Navidrome an artist with little
+  similar data falls back to shared genre tags.
 - **"Not enough similar music for …":** your library has too little music
   near that station. Pick another one.
 - **No stations at all:** stations are built from your media index. Rebuild

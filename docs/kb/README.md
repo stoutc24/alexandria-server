@@ -16,7 +16,7 @@ installing and running the Alexandria companion server itself, see the
 | [The Mac app and wide windows](mac-app.md) | Closing the window, menu bar Now Playing, the docked player |
 | [Alexandria in the car](car.md) | CarPlay and Android Auto: the tabs, radio stations, artists, going deeper |
 | [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; intros and skits skipped |
-| [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag |
+| [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag; the Artist tab |
 
 Contact for questions or problems: stoutservers@gmail.com
 
@@ -43,3 +43,9 @@ These were proven in tests and simulators, not yet on hardware:
       and at each new song (build 1236; proven on the Android emulator).
 - [ ] Stations skip a track labelled "(Skit)" or "[Interlude]" at any
       length (build 1236, Apple TV next build; proven in unit tests).
+- [ ] Artist stations follow Plex's styles and similar artists: Ye Radio
+      plays rap, not Led Zeppelin; an artist station is offered only with
+      six related records (next builds; proven on the owner's Plex data,
+      read-only).
+- [ ] Now Playing › Artist: the artist's picture opens their page (next
+      phone build; proven in the simulator for Plex and Jellyfin).
