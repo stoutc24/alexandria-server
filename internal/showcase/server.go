@@ -49,6 +49,57 @@ type Server struct {
 	Books bool
 	// The playback reports the apps POST while Books is on, newest last.
 	reports []reportRecord
+	// RefusePlainParts answers a Plex song's file without `download=1`
+	// with HTTP 500, as the owner's Plex did in June 2026 for a 24-bit
+	// FLAC — for the phone's test that it falls back to the flag. Off
+	// unless SHOWCASE_PLEX_REFUSE_PLAIN=1 is set or a probe POSTs
+	// /__showcase/parts?refusePlain=1 (read through refusesPlain).
+	RefusePlainParts bool
+	// Every Plex song-file request, newest last, for a probe to check
+	// whether the app asked with Plex's download flag (which a real Plex
+	// lists as a "Media download"): GET /__showcase/parts on the Plex
+	// port, DELETE clears.
+	partRequests []partRequest
+}
+
+// partRequest is one recorded Plex song-file request.
+type partRequest struct {
+	Part     int    `json:"part"`
+	Download bool   `json:"download"`
+	Status   int    `json:"status"`
+	At       string `json:"at"`
+}
+
+// recordPart keeps a song-file request for GET /__showcase/parts (bounded).
+func (s *Server) recordPart(rec partRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec.At = time.Now().UTC().Format(time.RFC3339Nano)
+	s.partRequests = append(s.partRequests, rec)
+	if len(s.partRequests) > 500 {
+		s.partRequests = s.partRequests[len(s.partRequests)-500:]
+	}
+}
+
+// refusesPlain reads RefusePlainParts (a probe may switch it mid-run).
+func (s *Server) refusesPlain() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.RefusePlainParts
+}
+
+// recordedParts returns a copy of the song-file requests; clear empties them.
+func (s *Server) recordedParts(clear bool) []partRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := append([]partRequest(nil), s.partRequests...)
+	if clear {
+		s.partRequests = nil
+	}
+	if out == nil {
+		out = []partRequest{}
+	}
+	return out
 }
 
 // reportRecord is one recorded POST (Books on): the route, and the fields
@@ -98,7 +149,8 @@ func (s *Server) plexTrackCodec() string {
 func New(cat *Catalog, clipsDir string) *Server {
 	return &Server{cat: cat, clipsDir: clipsDir, Token: "showcase-token", progress: map[string]float64{},
 		log: log.New(os.Stdout, "", log.Ltime), LossyMusic: os.Getenv("SHOWCASE_LOSSY_MUSIC") == "1",
-		Books: os.Getenv("SHOWCASE_JELLYFIN_BOOKS") == "1"}
+		Books:            os.Getenv("SHOWCASE_JELLYFIN_BOOKS") == "1",
+		RefusePlainParts: os.Getenv("SHOWCASE_PLEX_REFUSE_PLAIN") == "1"}
 }
 
 // ---- JSON / HTTP helpers ---------------------------------------------------
