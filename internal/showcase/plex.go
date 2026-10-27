@@ -750,11 +750,11 @@ func (s *Server) plexParts(w http.ResponseWriter, r *http.Request, p []string) {
 	case *Track:
 		download := r.URL.Query().Get("download") == "1"
 		if s.refusesPlain() && !download {
-			s.recordPart(partRequest{Part: partID, Download: download, Status: http.StatusInternalServerError})
+			s.recordPart(partRequest{Server: "plex", Part: partID, Download: download, Status: http.StatusInternalServerError})
 			http.Error(w, "refused without download=1", http.StatusInternalServerError)
 			return
 		}
-		s.recordPart(partRequest{Part: partID, Download: download, Status: http.StatusOK})
+		s.recordPart(partRequest{Server: "plex", Part: partID, Download: download, Status: http.StatusOK})
 		serveWAV(w, r, v.Seed, v.Duration)
 	case *Movie:
 		s.serveClipFile(w, r, v.Clip, "clip.mp4")

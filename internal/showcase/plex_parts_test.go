@@ -79,3 +79,56 @@ func TestPlexPartsRefusePlainAndReadout(t *testing.T) {
 		srv.Close()
 	}
 }
+
+// Jellyfin's side of the log, in every mode: a song's stream and its
+// Download are listed; with the refusal on, Download answers 403 (a user
+// without the download permission) while the stream still plays.
+func TestJellyfinSongLogAndDownloadRefusal(t *testing.T) {
+	cat := Build(time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC), nil).Half(1)
+	s := New(cat, "")
+	s.Books = false
+	srv := httptest.NewServer(s.JellyfinHandler())
+	defer srv.Close()
+	jf := cat.JFID(cat.Tracks[0].ID)
+
+	type log struct {
+		Parts []partRequest `json:"parts"`
+	}
+	read := func(method, path string) log {
+		t.Helper()
+		req, _ := http.NewRequest(method, srv.URL+path, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out log
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		return out
+	}
+
+	for _, refuse := range []bool{false, true} {
+		flag := "0"
+		if refuse {
+			flag = "1"
+		}
+		read(http.MethodPost, "/__showcase/parts?refuseDownload="+flag)
+		if code, _ := jfGet(t, srv, "/Audio/"+jf+"/stream?static=true"); code != http.StatusOK {
+			t.Errorf("refuse=%v: stream answered %d", refuse, code)
+		}
+		wantDownload := http.StatusOK
+		if refuse {
+			wantDownload = http.StatusForbidden
+		}
+		if code, _ := jfGet(t, srv, "/Items/"+jf+"/Download"); code != wantDownload {
+			t.Errorf("refuse=%v: Download answered %d, want %d", refuse, code, wantDownload)
+		}
+		got := read(http.MethodGet, "/__showcase/parts").Parts
+		if len(got) != 2 || got[0].Route != "stream" || got[0].Download ||
+			got[1].Route != "Download" || !got[1].Download || got[1].Status != wantDownload {
+			t.Errorf("refuse=%v: log %+v", refuse, got)
+		}
+	}
+}

@@ -55,16 +55,27 @@ type Server struct {
 	// unless SHOWCASE_PLEX_REFUSE_PLAIN=1 is set or a probe POSTs
 	// /__showcase/parts?refusePlain=1 (read through refusesPlain).
 	RefusePlainParts bool
-	// Every Plex song-file request, newest last, for a probe to check
-	// whether the app asked with Plex's download flag (which a real Plex
-	// lists as a "Media download"): GET /__showcase/parts on the Plex
-	// port, DELETE clears.
+	// RefuseJellyfinDownload answers Jellyfin's /Items/{id}/Download with
+	// 403, as Jellyfin does for a user without the download permission —
+	// for the phone's test that a lossless Jellyfin song plays without it.
+	// Off unless SHOWCASE_JELLYFIN_REFUSE_DOWNLOAD=1 is set or a probe
+	// POSTs /__showcase/parts?refuseDownload=1 on the Jellyfin port.
+	RefuseJellyfinDownload bool
+	// Every Plex or Jellyfin song-file request this Server answered, newest
+	// last, for a probe to check whether the app asked for a download (which
+	// a real Plex lists as a "Media download" and a real Jellyfin logs as "is
+	// downloading"): GET /__showcase/parts on that dialect's port, DELETE
+	// clears. The command runs each dialect as its own Server.
 	partRequests []partRequest
 }
 
-// partRequest is one recorded Plex song-file request.
+// partRequest is one recorded song-file request: a Plex part, or a
+// Jellyfin song by route ("stream", "universal" or "Download").
 type partRequest struct {
-	Part     int    `json:"part"`
+	Server   string `json:"server"`
+	Part     int    `json:"part,omitempty"`
+	Item     string `json:"item,omitempty"`
+	Route    string `json:"route,omitempty"`
 	Download bool   `json:"download"`
 	Status   int    `json:"status"`
 	At       string `json:"at"`
@@ -86,6 +97,13 @@ func (s *Server) refusesPlain() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.RefusePlainParts
+}
+
+// refusesDownload reads RefuseJellyfinDownload (a probe may switch it).
+func (s *Server) refusesDownload() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.RefuseJellyfinDownload
 }
 
 // recordedParts returns a copy of the song-file requests; clear empties them.
@@ -149,8 +167,9 @@ func (s *Server) plexTrackCodec() string {
 func New(cat *Catalog, clipsDir string) *Server {
 	return &Server{cat: cat, clipsDir: clipsDir, Token: "showcase-token", progress: map[string]float64{},
 		log: log.New(os.Stdout, "", log.Ltime), LossyMusic: os.Getenv("SHOWCASE_LOSSY_MUSIC") == "1",
-		Books:            os.Getenv("SHOWCASE_JELLYFIN_BOOKS") == "1",
-		RefusePlainParts: os.Getenv("SHOWCASE_PLEX_REFUSE_PLAIN") == "1"}
+		Books:                  os.Getenv("SHOWCASE_JELLYFIN_BOOKS") == "1",
+		RefusePlainParts:       os.Getenv("SHOWCASE_PLEX_REFUSE_PLAIN") == "1",
+		RefuseJellyfinDownload: os.Getenv("SHOWCASE_JELLYFIN_REFUSE_DOWNLOAD") == "1"}
 }
 
 // ---- JSON / HTTP helpers ---------------------------------------------------

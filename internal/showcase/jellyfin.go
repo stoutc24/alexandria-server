@@ -34,6 +34,20 @@ func (s *Server) JellyfinHandler() http.Handler {
 
 func (s *Server) jellyfin(w http.ResponseWriter, r *http.Request) {
 	p := pathParts(r.URL.Path)
+	// The song-file log, in every mode (the Books-only readouts below stay
+	// as they were): GET /__showcase/parts → this dialect's requests (the
+	// command runs each dialect as its own Server, with its own log);
+	// DELETE clears; POST ?refuseDownload=1|0 switches
+	// RefuseJellyfinDownload (and clears).
+	if len(p) == 2 && p[0] == "__showcase" && p[1] == "parts" {
+		if r.Method == http.MethodPost {
+			s.mu.Lock()
+			s.RefuseJellyfinDownload = qStr(r, "refuseDownload") == "1"
+			s.mu.Unlock()
+		}
+		ok(w, map[string]any{"parts": s.recordedParts(r.Method != http.MethodGet), "refuseDownload": s.refusesDownload()})
+		return
+	}
 	// Tolerate a path prefix (the demo uses /stable): drop leading segments
 	// until a known root appears.
 	roots := map[string]bool{"System": true, "Users": true, "QuickConnect": true, "Items": true, "Artists": true, "Genres": true,
@@ -998,6 +1012,12 @@ func (s *Server) jfItemsRoot(w http.ResponseWriter, r *http.Request, p []string)
 		s.jfPlaybackInfo(w, r, id)
 	case "Download":
 		if t, isTrack := s.cat.Get(id).(*Track); isTrack {
+			if s.refusesDownload() {
+				s.recordPart(partRequest{Server: "jellyfin", Item: s.cat.JFID(t.ID), Route: "Download", Download: true, Status: http.StatusForbidden})
+				http.Error(w, "no download permission", http.StatusForbidden)
+				return
+			}
+			s.recordPart(partRequest{Server: "jellyfin", Item: s.cat.JFID(t.ID), Route: "Download", Download: true, Status: http.StatusOK})
 			serveWAV(w, r, t.Seed, t.Duration)
 			return
 		}
@@ -1040,6 +1060,16 @@ func (s *Server) jfPlaybackInfo(w http.ResponseWriter, r *http.Request, id strin
 func (s *Server) jfArtists(w http.ResponseWriter, r *http.Request, p []string) {
 	if len(p) >= 1 && p[0] != "AlbumArtists" {
 		id := s.cat.IDForJF(p[0])
+		if id == "" && len(p) == 1 {
+			// Jellyfin also answers /Artists/{name} with that artist — the
+			// phone's Now Playing reaches an artist page that way.
+			for _, a := range s.cat.Artists {
+				if strings.EqualFold(a.Name, p[0]) {
+					id = a.ID
+					break
+				}
+			}
+		}
 		if a, isArtist := s.cat.Get(id).(*Artist); isArtist {
 			if len(p) >= 2 && p[1] == "Similar" {
 				var items []map[string]any
@@ -1216,6 +1246,7 @@ func (s *Server) jfAudio(w http.ResponseWriter, r *http.Request, p []string) {
 	}
 	switch strings.ToLower(p[1]) {
 	case "universal", "stream", "stream.wav":
+		s.recordPart(partRequest{Server: "jellyfin", Item: s.cat.JFID(t.ID), Route: strings.ToLower(p[1]), Status: http.StatusOK})
 		serveWAV(w, r, t.Seed, t.Duration)
 	case "lyrics":
 		notFound(w)
