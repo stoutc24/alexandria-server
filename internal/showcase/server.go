@@ -61,6 +61,12 @@ type Server struct {
 	// Off unless SHOWCASE_JELLYFIN_REFUSE_DOWNLOAD=1 is set or a probe
 	// POSTs /__showcase/parts?refuseDownload=1 on the Jellyfin port.
 	RefuseJellyfinDownload bool
+	// ClipLengthVideo serves every film's and episode's HLS playlist at its
+	// clip's own length instead of stretched to the running time, so an
+	// episode ENDS within seconds — for the TV's probe that Play All runs a
+	// whole show through (owner, 2026-10-28). Off unless
+	// SHOWCASE_CLIP_LENGTH_VIDEO=1 is set.
+	ClipLengthVideo bool
 	// Every Plex or Jellyfin song-file request this Server answered, newest
 	// last, for a probe to check whether the app asked for a download (which
 	// a real Plex lists as a "Media download" and a real Jellyfin logs as "is
@@ -169,7 +175,8 @@ func New(cat *Catalog, clipsDir string) *Server {
 		log: log.New(os.Stdout, "", log.Ltime), LossyMusic: os.Getenv("SHOWCASE_LOSSY_MUSIC") == "1",
 		Books:                  os.Getenv("SHOWCASE_JELLYFIN_BOOKS") == "1",
 		RefusePlainParts:       os.Getenv("SHOWCASE_PLEX_REFUSE_PLAIN") == "1",
-		RefuseJellyfinDownload: os.Getenv("SHOWCASE_JELLYFIN_REFUSE_DOWNLOAD") == "1"}
+		RefuseJellyfinDownload: os.Getenv("SHOWCASE_JELLYFIN_REFUSE_DOWNLOAD") == "1",
+		ClipLengthVideo:        os.Getenv("SHOWCASE_CLIP_LENGTH_VIDEO") == "1"}
 }
 
 // ---- JSON / HTTP helpers ---------------------------------------------------
@@ -472,7 +479,7 @@ func (s *Server) serveRuntimePlaylist(w http.ResponseWriter, r *http.Request, cl
 		return
 	}
 	text, stretched := stretchPlaylist(string(data), seconds)
-	if !stretched {
+	if !stretched || s.ClipLengthVideo {
 		s.serveClipFile(w, r, clip, "index.m3u8")
 		return
 	}
