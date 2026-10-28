@@ -89,6 +89,10 @@ func (h *NowPlayingHandler) Report(c *fiber.Ctx) error {
 		// server's clock (the reporter's clock plus its offset from
 		// GET /time). Optional; without it arrival time stands in.
 		SampledAtServerMs *int64 `json:"sampledAtServerMs"`
+		// EditsQueue: this device carries out queue edits while it leads;
+		// QueueEditAck: the last edit seq it carried out.
+		EditsQueue   bool   `json:"editsQueue"`
+		QueueEditAck *int64 `json:"queueEditAck"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -115,7 +119,9 @@ func (h *NowPlayingHandler) Report(c *fiber.Ctx) error {
 		// The store decides whether the queue lands, with the report and
 		// under the same lock: a device that another device's seat
 		// refuses cannot replace the party's queue.
-		Queue: req.Queue,
+		Queue:        req.Queue,
+		EditsQueue:   req.EditsQueue,
+		QueueEditAck: req.QueueEditAck,
 	}
 	if req.PositionMs != nil {
 		st.PositionMs = *req.PositionMs
@@ -273,11 +279,20 @@ func (h *NowPlayingHandler) Intent(c *fiber.Ctx) error {
 		Index           *int   `json:"index"`
 		BasedOnRevision int64  `json:"basedOnRevision"`
 		IfQueueRevision *int64 `json:"ifQueueRevision"`
+		// Queue edits: addToQueue carries items (and next); removeFromQueue
+		// an index, an itemId and ifQueueRevision.
+		Items  []nowplaying.QueueItem `json:"items"`
+		Next   bool                   `json:"next"`
+		ItemID string                 `json:"itemId"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "invalid request body",
 		})
+	}
+	if body.Type == nowplaying.IntentAddToQueue || body.Type == nowplaying.IntentRemoveFromQueue {
+		return h.editQueue(c, profileID, deviceLabel, body.Type, body.Items, body.Next,
+			body.Index, body.ItemID, body.IfQueueRevision)
 	}
 	in := nowplaying.IntentRequest{Type: body.Type, BasedOnRevision: body.BasedOnRevision}
 	switch body.Type {
@@ -299,7 +314,7 @@ func (h *NowPlayingHandler) Intent(c *fiber.Ctx) error {
 		in.IfQueueRevision = body.IfQueueRevision
 	default:
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "type must be setPlaying, setPositionMs or setIndex",
+			"error": "type must be setPlaying, setPositionMs, setIndex, addToQueue or removeFromQueue",
 		})
 	}
 
@@ -328,6 +343,90 @@ func (h *NowPlayingHandler) Intent(c *fiber.Ctx) error {
 		})
 	}
 	return c.JSON(fiber.Map{"ok": true, "state": stamped(c, st)})
+}
+
+// editQueue is the Intent route's addToQueue / removeFromQueue: a change
+// to the party's queue that the LEADER carries out (Store.EditQueue).
+// Every field is bounded here: an entry is metadata only — a source, an
+// id, a title — never a URL or a credential, and nothing in it is read
+// by the server beyond its length.
+func (h *NowPlayingHandler) editQueue(c *fiber.Ctx, profileID, deviceLabel, kind string,
+	items []nowplaying.QueueItem, next bool, index *int, itemID string, ifQueueRevision *int64) error {
+	bad := func(msg string) error {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": msg})
+	}
+	in := nowplaying.QueueEditRequest{Type: kind}
+	switch kind {
+	case nowplaying.IntentAddToQueue:
+		if len(items) == 0 || len(items) > nowplaying.MaxEditItems {
+			return bad("items: send 1 to " + strconv.Itoa(nowplaying.MaxEditItems) + " entries")
+		}
+		for _, it := range items {
+			if !validQueueSource(it.Source) || it.ItemID == "" ||
+				len(it.ItemID) > nowplaying.MaxQueueFieldLen ||
+				len(it.Title) > nowplaying.MaxQueueFieldLen ||
+				len(it.Author) > nowplaying.MaxQueueFieldLen ||
+				it.DurationSec < 0 || it.DurationSec > 86400 {
+				return bad("each item needs a source, an itemId and fields within their limits")
+			}
+		}
+		in.Items = items
+		in.Next = next
+	case nowplaying.IntentRemoveFromQueue:
+		if index == nil || *index < 0 || ifQueueRevision == nil ||
+			itemID == "" || len(itemID) > nowplaying.MaxQueueFieldLen {
+			return bad("index, itemId and ifQueueRevision are required")
+		}
+		in.Index = *index
+		in.ItemID = itemID
+		in.IfQueueRevision = *ifQueueRevision
+	}
+
+	st, outcome := h.store.EditQueue(profileID, deviceLabel, in)
+	switch outcome {
+	case nowplaying.OutcomeNoSession:
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "nothing is playing",
+			"code":  "no-session",
+		})
+	case nowplaying.OutcomeLegacyLeader:
+		return refused(c, "legacy-leader", "the playing device cannot be controlled remotely; update Alexandria on it", st)
+	case nowplaying.OutcomeLeaderAsleep:
+		return refused(c, "leader-asleep", "nobody is leading the party right now", st)
+	case nowplaying.OutcomeLeaderCannotEdit:
+		label := st.LeaderLabel
+		if label == "" {
+			label = "the playing device"
+		}
+		return refused(c, "leader-cannot-edit", label+" can't take queue changes yet; update Alexandria on it", st)
+	case nowplaying.OutcomeNoQueue:
+		return refused(c, "no-queue", "this session has no queue to change", st)
+	case nowplaying.OutcomeIsCurrent:
+		return refused(c, "is-current", "that song is playing; skip it instead", st)
+	case nowplaying.OutcomeStale:
+		return refused(c, "stale", "the queue changed since this device looked", st)
+	case nowplaying.OutcomeBusy:
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+			"error": "too many queue changes are waiting on the leader",
+			"code":  "busy",
+			"state": stamped(c, st),
+		})
+	}
+	return c.JSON(fiber.Map{"ok": true, "state": stamped(c, st)})
+}
+
+// validQueueSource: a short lowercase word ("plex", "jellyfin",
+// "subsonic"), never anything a client could smuggle more into.
+func validQueueSource(s string) bool {
+	if s == "" || len(s) > 32 {
+		return false
+	}
+	for _, r := range s {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	return true
 }
 
 // Clear is the explicit stop. ?reason=stopped from a leader with

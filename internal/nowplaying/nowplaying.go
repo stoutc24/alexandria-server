@@ -200,6 +200,20 @@ type State struct {
 	LeaderAckRevision  int64   `json:"leaderAckRevision,omitempty"`
 	ItemRevision       int64   `json:"itemRevision,omitempty"`
 
+	// QueueEdits (read-time) are the changes devices asked of the
+	// leader's queue that it has not carried out yet, oldest first (owner,
+	// 2026-10-28: "Remote and Party Play devices need the ability to add
+	// songs to party play queue, and remove songs"). The leader owns its
+	// queue: it applies each one, publishes the queue that results and
+	// acknowledges the last seq it applied (ReportOpts.QueueEditAck).
+	// Never stored from a report.
+	QueueEdits []QueueEdit `json:"queueEdits,omitempty"`
+	// LeaderEditsQueue: the seat holder carries out QueueEdits, as its
+	// reports say. While a leader that predates them holds the seat, an
+	// edit is refused rather than left waiting for a device that will
+	// never act on it.
+	LeaderEditsQueue bool `json:"leaderEditsQueue,omitempty"`
+
 	// FollowerCount is how many OTHER devices are actively following
 	// this profile right now. Zero means nobody joined: the party is
 	// inactive and every device should just play locally. Non-zero
@@ -326,6 +340,13 @@ const (
 	OutcomeNotLeader
 	// OutcomeNoSuchFollower: the named device is not a live follower.
 	OutcomeNoSuchFollower
+	// OutcomeLeaderCannotEdit: the leader does not carry out queue edits
+	// (it predates them).
+	OutcomeLeaderCannotEdit
+	// OutcomeBusy: too many queue edits are already waiting on the leader.
+	OutcomeBusy
+	// OutcomeIsCurrent: a removal named the song that is playing.
+	OutcomeIsCurrent
 )
 
 // ReportOpts is who is reporting and what they had seen. Device identity
@@ -356,6 +377,12 @@ type ReportOpts struct {
 	// alone; its queue is held for that device instead (see Store.held).
 	// nil keeps the stored queue; an empty list clears it.
 	Queue *[]QueueItem
+	// EditsQueue: this device carries out QueueEdits while it leads.
+	EditsQueue bool
+	// QueueEditAck, from the seat holder, is the last QueueEdit seq it
+	// has carried out; every edit up to it is dropped. A leader repeats
+	// it on every report, so a refused one costs nothing.
+	QueueEditAck *int64
 }
 
 // IntentRequest is a proposed state change. Every type is absolute and
@@ -383,6 +410,49 @@ const (
 	IntentSetPlaying    = "setPlaying"
 	IntentSetPositionMs = "setPositionMs"
 	IntentSetIndex      = "setIndex"
+	// Queue edits (EditQueue): carried out by the leader, not the server.
+	IntentAddToQueue      = "addToQueue"
+	IntentRemoveFromQueue = "removeFromQueue"
+)
+
+// QueueEdit is one change a device asked of the leader's queue. An add
+// carries Items (metadata only, like the published queue) for after the
+// playing song (Next) or the end; a removal names the entry by its index
+// in the published queue AND its ItemID, as the device saw them.
+type QueueEdit struct {
+	Seq     int64       `json:"seq"`
+	Type    string      `json:"type"`
+	Items   []QueueItem `json:"items,omitempty"`
+	Next    bool        `json:"next,omitempty"`
+	Index   int         `json:"index"`
+	ItemID  string      `json:"itemId,omitempty"`
+	ByLabel string      `json:"byLabel,omitempty"`
+	AtMs    int64       `json:"atMs"`
+}
+
+// QueueEditRequest is a device's ask; the handler has bounded every field.
+type QueueEditRequest struct {
+	Type  string
+	Items []QueueItem
+	Next  bool
+	// Removal: the entry's index in the published queue, its ItemID, and
+	// the queue revision both were read at.
+	Index           int
+	ItemID          string
+	IfQueueRevision int64
+}
+
+// Queue-edit bounds. An add is at most an album or a page of a playlist;
+// what waits on the leader at once is capped too, so a leader that stops
+// acknowledging (asleep, crashed) cannot let the list grow. An edit the
+// leader has not carried out after editTTL is dropped: by then it has
+// gone, and the person has long since seen nothing happen.
+const (
+	MaxEditItems     = 100
+	maxPendingItems  = 200
+	maxPendingEdits  = 32
+	editTTL          = 60 * time.Second
+	MaxQueueFieldLen = 512
 )
 
 type presenceEntry struct {
@@ -459,6 +529,12 @@ type Store struct {
 	// report itself replaced the queue of the party another device was
 	// leading. At most maxHeldQueues per profile, gone with the state.
 	held map[string][]heldQueue
+	// edits[profile] are the queue edits waiting on the leader, oldest
+	// first; editSeq numbers them, seeded like the revisions so a seq
+	// never goes backwards across a restart (a leader skips any seq it
+	// has already carried out). Gone with the state.
+	edits   map[string][]QueueEdit
+	editSeq map[string]int64
 
 	// anchor[profile] = when the current track started (server ms).
 	anchor map[string]int64
@@ -502,6 +578,8 @@ func NewStore() *Store {
 		m:             make(map[string]State),
 		q:             make(map[string][]QueueItem),
 		held:          make(map[string][]heldQueue),
+		edits:         make(map[string][]QueueEdit),
+		editSeq:       make(map[string]int64),
 		rev:           make(map[string]int64),
 		qrev:          make(map[string]int64),
 		anchor:        make(map[string]int64),
@@ -734,6 +812,13 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 	st.LeaderReportedAtMs = nowMs
 	st.SeatVacantSinceMs = 0
 	st.EndedByLeader = false
+	// Queue edits never come from the body: the seat holder says only
+	// whether it carries them out, and how far it has.
+	st.QueueEdits = nil
+	st.LeaderEditsQueue = opts.EditsQueue
+	if opts.QueueEditAck != nil {
+		s.ackEditsLocked(profileID, *opts.QueueEditAck)
+	}
 	if had {
 		st.IntentSeq = prev.IntentSeq
 		st.LastIntent = prev.LastIntent
@@ -862,6 +947,128 @@ func (s *Store) extrapolatedLocked(profileID string, st State, nowMs int64) int6
 		pos = 0
 	}
 	return pos
+}
+
+// EditQueue records a device's change to the party's queue for the leader
+// to carry out: the leader owns its queue (a phone's holds tracks a
+// joiner never sees, beyond the published window), so the server checks
+// the ask against what it knows, wakes the leader, and keeps the edit
+// until the leader acknowledges it. Everyone sees the result when the
+// leader's next queue lands.
+func (s *Store) EditQueue(profileID, byLabel string, in QueueEditRequest) (State, Outcome) {
+	now := time.Now()
+	nowMs := now.UnixMilli()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st, ok := s.m[profileID]
+	if !ok || st.Ended {
+		return State{}, OutcomeNoSession
+	}
+	switch {
+	case !s.seatLiveLocked(st, nowMs):
+		// Nobody leads right now to carry it out.
+		return s.readLocked(profileID, st, nowMs), OutcomeLeaderAsleep
+	case st.LegacyLeader:
+		return s.readLocked(profileID, st, nowMs), OutcomeLegacyLeader
+	case !st.LeaderEditsQueue:
+		return s.readLocked(profileID, st, nowMs), OutcomeLeaderCannotEdit
+	case st.Source == "abs":
+		// A book has no queue.
+		return s.readLocked(profileID, st, nowMs), OutcomeNoQueue
+	}
+	s.sweepEditsLocked(profileID, nowMs)
+	pending := s.edits[profileID]
+
+	edit := QueueEdit{Type: in.Type, ByLabel: byLabel, AtMs: nowMs}
+	switch in.Type {
+	case IntentAddToQueue:
+		waiting := 0
+		for _, e := range pending {
+			waiting += len(e.Items)
+		}
+		if len(in.Items) == 0 || len(in.Items) > MaxEditItems {
+			return s.readLocked(profileID, st, nowMs), OutcomeStale
+		}
+		if len(pending) >= maxPendingEdits || waiting+len(in.Items) > maxPendingItems {
+			return s.readLocked(profileID, st, nowMs), OutcomeBusy
+		}
+		edit.Items = append([]QueueItem(nil), in.Items...)
+		edit.Next = in.Next
+
+	case IntentRemoveFromQueue:
+		items := s.q[profileID]
+		if len(items) == 0 {
+			return s.readLocked(profileID, st, nowMs), OutcomeNoQueue
+		}
+		// The entry the device saw, where it saw it — or nothing: a list
+		// that moved since gets the new state, and the device looks again.
+		if in.IfQueueRevision != st.QueueRevision ||
+			in.Index < 0 || in.Index >= len(items) ||
+			items[in.Index].ItemID != in.ItemID {
+			return s.readLocked(profileID, st, nowMs), OutcomeStale
+		}
+		if in.Index == st.QueueIndex {
+			return s.readLocked(profileID, st, nowMs), OutcomeIsCurrent
+		}
+		for _, e := range pending {
+			if e.Type == IntentRemoveFromQueue && e.Index == in.Index && e.ItemID == in.ItemID {
+				// Two rooms removing the same song: one removal.
+				return s.readLocked(profileID, st, nowMs), OutcomeOK
+			}
+		}
+		if len(pending) >= maxPendingEdits {
+			return s.readLocked(profileID, st, nowMs), OutcomeBusy
+		}
+		edit.Index = in.Index
+		edit.ItemID = in.ItemID
+
+	default:
+		return s.readLocked(profileID, st, nowMs), OutcomeStale
+	}
+
+	edit.Seq = bump(s.editSeq, profileID, s.bootMs)
+	s.edits[profileID] = append(pending, edit)
+	st.Revision = s.nextRevLocked(profileID)
+	s.m[profileID] = st
+	s.lastActivity[profileID] = now
+	s.notifyLocked(profileID)
+	return s.readLocked(profileID, st, nowMs), OutcomeOK
+}
+
+// ackEditsLocked drops every queue edit up to seq: the leader has carried
+// them out. Caller holds the write lock.
+func (s *Store) ackEditsLocked(profileID string, seq int64) {
+	pending := s.edits[profileID]
+	keep := pending[:0:0]
+	for _, e := range pending {
+		if e.Seq > seq {
+			keep = append(keep, e)
+		}
+	}
+	if len(keep) == 0 {
+		delete(s.edits, profileID)
+	} else {
+		s.edits[profileID] = keep
+	}
+}
+
+// sweepEditsLocked drops queue edits older than editTTL. Caller holds the
+// write lock.
+func (s *Store) sweepEditsLocked(profileID string, nowMs int64) {
+	pending := s.edits[profileID]
+	keep := pending[:0:0]
+	for _, e := range pending {
+		if nowMs-e.AtMs <= editTTL.Milliseconds() {
+			keep = append(keep, e)
+		}
+	}
+	if len(keep) == 0 {
+		delete(s.edits, profileID)
+	} else {
+		s.edits[profileID] = keep
+	}
 }
 
 // ApplyIntent mutates the session the way a device asked, if the seat
@@ -1215,6 +1422,14 @@ func (s *Store) readLocked(profileID string, st State, nowMs int64) State {
 	st.FollowerCount = len(st.Followers)
 	st.LeaderDormant = st.LeaderTokenID != "" && !s.seatLiveLocked(st, nowMs)
 	st.AnchorRefreshPending = !st.Ended && s.anchorRefresh[profileID]
+	st.QueueEdits = nil
+	if !st.Ended {
+		for _, e := range s.edits[profileID] {
+			if nowMs-e.AtMs <= editTTL.Milliseconds() {
+				st.QueueEdits = append(st.QueueEdits, e)
+			}
+		}
+	}
 	// The counter is the truth: presence changes bump it without
 	// rewriting the stored state, and a reader must see that bump or
 	// its next long-poll parks on a revision that has already passed.
@@ -1314,6 +1529,7 @@ func (s *Store) Get(profileID string) (State, bool) {
 		delete(s.m, profileID)
 		delete(s.q, profileID)
 		delete(s.held, profileID)
+		delete(s.edits, profileID)
 		delete(s.anchorRefresh, profileID)
 		delete(s.withdrawn, profileID)
 		return State{}, false
@@ -1325,6 +1541,7 @@ func (s *Store) Get(profileID string) (State, bool) {
 			delete(s.m, profileID)
 			delete(s.q, profileID)
 			delete(s.held, profileID)
+			delete(s.edits, profileID)
 			delete(s.lastActivity, profileID)
 			delete(s.withdrawn, profileID)
 			return State{}, false
@@ -1451,6 +1668,7 @@ func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcom
 		s.m[profileID] = st
 		delete(s.q, profileID)
 		delete(s.held, profileID)
+		delete(s.edits, profileID)
 		delete(s.anchorRefresh, profileID)
 		delete(s.withdrawn, profileID)
 		s.lastActivity[profileID] = now
@@ -1478,6 +1696,7 @@ func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcom
 	delete(s.m, profileID)
 	delete(s.q, profileID)
 	delete(s.held, profileID)
+	delete(s.edits, profileID)
 	delete(s.lastActivity, profileID)
 	delete(s.anchorRefresh, profileID)
 	delete(s.withdrawn, profileID)
