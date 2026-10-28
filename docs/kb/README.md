@@ -18,6 +18,7 @@ installing and running the Alexandria companion server itself, see the
 | [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; intros and skits skipped |
 | [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag; the Artist tab; a party on a big screen |
 | [Adding and removing songs at a party](party-queue.md) | Play Next, Add to Party Queue and ✕ from party devices and the Remote; Plex songs; messages |
+| [TV shows on the Apple TV](apple-tv-shows.md) | Which season a show opens on, Play All (Specials left out), Play Season and Auto-play |
 
 Contact for questions or problems: stoutservers@gmail.com
 
@@ -56,3 +57,6 @@ These were proven in tests and simulators, not yet on hardware:
       phone following; the Apple TV's following path is untested).
 - [ ] Windows, Mac and iPad: Now Playing during a party keeps the whole
       player and its tabs (next builds; proven in a unit test only).
+- [ ] Apple TV shows: Play All runs the whole show without stopping, leaves
+      out the Specials, and opens on the right season; Play Season follows
+      Auto-play (next TV build; proven in the simulator on the showcase).
