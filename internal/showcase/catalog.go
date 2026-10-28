@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -200,6 +201,9 @@ func Build(now time.Time, clips []string) *Catalog {
 	c.buildBooks()
 	c.buildMusic()
 	c.buildVideo()
+	if os.Getenv("SHOWCASE_SPECIALS") == "1" {
+		c.addSpecials()
+	}
 	c.buildCollections()
 	c.assignKeys()
 	c.registerPeople()
@@ -447,6 +451,32 @@ func (c *Catalog) buildCollections() {
 }
 
 // ---- keys ------------------------------------------------------------------
+
+// addSpecials (SHOWCASE_SPECIALS=1) gives two shows — one on each half,
+// Plex's and Jellyfin's — a Specials season (index 0) of two unwatched
+// episodes, at the FRONT of their seasons, where Plex lists them (measured
+// on the owner's library, 2026-10-28). For the TV's probe that Play All
+// leaves them out. Their ids sort after every other id, so no other item's
+// rating key moves. Off by default: the store screenshots stay as they are.
+func (c *Catalog) addSpecials() {
+	for _, sh := range c.Shows {
+		if sh.Title != "Low Tide at Ferris Cove" && sh.Title != "Four Kitchens" {
+			continue
+		}
+		se := &Season{ID: "zz-specials-" + sh.ID, Show: sh, Index: 0}
+		for i, title := range []string{"Behind the Scenes", "The Making Of"} {
+			ep := &Episode{ID: fmt.Sprintf("zz-special-%s-%02d", sh.ID, i+1), Show: sh, Season: se,
+				Index: i + 1, Title: title, Summary: "A look behind the series.", Minutes: 20,
+				Aired: sh.AddedAt}
+			ep.Clip = c.clipFor("episode:" + ep.ID)
+			se.Episodes = append(se.Episodes, ep)
+			c.Episodes = append(c.Episodes, ep)
+			c.register(ep.ID, ep)
+		}
+		sh.Seasons = append([]*Season{se}, sh.Seasons...)
+		c.register(se.ID, se)
+	}
+}
 
 func (c *Catalog) assignKeys() {
 	ids := make([]string, 0, len(c.byID))
