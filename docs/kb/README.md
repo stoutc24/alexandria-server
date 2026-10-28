@@ -13,7 +13,7 @@ installing and running the Alexandria companion server itself, see the
 | [How Alexandria protects your AI keys](ai-keys-and-security.md) | Where keys are kept, why a saved key is never shown, http |
 | [Use your own AI server](ai-home-server.md) | Ollama, LM Studio, llama.cpp on your network |
 | [The Librarian](librarian.md) | Asking about your library, private chat, history, commands |
-| [The Mac app and wide windows](mac-app.md) | Closing the window, menu bar Now Playing, the docked player |
+| [The Mac and Windows apps and wide windows](mac-app.md) | Scrolling with a mouse or trackpad, closing the window, menu bar Now Playing, the docked player, how pages fit a wide window |
 | [Alexandria in the car](car.md) | CarPlay and Android Auto: the tabs, radio stations, artists, going deeper |
 | [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; intros and skits skipped |
 | [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag; the Artist tab; a party on a big screen |
@@ -30,6 +30,10 @@ These were proven in tests and simulators, not yet on hardware:
       back; a video pauses on close (build 1230).
 - [ ] Mac: pause and skip from Now Playing in the menu bar.
 - [ ] Mac and iPad: the docked player sits under every page (build 1231).
+- [ ] Windows and Mac with a mouse: dragging scrolls lists and rows of
+      covers; dragging down at the top refreshes (added 2026-10-28).
+- [ ] Windows, Mac and iPad: Now Playing is one centred block; album, book,
+      Home and Search pages stop at their widths (added 2026-10-28).
 - [ ] iPhone: a key saved before 1231 still works after the update (it moves
       to the strictest keychain class on first launch).
 - [ ] CarPlay and Android Auto: "Stations for you" leads each music page,
