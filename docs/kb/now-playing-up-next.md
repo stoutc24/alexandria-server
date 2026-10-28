@@ -26,8 +26,17 @@ playing song sits lower down.
 - **Swipe left** on a song to remove it.
 - **Drag the handle** on the right of a song to move it.
 
-Following someone else's Party Play, the list shows their queue: you can
-tap a song to ask the party to play it, but not remove or move songs.
+Following someone else's Party Play, the list shows the party's queue. Tap
+a song to ask the party to play it, or tap **✕** to take it out. Moving songs
+is up to the device that leads. See
+[Adding and removing songs at a party](party-queue.md).
+
+## A party on a big screen
+
+On Windows, the Mac and the iPad, Now Playing during a party keeps the whole
+player: the controls on one side, and **Up Next**, **Lyrics**, **Artist** and
+**Party** tabs on the other. The party view that replaces the player is only
+for a phone turned sideways.
 
 ## The Artist tab
 

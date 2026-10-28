@@ -16,7 +16,8 @@ installing and running the Alexandria companion server itself, see the
 | [The Mac app and wide windows](mac-app.md) | Closing the window, menu bar Now Playing, the docked player |
 | [Alexandria in the car](car.md) | CarPlay and Android Auto: the tabs, radio stations, artists, going deeper |
 | [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; intros and skits skipped |
-| [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag; the Artist tab |
+| [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag; the Artist tab; a party on a big screen |
+| [Adding and removing songs at a party](party-queue.md) | Play Next, Add to Party Queue and ✕ from party devices and the Remote; Plex songs; messages |
 
 Contact for questions or problems: stoutservers@gmail.com
 
@@ -49,3 +50,9 @@ These were proven in tests and simulators, not yet on hardware:
       read-only).
 - [ ] Now Playing › Artist: the artist's picture opens their page (next
       phone build; proven in the simulator for Plex and Jellyfin).
+- [ ] Party queue: Play Next, Add to Party Queue and ✕ from a following
+      phone, a Remote and an Apple TV (next builds and server fc9ae97;
+      proven in the simulators for a phone and an Apple TV leading and a
+      phone following; the Apple TV's following path is untested).
+- [ ] Windows, Mac and iPad: Now Playing during a party keeps the whole
+      player and its tabs (next builds; proven in a unit test only).
