@@ -13,7 +13,7 @@ installing and running the Alexandria companion server itself, see the
 | [How Alexandria protects your AI keys](ai-keys-and-security.md) | Where keys are kept, why a saved key is never shown, http |
 | [Use your own AI server](ai-home-server.md) | Ollama, LM Studio, llama.cpp on your network |
 | [The Librarian](librarian.md) | Asking about your library, looking things up, private chat, history, commands |
-| [The Mac and Windows apps and wide windows](mac-app.md) | Scrolling with a mouse or trackpad, closing the window, menu bar Now Playing, the docked player, how pages fit a wide window |
+| [The Mac and Windows apps and wide windows](mac-app.md) | Scrolling with a mouse or trackpad, closing the window, menu bar Now Playing, media keys on Windows, the docked player, how pages fit a wide window |
 | [Alexandria in the car](car.md) | CarPlay and Android Auto: the tabs, radio stations, artists, going deeper |
 | [Describe a playlist](playlist-builder.md) | "AJR radio", moods, lengths; when the AI picks the albums; what it costs |
 | [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; Start Station on an artist page; intros and skits skipped |
@@ -30,6 +30,9 @@ These were proven in tests and simulators, not yet on hardware:
 - [ ] Mac: closing the window keeps music playing; the Dock icon brings it
       back; a video pauses on close (build 1230).
 - [ ] Mac: pause and skip from Now Playing in the menu bar.
+- [ ] Windows: the keyboard's play/pause, next and previous keys, and the
+      song and cover in the volume pop-up (added 2026-10-29; proven in unit
+      tests, the Windows half only compiled).
 - [ ] Mac and iPad: the docked player sits under every page (build 1231).
 - [ ] Windows and Mac with a mouse: dragging scrolls lists and rows of
       covers; dragging down at the top refreshes (added 2026-10-28).

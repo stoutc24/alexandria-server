@@ -27,6 +27,21 @@ What Alexandria plays appears in the Mac's **Now Playing** in the menu bar
 and Control Center, with the cover, and can be paused and skipped from
 there while Alexandria is in the background.
 
+## The keyboard's media keys on Windows
+
+The play/pause, next and previous keys on your keyboard control what
+Alexandria plays, even while it is in the background. The Mac does the same
+through Now Playing.
+
+- **Play/pause** pauses or plays.
+- **Next** and **previous** move through the songs. In an audiobook they do
+  whatever Alexandria's own buttons for that book do.
+- The song, its artist and its cover show in Windows' volume pop-up, with
+  the same buttons.
+
+Alexandria loads the cover itself, so your server's address never reaches
+Windows.
+
 ## The sidebar and the docked player (Mac and iPad)
 
 On a wide window — the Mac, or an iPad wide enough — Alexandria shows a
