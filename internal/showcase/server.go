@@ -67,6 +67,11 @@ type Server struct {
 	// whole show through (owner, 2026-10-28). Off unless
 	// SHOWCASE_CLIP_LENGTH_VIDEO=1 is set.
 	ClipLengthVideo bool
+	// AllLeavesDelay holds a show's /allLeaves answer back, as a big show on
+	// a real Plex does, so the TV's next-episode lookup lands after playback
+	// has started — for the TV's probe of the player's tab row (owner,
+	// 2026-10-29). Zero unless SHOWCASE_PLEX_ALLLEAVES_DELAY_MS is set.
+	AllLeavesDelay time.Duration
 	// Every Plex or Jellyfin song-file request this Server answered, newest
 	// last, for a probe to check whether the app asked for a download (which
 	// a real Plex lists as a "Media download" and a real Jellyfin logs as "is
@@ -176,7 +181,18 @@ func New(cat *Catalog, clipsDir string) *Server {
 		Books:                  os.Getenv("SHOWCASE_JELLYFIN_BOOKS") == "1",
 		RefusePlainParts:       os.Getenv("SHOWCASE_PLEX_REFUSE_PLAIN") == "1",
 		RefuseJellyfinDownload: os.Getenv("SHOWCASE_JELLYFIN_REFUSE_DOWNLOAD") == "1",
-		ClipLengthVideo:        os.Getenv("SHOWCASE_CLIP_LENGTH_VIDEO") == "1"}
+		ClipLengthVideo:        os.Getenv("SHOWCASE_CLIP_LENGTH_VIDEO") == "1",
+		AllLeavesDelay:         envMillis("SHOWCASE_PLEX_ALLLEAVES_DELAY_MS")}
+}
+
+// envMillis reads a whole number of milliseconds from the environment; zero
+// when it is unset or not a number.
+func envMillis(name string) time.Duration {
+	n, err := strconv.Atoi(os.Getenv(name))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return time.Duration(n) * time.Millisecond
 }
 
 // ---- JSON / HTTP helpers ---------------------------------------------------

@@ -661,6 +661,9 @@ func (s *Server) plexMetadata(w http.ResponseWriter, r *http.Request, p []string
 	case "children":
 		ok(w, mc(map[string]any{"Metadata": s.plexChildren(id)}))
 	case "allLeaves":
+		if s.AllLeavesDelay > 0 {
+			time.Sleep(s.AllLeavesDelay)
+		}
 		var items []map[string]any
 		if sh, isShow := s.cat.Get(id).(*Show); isShow {
 			for _, e := range sh.AllEpisodes() {
