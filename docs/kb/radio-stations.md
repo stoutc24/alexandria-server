@@ -29,6 +29,17 @@ it starts over in a new order rather than stopping.
 **Stations for you** offers an artist's station only when your servers
 hold at least six records it would play, by more than that one artist.
 
+## Start a station from an artist's page
+
+Open an artist on a Plex, Jellyfin or Navidrome music server and tap
+**Start Station** under their name. The station plays from that server's
+music and Now Playing opens. On the Apple TV and Samsung TV the button is
+on Plex artist pages.
+
+The button isn't shown for an author in an audiobooks library: stations
+play music only. If that artist's station would be nothing but their own
+records, you see "Not enough similar music for …" and nothing changes.
+
 ## Genre, decade and AI stations
 
 - **Genre** ("Rap Radio"): every artist with that genre.

@@ -15,7 +15,7 @@ installing and running the Alexandria companion server itself, see the
 | [The Librarian](librarian.md) | Asking about your library, private chat, history, commands |
 | [The Mac and Windows apps and wide windows](mac-app.md) | Scrolling with a mouse or trackpad, closing the window, menu bar Now Playing, the docked player, how pages fit a wide window |
 | [Alexandria in the car](car.md) | CarPlay and Android Auto: the tabs, radio stations, artists, going deeper |
-| [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; intros and skits skipped |
+| [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; Start Station on an artist page; intros and skits skipped |
 | [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag; the Artist tab; a party on a big screen |
 | [Adding and removing songs at a party](party-queue.md) | Play Next, Add to Party Queue and ✕ from party devices and the Remote; Plex songs; messages |
 | [TV shows on the Apple TV](apple-tv-shows.md) | Which season a show opens on, Play All (Specials left out), Play Season and Auto-play |
