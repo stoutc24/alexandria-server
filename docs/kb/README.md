@@ -15,6 +15,7 @@ installing and running the Alexandria companion server itself, see the
 | [The Librarian](librarian.md) | Asking about your library, private chat, history, commands |
 | [The Mac and Windows apps and wide windows](mac-app.md) | Scrolling with a mouse or trackpad, closing the window, menu bar Now Playing, the docked player, how pages fit a wide window |
 | [Alexandria in the car](car.md) | CarPlay and Android Auto: the tabs, radio stations, artists, going deeper |
+| [Describe a playlist](playlist-builder.md) | "AJR radio", moods, lengths; when the AI picks the albums; what it costs |
 | [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; Start Station on an artist page; intros and skits skipped |
 | [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag; the Artist tab; a party on a big screen |
 | [Adding and removing songs at a party](party-queue.md) | Play Next, Add to Party Queue and ✕ from party devices and the Remote; Plex songs; messages |
@@ -32,6 +33,10 @@ These were proven in tests and simulators, not yet on hardware:
 - [ ] Mac and iPad: the docked player sits under every page (build 1231).
 - [ ] Windows and Mac with a mouse: dragging scrolls lists and rows of
       covers; dragging down at the top refreshes (added 2026-10-28).
+- [ ] Every app: Start Station on a Plex, Jellyfin and Navidrome artist
+      page plays a mix of artists (added 2026-10-28).
+- [ ] Describe a playlist with Claude: "AJR radio" gives AJR and similar
+      artists, marked Picked by AI (added 2026-10-28).
 - [ ] Windows, Mac and iPad: Now Playing is one centred block; album, book,
       Home and Search pages stop at their widths (added 2026-10-28).
 - [ ] iPhone: a key saved before 1231 still works after the update (it moves
