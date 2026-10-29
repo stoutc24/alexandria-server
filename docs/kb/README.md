@@ -12,7 +12,7 @@ installing and running the Alexandria companion server itself, see the
 | [AI spending and limits](ai-spending.md) | The monthly budget card, your whole account's spend, spend limits |
 | [How Alexandria protects your AI keys](ai-keys-and-security.md) | Where keys are kept, why a saved key is never shown, http |
 | [Use your own AI server](ai-home-server.md) | Ollama, LM Studio, llama.cpp on your network |
-| [The Librarian](librarian.md) | Asking about your library, private chat, history, commands |
+| [The Librarian](librarian.md) | Asking about your library, looking things up, private chat, history, commands |
 | [The Mac and Windows apps and wide windows](mac-app.md) | Scrolling with a mouse or trackpad, closing the window, menu bar Now Playing, the docked player, how pages fit a wide window |
 | [Alexandria in the car](car.md) | CarPlay and Android Auto: the tabs, radio stations, artists, going deeper |
 | [Describe a playlist](playlist-builder.md) | "AJR radio", moods, lengths; when the AI picks the albums; what it costs |
@@ -37,6 +37,8 @@ These were proven in tests and simulators, not yet on hardware:
       page plays a mix of artists (added 2026-10-28).
 - [ ] Describe a playlist with Claude: "AJR radio" gives AJR and similar
       artists, marked Picked by AI (added 2026-10-28).
+- [ ] The Librarian with Claude: a question about a series shows
+      "checking the … series" and answers from it (added 2026-10-28).
 - [ ] Windows, Mac and iPad: Now Playing is one centred block; album, book,
       Home and Search pages stop at their widths (added 2026-10-28).
 - [ ] iPhone: a key saved before 1231 still works after the update (it moves
