@@ -51,9 +51,29 @@ Alexandria](ai-claude-setup.md#if-something-goes-wrong) explains each one.
 On a home server, the first question after a quiet spell can take a while,
 because the model is loading.
 
+## Looking things up (Claude, OpenAI and other AI on the internet)
+
+With an AI on the internet, the Librarian can also look things up in your
+library while it answers, instead of guessing from the summary:
+
+- search your library by title or by author or artist;
+- everything by one author or artist: series in order, other books, albums;
+- one series: the volumes you have, which you have finished, and the volume
+  numbers you don't have;
+- what you have finished or have in progress.
+
+While it looks, the line above the answer says what it is checking, for
+example "checking the Cradle series". It makes at most 8 lookups for one
+answer. Lookups read only what is on this device; they can't change
+anything. Each lookup adds a little to the cost of that answer, and the
+monthly cap still applies ([AI spending and limits](ai-spending.md)).
+
+A home AI server and Private chat don't look anything up.
+
 ## Limits
 
-- The Librarian sees a summary of your library, not every row. For music it
-  knows artists and album counts, not individual songs.
+- Without lookups (a home AI server), the Librarian sees a summary of your
+  library, not every row. For music it knows artists and album counts, not
+  individual songs.
 - It cannot play, change, delete or download anything. Saving books and
   making plans happen only when you confirm.
