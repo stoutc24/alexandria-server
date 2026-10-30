@@ -32,6 +32,20 @@ party's queue:
   device allows changes to its queue.
 - Moving songs is up to the leading device.
 
+## Lyrics
+
+When your Plex server has lyrics for a song, choose **Lyrics** in the row
+under the player's controls (**Hide Lyrics** puts the song details back).
+
+- **Timed lyrics** follow the song: the line being sung is bright white, a
+  third of the way down, and the lines around it are faded.
+- **Lyrics without timing** are all bright and scroll along with how far the
+  song has played. A note above them says so, because they can't follow the
+  singing exactly.
+
+The controls stay under the lyrics, so you can pause or skip while reading.
+(The look above is Apple TV build 189 and later.)
+
 ## The screensaver's song lines
 
 While music plays, the screensaver shows:
