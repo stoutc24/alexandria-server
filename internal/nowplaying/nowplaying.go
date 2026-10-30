@@ -180,6 +180,14 @@ type State struct {
 	// (POST /handover) at this server time. The new holder's first
 	// report must be based on at least this revision.
 	HandedOverAtMs int64 `json:"handedOverAtMs,omitempty"`
+	// HandedOverFrom is the token id that held the seat before that
+	// hand-over, and HandedOverByLabel the device that asked for it —
+	// the seat holder, or any other device in the party. A leader that
+	// did not ask learns from them that its seat was given away: it
+	// follows in place and says who did it. Both stay while the device
+	// handed the seat holds it.
+	HandedOverFrom    string `json:"handedOverFrom,omitempty"`
+	HandedOverByLabel string `json:"handedOverByLabel,omitempty"`
 	// Ended: the leader stopped FOR EVERYONE (DELETE ?reason=stop-all).
 	// The record lingers for endedTTL, paused, so every parked poll
 	// wakes to a state that says so — a 204 reads as "leader quiet,
@@ -351,6 +359,9 @@ const (
 	OutcomeBusy
 	// OutcomeIsCurrent: a removal named the song that is playing.
 	OutcomeIsCurrent
+	// OutcomeNotInParty: a hand-over asked by a device that neither
+	// holds the seat nor takes part in the party.
+	OutcomeNotInParty
 )
 
 // ReportOpts is who is reporting and what they had seen. Device identity
@@ -832,6 +843,12 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 		if prev.ItemID == st.ItemID {
 			st.HandedOverAtMs = prev.HandedOverAtMs
 		}
+		// Who gave the seat away stays while the device handed it
+		// leads, so the old holder reads it whenever it next looks.
+		if prev.LeaderTokenID == opts.DeviceID {
+			st.HandedOverFrom = prev.HandedOverFrom
+			st.HandedOverByLabel = prev.HandedOverByLabel
+		}
 	}
 
 	// The queue lands with the report, in the same revision, so nobody
@@ -1212,13 +1229,19 @@ func (s *Store) ApplyIntent(profileID, byLabel string, in IntentRequest) (State,
 	return s.readLocked(profileID, st, nowMs), OutcomeOK
 }
 
-// HandOver passes the seat from its holder to a live follower: the
-// explicit "make this device the leader". The position stays
+// HandOver passes the seat to a live follower: the explicit "make this
+// device the leader". The seat holder may ask, and so may any device
+// taking part in the party — a follower (for itself or another), a
+// Remote, a watching screen (owner, 2026-10-30: "promote any follower
+// device to leader, from any party play connected device"). A device of
+// the same profile that is in no party may not. The position stays
 // continuous (the anchor is kept), the new holder's label goes on the
 // seat, and the revision moves so the new leader's first report must
 // be based on it — it reads the state before it leads. The old leader
-// is not a follower here; its client joins the party on its own.
-func (s *Store) HandOver(profileID, fromDeviceID, toDeviceKey string) (State, Outcome) {
+// is not a follower here; its client joins the party on its own, told
+// by HandedOverFrom when it did not ask. fromLabel names the asker for
+// the old leader's notice.
+func (s *Store) HandOver(profileID, fromDeviceID, fromLabel, toDeviceKey string) (State, Outcome) {
 	now := time.Now()
 	nowMs := now.UnixMilli()
 	s.mu.Lock()
@@ -1227,13 +1250,28 @@ func (s *Store) HandOver(profileID, fromDeviceID, toDeviceKey string) (State, Ou
 	if !ok || st.Ended {
 		return State{}, OutcomeNoSession
 	}
-	if st.LeaderTokenID == "" || st.LeaderTokenID != fromDeviceID {
-		return s.readLocked(profileID, st, nowMs), OutcomeNotLeader
+	if fromDeviceID == "" {
+		return s.readLocked(profileID, st, nowMs), OutcomeNotInParty
+	}
+	holder := st.LeaderTokenID != "" && st.LeaderTokenID == fromDeviceID
+	if !holder {
+		m, member := s.followers[profileID][fromDeviceID]
+		if !member || now.Sub(m.last) > followerTTL {
+			return s.readLocked(profileID, st, nowMs), OutcomeNotInParty
+		}
+		if fromLabel == "" {
+			fromLabel = m.label
+		}
 	}
 	e, present := s.followers[profileID][toDeviceKey]
 	if !present || now.Sub(e.last) > followerTTL || e.role != RoleFollower {
 		return s.readLocked(profileID, st, nowMs), OutcomeNoSuchFollower
 	}
+	if fromLabel == "" {
+		fromLabel = st.LeaderLabel
+	}
+	st.HandedOverFrom = st.LeaderTokenID
+	st.HandedOverByLabel = fromLabel
 	pos := s.extrapolatedLocked(profileID, st, nowMs)
 	st.PositionMs = pos
 	st.PositionSec = int(pos / 1000)

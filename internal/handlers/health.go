@@ -87,6 +87,9 @@ var capabilities = []string{
 	"nowplaying.scheduled-start",
 	// POST /nowplaying/handover: the seat holder names the next leader.
 	"nowplaying.handover",
+	// ...and so may any device in the party (2026-10-30); the state then
+	// carries handedOverFrom and handedOverByLabel for the old leader.
+	"nowplaying.handover-any",
 	// driftMs on POST /follow, listed per follower on the state.
 	"nowplaying.drift",
 	// Managing the server from a phone, all of it live together:

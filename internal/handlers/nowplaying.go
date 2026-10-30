@@ -446,17 +446,19 @@ func (h *NowPlayingHandler) Clear(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true, "outcome": outcome.String()})
 }
 
-// HandOver: the seat holder names a follower as the new leader ("make
-// this device the leader"). The server moves the seat and bumps the
-// revision; the target sees leaderTokenId == its own on its next poll
-// and starts publishing from its own position, the old leader's next
-// report is refused seat-held and its client joins as a follower.
+// HandOver: a device in the party — the seat holder or any other —
+// names a follower as the new leader ("make this device the leader").
+// The server moves the seat and bumps the revision; the target sees
+// leaderTokenId == its own on its next poll and starts publishing from
+// its own position, the old leader's next report is refused seat-held
+// and its client joins as a follower (handedOverFrom names it, and
+// handedOverByLabel who asked).
 func (h *NowPlayingHandler) HandOver(c *fiber.Ctx) error {
 	profileID := middleware.ProfileID(c)
 	if profileID == "" {
 		return unauthorizedProfile(c)
 	}
-	deviceID, _ := middleware.Device(c)
+	deviceID, deviceLabel := middleware.Device(c)
 	var body struct {
 		DeviceKey string `json:"deviceKey"`
 	}
@@ -465,15 +467,15 @@ func (h *NowPlayingHandler) HandOver(c *fiber.Ctx) error {
 			"error": "deviceKey is required",
 		})
 	}
-	st, outcome := h.store.HandOver(profileID, deviceID, body.DeviceKey)
+	st, outcome := h.store.HandOver(profileID, deviceID, deviceLabel, body.DeviceKey)
 	switch outcome {
 	case nowplaying.OutcomeNoSession:
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "nothing is playing",
 			"code":  "no-session",
 		})
-	case nowplaying.OutcomeNotLeader:
-		return refused(c, "not-leader", "only the device leading the party can hand the seat over", st)
+	case nowplaying.OutcomeNotInParty:
+		return refused(c, "not-in-party", "only a device in the party can choose its leader", st)
 	case nowplaying.OutcomeNoSuchFollower:
 		return refused(c, "no-such-follower", "that device is not following right now", st)
 	}

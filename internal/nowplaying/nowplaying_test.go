@@ -1010,7 +1010,7 @@ func TestHandOverDropsTheNewLeaderFromTheFollowers(t *testing.T) {
 	s.Report("p", State{Source: "plex", ItemID: "plex:1", Title: "t", PositionMs: 1000, IsPlaying: true, Rate: 1},
 		ReportOpts{DeviceID: "phone", ClaimSeat: true})
 	s.Join("p", "tv", "Living Room TV", RoleFollower)
-	st, out := s.HandOver("p", "phone", "tv")
+	st, out := s.HandOver("p", "phone", "", "tv")
 	if out != OutcomeOK {
 		t.Fatalf("handover: %v", out)
 	}
@@ -1029,19 +1029,25 @@ func TestHandOverMovesTheSeat(t *testing.T) {
 		ReportOpts{DeviceID: "phone", DeviceLabel: "Phone", BasedOnRevision: &rev})
 	s.Join("p1", "tv1", "Living Room TV", RoleFollower)
 
-	if _, out := s.HandOver("p1", "tv1", "phone"); out != OutcomeNotLeader {
-		t.Fatalf("a follower handed the seat over: %v", out)
+	if _, out := s.HandOver("p1", "stranger", "Kitchen iPad", "tv1"); out != OutcomeNotInParty {
+		t.Fatalf("a device in no party handed the seat over: %v", out)
 	}
-	if _, out := s.HandOver("p1", "phone", "nobody"); out != OutcomeNoSuchFollower {
+	if _, out := s.HandOver("p1", "", "", "tv1"); out != OutcomeNotInParty {
+		t.Fatalf("an unnamed device handed the seat over: %v", out)
+	}
+	if _, out := s.HandOver("p1", "phone", "", "nobody"); out != OutcomeNoSuchFollower {
 		t.Fatalf("an unknown target was accepted: %v", out)
 	}
-	if _, out := s.HandOver("nobody", "x", "y"); out != OutcomeNoSession {
+	if _, out := s.HandOver("nobody", "x", "", "y"); out != OutcomeNoSession {
 		t.Fatalf("handover without a session: %v", out)
 	}
 
-	st, out := s.HandOver("p1", "phone", "tv1")
+	st, out := s.HandOver("p1", "phone", "Phone", "tv1")
 	if out != OutcomeOK || st.LeaderTokenID != "tv1" || st.LeaderLabel != "Living Room TV" || st.HandedOverAtMs == 0 {
 		t.Fatalf("handover: %v %+v", out, st)
+	}
+	if st.HandedOverFrom != "phone" || st.HandedOverByLabel != "Phone" {
+		t.Fatalf("who gave the seat away: from %q by %q", st.HandedOverFrom, st.HandedOverByLabel)
 	}
 	based := st.Revision
 	if _, out := s.Report("p1", State{ItemID: "a", IsPlaying: true},
@@ -1057,6 +1063,77 @@ func TestHandOverMovesTheSeat(t *testing.T) {
 		ReportOpts{DeviceID: "tv1", DeviceLabel: "Living Room TV", BasedOnRevision: &based, HasPositionMs: true})
 	if out != OutcomeOK || st2.LeaderTokenID != "tv1" || st2.HandedOverAtMs != st.HandedOverAtMs {
 		t.Fatalf("new leader's first report: %v %+v", out, st2)
+	}
+}
+
+// Any device in the party may choose the leader (owner, 2026-10-30:
+// "promote any follower device to leader, from any party play connected
+// device"): a follower for another follower or for itself, a Remote.
+// The old leader, which did not ask, reads who gave its seat away on its
+// refused report, and keeps reading it while the new leader leads.
+func TestAnyDeviceInThePartyChoosesTheLeader(t *testing.T) {
+	s := NewStore()
+	rev := int64(0)
+	s.Report("p1", State{ItemID: "a", IsPlaying: true},
+		ReportOpts{DeviceID: "pc", DeviceLabel: "Windows PC", BasedOnRevision: &rev})
+	s.Join("p1", "tv1", "Living Room TV", RoleFollower)
+	s.Join("p1", "phone", "Chris's iPhone", RoleFollower)
+	s.Join("p1", "remote", "Chris's iPad", RoleController)
+
+	// A follower makes another follower the leader.
+	st, out := s.HandOver("p1", "phone", "Chris's iPhone", "tv1")
+	if out != OutcomeOK || st.LeaderTokenID != "tv1" {
+		t.Fatalf("a follower's hand-over: %v %+v", out, st)
+	}
+	if st.HandedOverFrom != "pc" || st.HandedOverByLabel != "Chris's iPhone" {
+		t.Fatalf("who gave the seat away: from %q by %q", st.HandedOverFrom, st.HandedOverByLabel)
+	}
+
+	// The new leader leads on; the fields stay with its reports.
+	based := st.Revision
+	st, out = s.Report("p1", State{ItemID: "b", IsPlaying: true},
+		ReportOpts{DeviceID: "tv1", DeviceLabel: "Living Room TV", BasedOnRevision: &based})
+	if out != OutcomeOK || st.HandedOverFrom != "pc" || st.HandedOverByLabel != "Chris's iPhone" {
+		t.Fatalf("the new leader's report dropped who gave the seat away: %v %+v", out, st)
+	}
+
+	// The old leader's next report is refused and says so.
+	based = st.Revision
+	st, out = s.Report("p1", State{ItemID: "a", IsPlaying: true},
+		ReportOpts{DeviceID: "pc", BasedOnRevision: &based})
+	if out != OutcomeSeatHeld || st.HandedOverFrom != "pc" {
+		t.Fatalf("the old leader was not told: %v from %q", out, st.HandedOverFrom)
+	}
+
+	// A follower makes ITSELF the leader; the label falls back to its
+	// presence entry when the request carries none.
+	st, out = s.HandOver("p1", "phone", "", "phone")
+	if out != OutcomeOK || st.LeaderTokenID != "phone" || st.HandedOverFrom != "tv1" ||
+		st.HandedOverByLabel != "Chris's iPhone" {
+		t.Fatalf("a follower taking the lead: %v %+v", out, st)
+	}
+
+	// A Remote hands it on again.
+	s.Join("p1", "tv1", "Living Room TV", RoleFollower)
+	st, out = s.HandOver("p1", "remote", "Chris's iPad", "tv1")
+	if out != OutcomeOK || st.LeaderTokenID != "tv1" || st.HandedOverFrom != "phone" ||
+		st.HandedOverByLabel != "Chris's iPad" {
+		t.Fatalf("a Remote's hand-over: %v %+v", out, st)
+	}
+
+	// A Remote whose presence aged out may not.
+	s.followers["p1"]["remote"] = presenceEntry{label: "Chris's iPad", role: RoleController,
+		last: time.Now().Add(-2 * followerTTL)}
+	if _, out := s.HandOver("p1", "remote", "Chris's iPad", "phone"); out != OutcomeNotInParty {
+		t.Fatalf("a device gone from the party handed the seat over: %v", out)
+	}
+
+	// Another device taking the seat over clears them.
+	based = st.Revision
+	st, out = s.Report("p1", State{ItemID: "c", IsPlaying: true},
+		ReportOpts{DeviceID: "pc", BasedOnRevision: &based, TakeOver: true})
+	if out != OutcomeOK || st.LeaderTokenID != "pc" || st.HandedOverFrom != "" || st.HandedOverByLabel != "" {
+		t.Fatalf("a take-over kept the last hand-over's names: %v %+v", out, st)
 	}
 }
 
@@ -1551,7 +1628,7 @@ func TestANextItemScheduleDoesNotOutliveItsItemOrItsLeader(t *testing.T) {
 	// bring it back.
 	s = announce()
 	s.Join("p1", "tv1", "Living Room TV", RoleFollower)
-	st, out = s.HandOver("p1", "phone", "tv1")
+	st, out = s.HandOver("p1", "phone", "", "tv1")
 	if out != OutcomeOK || !noSchedule(st) {
 		t.Fatalf("a handover left the announcement standing: %v %+v", out, st)
 	}
