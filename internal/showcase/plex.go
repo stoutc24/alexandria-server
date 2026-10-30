@@ -302,7 +302,46 @@ func (s *Server) plexTrack(t *Track) map[string]any {
 		item["viewCount"] = t.Plays
 		item["lastViewedAt"] = t.Album.LastPlay.Unix()
 	}
+	if s.Lyrics {
+		part := item["Media"].([]map[string]any)[0]["Part"].([]map[string]any)[0]
+		lyricID := partID*10 + 4
+		part["Stream"] = append(part["Stream"].([]map[string]any), map[string]any{
+			"id": lyricID, "streamType": 4, "codec": "lrc", "format": "lrc", "provider": "showcase",
+			"key": fmt.Sprintf("/library/streams/%d", lyricID), "displayTitle": "LRC", "minLines": 4,
+		})
+	}
 	return item
+}
+
+// showcaseLyricLines are made up for the mock: short and long lines, the
+// long ones well past what one line of a TV panel holds.
+var showcaseLyricLines = []string{
+	"Lanterns on the water",
+	"Rope and salt and the morning tide",
+	"Every bell along the harbour rings the hour we said we'd meet beside the old grey wall, and still the ferry hasn't come",
+	"Hold the line",
+	"Hold the line until the light comes round",
+	"We counted boats until the counting turned to singing and the singing carried out past the breakwater into the dark",
+	"Copper sky",
+	"North wind, carry me home",
+	"I wrote your name in chalk upon the slipway and the rain came down and took it gently out to sea before I could read it twice",
+	"Oh, oh, oh",
+}
+
+// plexLyrics serves a lyric stream as LRC: a line every four seconds for
+// fifteen minutes, longer than any showcase track.
+func (s *Server) plexLyrics(w http.ResponseWriter, p []string) {
+	if !s.Lyrics || len(p) == 0 {
+		notFound(w)
+		return
+	}
+	var b strings.Builder
+	for i := 0; i < 225; i++ {
+		sec := 2 + i*4
+		fmt.Fprintf(&b, "[%02d:%02d.00]%s\n", sec/60, sec%60, showcaseLyricLines[i%len(showcaseLyricLines)])
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(b.String()))
 }
 
 func (s *Server) plexCollection(c *Collection) map[string]any {
@@ -390,6 +429,8 @@ func (s *Server) plexLibrary(w http.ResponseWriter, r *http.Request, p []string)
 		s.plexMetadata(w, r, p[1:])
 	case "parts":
 		s.plexParts(w, r, p[1:])
+	case "streams":
+		s.plexLyrics(w, p[1:])
 	case "collections", "all":
 		ok(w, mc(map[string]any{"Metadata": []map[string]any{}}))
 	default:

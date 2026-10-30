@@ -39,6 +39,11 @@ type Server struct {
 	// they never start there; labelled lossy they go to AVPlayer, which
 	// plays the same WAV. Off unless SHOWCASE_LOSSY_MUSIC=1 is set.
 	LossyMusic bool
+	// Lyrics gives every Plex music track a timed lyric stream (streamType
+	// 4, LRC at /library/streams/:id): made-up lines, a few of them very
+	// long, every four seconds — for the lyrics panels. Off unless
+	// SHOWCASE_LYRICS=1 is set, so the store screenshots are unchanged.
+	Lyrics bool
 	// Books makes the Jellyfin dialect also serve the catalog's audiobooks
 	// as a "books" view (AudioBook items with Chapters, one WAV each — the
 	// Audiobookshelf dialect's books, in Jellyfin's shape), plus the
@@ -178,6 +183,7 @@ func (s *Server) plexTrackCodec() string {
 func New(cat *Catalog, clipsDir string) *Server {
 	return &Server{cat: cat, clipsDir: clipsDir, Token: "showcase-token", progress: map[string]float64{},
 		log: log.New(os.Stdout, "", log.Ltime), LossyMusic: os.Getenv("SHOWCASE_LOSSY_MUSIC") == "1",
+		Lyrics:                 os.Getenv("SHOWCASE_LYRICS") == "1",
 		Books:                  os.Getenv("SHOWCASE_JELLYFIN_BOOKS") == "1",
 		RefusePlainParts:       os.Getenv("SHOWCASE_PLEX_REFUSE_PLAIN") == "1",
 		RefuseJellyfinDownload: os.Getenv("SHOWCASE_JELLYFIN_REFUSE_DOWNLOAD") == "1",
