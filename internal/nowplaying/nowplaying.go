@@ -74,8 +74,12 @@ type State struct {
 	DeviceLabel string `json:"deviceLabel,omitempty"`
 	// QueueIndex is where the leader currently sits in its published
 	// queue; QueueLen tells a joiner a queue exists without a second
-	// request. Both zero when no queue was published.
-	QueueIndex int `json:"queueIndex,omitempty"`
+	// request. Both zero when no queue was published. QueueIndex is always
+	// sent: with omitempty a leader on its FIRST song (index 0) published
+	// no index at all, and the Apple TV, which read a missing index as
+	// unknown, could not steer that party (2026-10-30). Readers go by
+	// QueueLen for whether a queue exists.
+	QueueIndex int `json:"queueIndex"`
 	QueueLen   int `json:"queueLen,omitempty"`
 	// QueueOffset is the leader's local index of the FIRST published
 	// entry, for a leader whose real queue is longer than it publishes.
