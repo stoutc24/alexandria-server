@@ -20,6 +20,8 @@ installing and running the Alexandria companion server itself, see the
 | [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; Start Station on an artist page; intros and skits skipped |
 | [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag; the Artist tab; a party on a big screen |
 | [Adding and removing songs at a party](party-queue.md) | Play Next, Add to Party Queue and ✕ from party devices and the Remote; Plex songs; messages |
+| [Choosing who leads a party](party-leader.md) | Make leader from the leading device or any follower; taking the lead; the old leader's message |
+| [Signing a device out](signing-devices-out.md) | Sign out one device or all of a person's, on the web or in the app; what the device loses and keeps; when it notices |
 | [Alexandria on the Apple TV Home screen](apple-tv-home-screen.md) | The Top Shelf: Continue and Recently Added above the icons, and how to get it showing |
 | [Music on the Apple TV](apple-tv-music.md) | The Queue (browse, play, move, remove, Shuffle/Repeat/Autoplay; at a party); the screensaver's song lines |
 | [TV shows on the Apple TV](apple-tv-shows.md) | Which season a show opens on, Play All (Specials left out), Play Season and Auto-play |
@@ -87,6 +89,15 @@ These were proven in tests and simulators, not yet on hardware:
 - [ ] Apple TV following a party on its first song: a Queue pick, Next and
       Previous steer the party (fixed 2026-10-30; proven with the iPhone app
       leading in the simulator).
+- [ ] Make leader from a following phone, Mac or PC: the new leader takes
+      over, the old one keeps playing and shows who moved the lead; an
+      Apple TV made the leader leads; a leading Apple TV whose lead is
+      given away follows (added 2026-10-30; proven on the party rig with
+      the iPhone and Apple TV simulators).
+- [ ] Signing a device out: the device notices within about 15 seconds,
+      loses its account's logins and keeps hand-added ones and downloads;
+      a closed app notices on its next open (added 2026-10-30; proven on
+      the party rig in the iPhone simulator; the closed-app case untested).
 - [ ] Windows on a network cable: Justin Bieber Radio plays Justin Bieber
       and similar artists, as on the Apple TV (fixed 2026-10-30; proven in
       unit tests that a cable counts as Wi-Fi, not on the owner's PC).
