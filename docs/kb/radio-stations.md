@@ -67,7 +67,11 @@ Play the album itself to hear every track.
   list is left out. On Jellyfin and Navidrome an artist with little
   similar data falls back to shared genre tags.
 - **"Not enough similar music for …":** your library has too little music
-  near that station. Pick another one.
+  near that station. Pick another one. If the same station works on
+  another device, open **You › Settings › Media index** on this one: the
+  line under it counts the items indexed. Tap it to index everything now.
+  Alexandria refreshes the index by itself only on Wi-Fi or a cable; a
+  computer on a network cable was missed before the next builds.
 - **No stations at all:** stations are built from your media index. Rebuild
   it under **You › Settings › Media index**.
 

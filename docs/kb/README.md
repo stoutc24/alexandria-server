@@ -87,6 +87,9 @@ These were proven in tests and simulators, not yet on hardware:
 - [ ] Apple TV following a party on its first song: a Queue pick, Next and
       Previous steer the party (fixed 2026-10-30; proven with the iPhone app
       leading in the simulator).
+- [ ] Windows on a network cable: Justin Bieber Radio plays Justin Bieber
+      and similar artists, as on the Apple TV (fixed 2026-10-30; proven in
+      unit tests that a cable counts as Wi-Fi, not on the owner's PC).
 - [ ] Apple TV screensaver: song, then artist with features, then the
       station, playlist or album (added 2026-10-29).
 - [ ] Apple TV shows: Play All runs the whole show without stopping, leaves
