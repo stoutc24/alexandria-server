@@ -23,7 +23,7 @@ installing and running the Alexandria companion server itself, see the
 | [Choosing who leads a party](party-leader.md) | Make leader from the leading device or any follower; taking the lead; the old leader's message |
 | [Signing a device out](signing-devices-out.md) | Sign out one device or all of a person's, on the web or in the app; what the device loses and keeps; when it notices |
 | [Alexandria on the Apple TV Home screen](apple-tv-home-screen.md) | The Top Shelf: Continue and Recently Added above the icons, and how to get it showing |
-| [Music on the Apple TV](apple-tv-music.md) | The Queue (browse, play, move, remove, Shuffle/Repeat/Autoplay; at a party); the screensaver's song lines |
+| [Music on the Apple TV](apple-tv-music.md) | The Queue (browse, play, move, remove, Shuffle/Repeat/Autoplay; at a party); leaving the app while music plays (Control Center); lyrics; the screensaver's song lines |
 | [TV shows on the Apple TV](apple-tv-shows.md) | Which season a show opens on, Play All (Specials left out), Play Season and Auto-play |
 
 Contact for questions or problems: stoutservers@gmail.com
@@ -86,6 +86,14 @@ These were proven in tests and simulators, not yet on hardware:
       path untested).
 - [ ] Apple TV Top Shelf: Continue and Recently Added above the icons with
       Alexandria in the top row (added 2026-10-30; proven in the simulator).
+      Builds 187-189 showed only the logo on a real Apple TV; build 190
+      saves the rows where an Apple TV allows it (fix not yet seen on one).
+- [ ] Apple TV music outside the app: keeps playing on the Home screen;
+      Control Center shows the song with its cover; Play/Pause, Next and
+      Previous work; a song stops a book and the reverse (build 190).
+- [ ] Apple TV: no screensaver while lyrics are open; the Queue row follows
+      the playing song; the Lyrics button keeps the focus at a song change
+      (build 190; proven in the simulator).
 - [ ] Apple TV following a party on its first song: a Queue pick, Next and
       Previous steer the party (fixed 2026-10-30; proven with the iPhone app
       leading in the simulator).

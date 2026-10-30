@@ -17,4 +17,11 @@ Select a poster to open it in Alexandria.
    refreshes them every time Home refreshes.
 
 If the area shows only the Alexandria logo, open the app once and go back
-to the Home screen.
+to the Home screen. (Apple TV builds 187 to 189 could not save the rows on
+a real Apple TV, so they showed only the logo; build 190 fixes that.)
+
+## What the rows keep
+
+The rows hold only each item's title, how far along you are, and a copy of
+its poster saved on the Apple TV. No server address, password or sign-in
+key is stored with them. What a poster opens stays inside Alexandria.

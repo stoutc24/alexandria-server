@@ -37,6 +37,23 @@ party's queue:
   device allows changes to its queue.
 - Moving songs is up to the leading device.
 
+## Leaving the app while music plays
+
+Press the **TV** button (or Back until you reach the Home screen) and the
+music keeps playing, as in Apple Music:
+
+- **Hold the TV button** to open Control Center. It shows the song, the
+  artist and the cover, with Play/Pause, Next and Previous.
+- The remote's **Play/Pause** button pauses and plays the music from the
+  Home screen and from anywhere in Alexandria.
+- One thing plays at a time: starting a song stops an audiobook, and
+  starting an audiobook stops the music.
+- The Fireplace sound under the player pauses while you are outside the app
+  and starts again when you come back.
+
+(Apple TV build 190 and later. Audiobooks already kept playing outside the
+app.)
+
 ## Lyrics
 
 When your Plex server has lyrics for a song, choose **Lyrics** in the row
