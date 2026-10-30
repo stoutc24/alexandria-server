@@ -814,7 +814,7 @@ func (s *Server) plexPlaylists(w http.ResponseWriter, r *http.Request, p []strin
 func (s *Server) plexHubs(w http.ResponseWriter, r *http.Request, p []string) {
 	if len(p) >= 1 && p[0] == "search" {
 		q := strings.ToLower(qStr(r, "query"))
-		var movies, shows, albums, artists []map[string]any
+		var movies, shows, albums, artists, tracks []map[string]any
 		for _, m := range s.cat.Movies {
 			if strings.Contains(strings.ToLower(m.Title), q) {
 				movies = append(movies, s.plexMovie(m, false))
@@ -835,13 +835,24 @@ func (s *Server) plexHubs(w http.ResponseWriter, r *http.Request, p []string) {
 				artists = append(artists, s.plexArtist(a))
 			}
 		}
+		// Songs, as a real server lists them (the phone's song search,
+		// 2026-10-29), at most the limit asked for.
+		limit := qInt(r, "limit", 10)
+		for _, t := range s.cat.Tracks {
+			if len(tracks) >= limit {
+				break
+			}
+			if strings.Contains(strings.ToLower(t.Title), q) {
+				tracks = append(tracks, s.plexTrack(t))
+			}
+		}
 		hub := func(t, id, title string, items []map[string]any) map[string]any {
 			if items == nil {
 				items = []map[string]any{}
 			}
 			return map[string]any{"title": title, "type": t, "hubIdentifier": id, "size": len(items), "more": false, "Metadata": items}
 		}
-		ok(w, mc(map[string]any{"Hub": []map[string]any{hub("movie", "movie", "Movies", movies), hub("show", "show", "Shows", shows), hub("album", "album", "Albums", albums), hub("artist", "artist", "Artists", artists)}}))
+		ok(w, mc(map[string]any{"Hub": []map[string]any{hub("movie", "movie", "Movies", movies), hub("show", "show", "Shows", shows), hub("album", "album", "Albums", albums), hub("artist", "artist", "Artists", artists), hub("track", "track", "Tracks", tracks)}}))
 		return
 	}
 	// /hubs, /hubs/home/*, /hubs/sections/* — the TV never calls these; be kind anyway.

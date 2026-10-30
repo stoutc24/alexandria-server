@@ -16,6 +16,7 @@ installing and running the Alexandria companion server itself, see the
 | [The Mac and Windows apps and wide windows](mac-app.md) | Scrolling with a mouse or trackpad, closing the window, menu bar Now Playing, media keys on Windows, the docked player, how pages fit a wide window |
 | [Alexandria in the car](car.md) | CarPlay and Android Auto: the tabs, radio stations, artists, going deeper |
 | [Describe a playlist](playlist-builder.md) | "AJR radio", moods, lengths; when the AI picks the albums; what it costs |
+| [Finding songs, artists and albums](search.md) | Plex music search, searching every library, what a song tap plays |
 | [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; Start Station on an artist page; intros and skits skipped |
 | [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag; the Artist tab; a party on a big screen |
 | [Adding and removing songs at a party](party-queue.md) | Play Next, Add to Party Queue and ✕ from party devices and the Remote; Plex songs; messages |
@@ -30,6 +31,10 @@ These were proven in tests and simulators, not yet on hardware:
 - [ ] Mac: closing the window keeps music playing; the Dock icon brings it
       back; a video pauses on close (build 1230).
 - [ ] Mac: pause and skip from Now Playing in the menu bar.
+- [ ] iPhone, Mac and Windows: Plex songs found from the Plex music search
+      and from Search; a song plays, then its artist's station (added
+      2026-10-29; search proven on the owner's Plex read-only, playback in
+      the simulator; a station behind a song only in unit tests).
 - [ ] Windows: the keyboard's play/pause, next and previous keys, and the
       song and cover in the volume pop-up (added 2026-10-29; proven in unit
       tests, the Windows half only compiled).
