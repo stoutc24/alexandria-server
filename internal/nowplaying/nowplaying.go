@@ -477,6 +477,11 @@ type presenceEntry struct {
 	last    time.Time
 	driftMs *int64
 	driftAt time.Time
+	// tokenID is the token the device follows with (NoteToken). A newer
+	// device's key IS its token id; an Apple TV follows under a UUID it
+	// minted, and a seat handed to that key must still name its token —
+	// the identity its reports carry — or it never sees the seat is its.
+	tokenID string
 }
 
 // MaxFollowersPerProfile caps how many devices one profile's party
@@ -1255,17 +1260,24 @@ func (s *Store) HandOver(profileID, fromDeviceID, fromLabel, toDeviceKey string)
 	}
 	holder := st.LeaderTokenID != "" && st.LeaderTokenID == fromDeviceID
 	if !holder {
-		m, member := s.followers[profileID][fromDeviceID]
-		if !member || now.Sub(m.last) > followerTTL {
+		label, member := s.memberLocked(profileID, fromDeviceID, now)
+		if !member {
 			return s.readLocked(profileID, st, nowMs), OutcomeNotInParty
 		}
 		if fromLabel == "" {
-			fromLabel = m.label
+			fromLabel = label
 		}
 	}
 	e, present := s.followers[profileID][toDeviceKey]
 	if !present || now.Sub(e.last) > followerTTL || e.role != RoleFollower {
 		return s.readLocked(profileID, st, nowMs), OutcomeNoSuchFollower
+	}
+	// The seat names the target's TOKEN — what its reports carry and what
+	// `yourDeviceKey` tells it — not the UUID an Apple TV follows under;
+	// handed to that UUID, a TV never saw the seat was its own.
+	newHolder := e.tokenID
+	if newHolder == "" {
+		newHolder = toDeviceKey
 	}
 	if fromLabel == "" {
 		fromLabel = st.LeaderLabel
@@ -1275,7 +1287,7 @@ func (s *Store) HandOver(profileID, fromDeviceID, fromLabel, toDeviceKey string)
 	pos := s.extrapolatedLocked(profileID, st, nowMs)
 	st.PositionMs = pos
 	st.PositionSec = int(pos / 1000)
-	st.LeaderTokenID = toDeviceKey
+	st.LeaderTokenID = newHolder
 	st.LeaderLabel = e.label
 	st.DeviceLabel = e.label
 	st.LegacyLeader = false
@@ -1402,6 +1414,36 @@ func (s *Store) RequestAnchorRefresh(profileID string) int64 {
 	s.nextRevLocked(profileID)
 	s.notifyLocked(profileID)
 	return s.rev[profileID]
+}
+
+// NoteToken records which token a presence entry belongs to: the
+// authenticated device behind the key it follows under. Hand-overs read
+// it — the seat goes to the target's TOKEN, and a device asking for one
+// is in the party when any live entry is its. A no-op for an unknown key.
+func (s *Store) NoteToken(profileID, deviceKey, tokenID string) {
+	if tokenID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e, ok := s.followers[profileID][deviceKey]; ok && e.tokenID != tokenID {
+		e.tokenID = tokenID
+		s.followers[profileID][deviceKey] = e
+	}
+}
+
+// memberLocked reports whether tokenID has a live presence in the
+// profile's party, under its own key or a minted one, and its label.
+func (s *Store) memberLocked(profileID, tokenID string, now time.Time) (string, bool) {
+	for key, e := range s.followers[profileID] {
+		if now.Sub(e.last) > followerTTL {
+			continue
+		}
+		if key == tokenID || e.tokenID == tokenID {
+			return e.label, true
+		}
+	}
+	return "", false
 }
 
 // StopFollowing removes a device immediately, rather than waiting out

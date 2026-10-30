@@ -1137,6 +1137,49 @@ func TestAnyDeviceInThePartyChoosesTheLeader(t *testing.T) {
 	}
 }
 
+// An Apple TV follows under a UUID it minted, not its token id. A seat
+// handed to that key must name the TV's TOKEN — what its reports carry and
+// what yourDeviceKey tells it — or the TV never sees the seat is its own
+// (2026-10-30, found on the party rig). And a TV following, or on its
+// Remote, under a minted key is in the party when it asks for a hand-over.
+func TestHandOverToAndFromAMintedKey(t *testing.T) {
+	s := NewStore()
+	rev := int64(0)
+	s.Report("p1", State{ItemID: "a", IsPlaying: true},
+		ReportOpts{DeviceID: "tok-phone", DeviceLabel: "Kate's iPhone", BasedOnRevision: &rev})
+	s.Join("p1", "uuid-tv", "Living Room TV", RoleFollower)
+	s.NoteToken("p1", "uuid-tv", "tok-tv")
+	s.Join("p1", "uuid-den:remote", "Den TV", RoleController)
+	s.NoteToken("p1", "uuid-den:remote", "tok-den")
+	s.Join("p1", "tok-pc", "Windows PC", RoleFollower)
+	s.NoteToken("p1", "tok-pc", "tok-pc")
+
+	st, out := s.HandOver("p1", "tok-phone", "Kate's iPhone", "uuid-tv")
+	if out != OutcomeOK || st.LeaderTokenID != "tok-tv" || st.LeaderLabel != "Living Room TV" {
+		t.Fatalf("handed to the TV's key: %v leader %q", out, st.LeaderTokenID)
+	}
+	// The TV leads with its token: its first report keeps the seat.
+	based := st.Revision
+	if _, out := s.Report("p1", State{ItemID: "a", IsPlaying: true},
+		ReportOpts{DeviceID: "tok-tv", DeviceLabel: "Living Room TV", BasedOnRevision: &based}); out != OutcomeOK {
+		t.Fatalf("the TV's first report as leader: %v", out)
+	}
+
+	// The Den TV's Remote (a minted key) makes the PC the leader.
+	st, out = s.HandOver("p1", "tok-den", "", "tok-pc")
+	if out != OutcomeOK || st.LeaderTokenID != "tok-pc" || st.HandedOverFrom != "tok-tv" ||
+		st.HandedOverByLabel != "Den TV" {
+		t.Fatalf("a TV Remote's hand-over: %v %+v", out, st)
+	}
+
+	// An old entry with no token noted still hands over to its key.
+	s.Join("p1", "legacy-key", "Old TV", RoleFollower)
+	st, out = s.HandOver("p1", "tok-pc", "Windows PC", "legacy-key")
+	if out != OutcomeOK || st.LeaderTokenID != "legacy-key" {
+		t.Fatalf("a key with no token: %v leader %q", out, st.LeaderTokenID)
+	}
+}
+
 // A follower's drift reading is listed per device, keyed by its token,
 // and a heartbeat carrying one does not wake the party.
 func TestFollowerDriftIsListedPerDevice(t *testing.T) {

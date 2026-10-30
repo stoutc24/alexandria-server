@@ -254,6 +254,8 @@ func (h *NowPlayingHandler) Follow(c *fiber.Ctx) error {
 			"error": "too many devices are following this person's playback",
 		})
 	}
+	// Whose entry this is, for hand-overs (an Apple TV's key is a UUID).
+	h.store.NoteToken(profileID, key, deviceID)
 	if body.RefreshAnchor {
 		if r := h.store.RequestAnchorRefresh(profileID); r > rev {
 			rev = r
