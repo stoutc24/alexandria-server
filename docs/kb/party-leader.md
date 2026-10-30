@@ -16,8 +16,11 @@ to it.
 - **On a following device:** tap **Make leader** next to another follower,
   or next to your own device (marked **This phone**) to take the lead.
 
-**On an Apple TV in the party:** there's no **Make leader** button on the TV
-yet. Choose the Apple TV from a phone or computer in the party instead.
+**On an Apple TV in the party** (Apple TV build 188 and later): in the music
+player, open **Queue** and choose **Party**, next to Shuffle, Repeat and
+Autoplay. Pick **Make … the leader** for another device, or **Make this Apple
+TV the leader** to take the lead. Older Apple TV builds don't have the
+button; choose the TV from a phone or computer instead.
 
 Watches follow a party but can't lead it, so they never show **Make leader**.
 
