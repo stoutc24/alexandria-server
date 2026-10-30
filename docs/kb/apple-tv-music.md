@@ -1,0 +1,49 @@
+# Music on the Apple TV
+
+## The Queue
+
+While music plays, choose **Queue** under the player's controls. The queue
+opens as a row along the bottom of the screen:
+
+- The song playing now is marked and has the focus. Songs already played sit
+  to its left, dimmed; songs still to come sit to its right.
+- **Left and Right** move through the row. **Select** plays that song now.
+- **Shuffle**, **Repeat** and **Autoplay** sit above the row. Autoplay is the
+  same switch as Settings › Keep the music going. Stations always keep going,
+  so they don't show it.
+- **Hold Select** on a song for more:
+  - **Play Now**
+  - **Play Next**
+  - **Move Earlier** or **Move Later** (for songs still to come)
+  - **Remove from Queue**
+
+  The song playing now has no menu.
+- Press **Menu** (or Back) to close the Queue. The music keeps playing.
+
+It works for Plex, Jellyfin and Navidrome music, including stations.
+
+### During a party
+
+When the Apple TV follows someone else's Party Play, the Queue shows the
+party's queue:
+
+- **Select** asks the party to play that song.
+- **Remove from Queue** asks the leading device to take a song out, if that
+  device allows changes to its queue.
+- Moving songs is up to the leading device.
+
+## The screensaver's song lines
+
+While music plays, the screensaver shows:
+
+1. The song's title.
+2. The artist, with anyone featured on the song ("Justin Bieber feat. Daniel
+   Caesar & GIVĒON").
+3. Where the song plays from: the station's name, else the playlist's name,
+   else the album's.
+
+A song you added to a playlist's queue later shows its album, not the
+playlist.
+
+For an audiobook, the screensaver shows the book's title, then its author and
+chapter.
