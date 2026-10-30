@@ -20,6 +20,7 @@ installing and running the Alexandria companion server itself, see the
 | [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; Start Station on an artist page; intros and skits skipped |
 | [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag; the Artist tab; a party on a big screen |
 | [Adding and removing songs at a party](party-queue.md) | Play Next, Add to Party Queue and ✕ from party devices and the Remote; Plex songs; messages |
+| [Alexandria on the Apple TV Home screen](apple-tv-home-screen.md) | The Top Shelf: Continue and Recently Added above the icons, and how to get it showing |
 | [Music on the Apple TV](apple-tv-music.md) | The Queue (browse, play, move, remove, Shuffle/Repeat/Autoplay; at a party); the screensaver's song lines |
 | [TV shows on the Apple TV](apple-tv-shows.md) | Which season a show opens on, Play All (Specials left out), Play Season and Auto-play |
 
@@ -81,6 +82,11 @@ These were proven in tests and simulators, not yet on hardware:
       to move or remove one; at a party, Select and Remove go to the leader
       (added 2026-10-29; proven in the simulator on the showcase, the party
       path untested).
+- [ ] Apple TV Top Shelf: Continue and Recently Added above the icons with
+      Alexandria in the top row (added 2026-10-30; proven in the simulator).
+- [ ] Apple TV following a party on its first song: a Queue pick, Next and
+      Previous steer the party (fixed 2026-10-30; proven with the iPhone app
+      leading in the simulator).
 - [ ] Apple TV screensaver: song, then artist with features, then the
       station, playlist or album (added 2026-10-29).
 - [ ] Apple TV shows: Play All runs the whole show without stopping, leaves
