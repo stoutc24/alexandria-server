@@ -90,6 +90,26 @@ func (h *AdminHandler) RevokeDevice(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"revoked": true})
 }
 
+// SignOutAllDevices signs out every device of one person — each link
+// token, the account keys sealed to them, and their phones' Manage-server
+// sign-ins (owner, 2026-10-30). A device signed in with an Alexandria
+// Account reads `token-revoked` on its next request and signs itself out
+// of the account and every login the account gave it.
+func (h *AdminHandler) SignOutAllDevices(c *fiber.Ctx) error {
+	n, err := h.profiles.RevokeAllTokens(c.Params("id"))
+	if err == repository.ErrProfileNotFound {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "profile not found",
+		})
+	}
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to sign out the devices",
+		})
+	}
+	return c.JSON(fiber.Map{"revoked": n})
+}
+
 // ListProfiles shows who exists and how much space they use.
 //
 // Counts and timestamps only. No titles, no authors, no events.

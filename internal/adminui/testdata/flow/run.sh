@@ -273,6 +273,19 @@ if reached converted; then
 else
   flunk "the page reached the convert checkpoint"
 fi
+if reached signedout; then
+  status=$(curl -sS -o "$work/signedout.json" -w '%{http_code}' \
+    -H "Authorization: Bearer $phone_tok" "$base/api/v1/devices/me")
+  check "signed out: Grandma's phone, signed out on the page, is answered 401 token-revoked" \
+    jq -e --arg s "$status" '$s == "401" and .code == "token-revoked"' "$work/signedout.json"
+  admin "$base/api/v1/admin/profiles" >"$work/people-after.json"
+  check "signed out: curl GET /admin/profiles: Grandma is still here, with no devices" \
+    jq -e --arg g "$grandma" '[.profiles[] | select(.id == $g) | .devices | length] == [0]' \
+    "$work/people-after.json"
+  go_on signedout
+else
+  flunk "the page reached the sign-out checkpoint"
+fi
 
 for _ in $(seq 1 600); do [ -e "$work/report.json" ] && break; sleep 0.1; done
 if [ -e "$work/report.json" ]; then

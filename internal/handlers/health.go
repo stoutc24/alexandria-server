@@ -102,6 +102,11 @@ var capabilities = []string{
 	// asking a phone for a fresh code ("totpCode" or "recoveryCode")
 	// with every approval, someone new included.
 	"admin.device-token",
+	// DELETE /admin/profiles/:id/devices signs out every device of one
+	// person, and a profile route answers a token that is not (or no
+	// longer) one of ours 401 with code "token-revoked" — and a database
+	// it could not ask 503, never 401 (2026-10-30).
+	"devices.sign-out",
 	// Alexandria Accounts (2026-10-12): POST /accounts/login and
 	// /accounts/invite/{check,accept}, GET /accounts/me and
 	// /accounts/services (sealed to the device), PUT /accounts/device-key,

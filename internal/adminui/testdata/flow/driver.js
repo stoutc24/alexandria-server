@@ -428,7 +428,11 @@
           { name: "Grandma's Apple Watch", seen: "never seen", stale: false }]);
     var sweep = inCard(CFG.grandmaId, "[data-revoke-stale]");
     ok("P13 one button for what has gone unused",
-       sweep && sweep.textContent === "Revoke the one not seen in 30 days", sweep && sweep.textContent);
+       sweep && sweep.textContent === "Sign out the one not seen in 30 days", sweep && sweep.textContent);
+    ok("P13b each device signs out on its own, and all of them at once",
+       inCard(CFG.grandmaId, "[data-revoke]").textContent === "Sign out" &&
+       inCard(CFG.grandmaId, "[data-signout-all]").textContent === "Sign out all devices",
+       inCard(CFG.grandmaId, "[data-revoke]").textContent);
     press(sweep);
     await waitFor("the old iPad revoked", function () { return chips(CFG.grandmaId)[0] === "3 devices"; });
     ok("P14 ...and it is gone, the others kept, the warning with it",
@@ -885,6 +889,20 @@
        plexWho() === "Plex: " + HOSTILE + " on StoutOffice" && document.getElementsByTagName("img").length === 0);
     step = "checkpoint-converted";
     await checkpoint("converted");
+
+    // SO. Sign out all of one person's devices (owner, 2026-10-30).
+    step = "SO";
+    navTo("people");
+    if (!bodyOpen(CFG.grandmaId)) press(inCard(CFG.grandmaId, ".chev"));
+    press(inCard(CFG.grandmaId, '[data-tab="devices"]'));
+    await waitFor("Grandma's devices", function () { return !!inCard(CFG.grandmaId, "[data-signout-all]"); });
+    press(inCard(CFG.grandmaId, "[data-signout-all]"));
+    await waitFor("Grandma signed out everywhere", function () { return chips(CFG.grandmaId)[0] === "0 devices"; }, 12000);
+    ok("SO1 Sign out all devices: her card has none left, and no button for none",
+       devRows(CFG.grandmaId).length === 0 && !inCard(CFG.grandmaId, "[data-signout-all]"),
+       JSON.stringify(devRows(CFG.grandmaId)));
+    step = "checkpoint-signedout";
+    await checkpoint("signedout");
 
     // Z. Over the whole run.
     step = "Z";

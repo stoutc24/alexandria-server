@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"crypto/subtle"
+	"errors"
 	"log"
 	"strings"
 	"time"
@@ -298,8 +299,27 @@ func RequireProfile(profiles *repository.ProfileRepository) fiber.Handler {
 		}
 
 		caller, err := profiles.FindByToken(token)
-		if err != nil {
+		if errors.Is(err, repository.ErrProfileNotFound) && repository.LooksLikeDeviceToken(token) {
+			// A device token that is not (or no longer) one of this
+			// server's: signed out from the devices page, its person
+			// removed, or never issued. The code is what a signed-in app
+			// acts on — it signs itself out of its Alexandria Account and
+			// every login the account gave it — so it is sent ONLY here,
+			// never for an admin credential sent to the wrong route.
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "a profile token is required for this route",
+				"code":  "token-revoked",
+			})
+		}
+		if errors.Is(err, repository.ErrProfileNotFound) {
 			return unauthorized(c, "a profile token is required for this route")
+		}
+		if err != nil {
+			// The database could not say. Never a 401: a device must not
+			// read "signed out" into a hiccup here.
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error": "could not check the device token",
+			})
 		}
 
 		profiles.TouchLastSeen(caller.TokenID)

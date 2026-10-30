@@ -1064,7 +1064,7 @@
 
   // A card's devices, by kind, newest first. Rebuilt only when the devices
   // themselves change; otherwise only their ages are rewritten, so focus
-  // on a Revoke button survives the poll.
+  // on a Sign out button survives the poll.
   function renderDevices(c, p, devs, filtered) {
     var all = p.devices || [];
     var groups = {};
@@ -1101,15 +1101,20 @@
             '<span class="dev-name" title="' + esc(label) + '">' + esc(label) + '</span>' +
             '<span class="dev-seen" data-seen-for="' + esc(d.id) + '">' + esc(seenText(d)) +
             '</span><button type="button" class="small danger" data-revoke="' + esc(d.id) +
-            '" data-devlabel="' + esc(label) + '" aria-label="Revoke ' + esc(label) +
-            '">Revoke</button></div>';
+            '" data-devlabel="' + esc(label) + '" aria-label="Sign out ' + esc(label) +
+            '">Sign out</button></div>';
         }).join("") + '</div>';
     });
-    if (stale.length && !filtered) {
-      html += '<div class="row" style="margin-top:10px"><button type="button" class="small" ' +
-        'data-revoke-stale="' + esc(p.id) + '">Revoke the ' +
-        (stale.length === 1 ? "one" : stale.length) + ' not seen in ' + STALE_DAYS +
-        ' days</button></div>';
+    if (all.length && !filtered) {
+      html += '<div class="row" style="margin-top:10px">';
+      if (stale.length) {
+        html += '<button type="button" class="small" data-revoke-stale="' + esc(p.id) +
+          '">Sign out the ' + (stale.length === 1 ? "one" : stale.length) + ' not seen in ' +
+          STALE_DAYS + ' days</button>';
+      }
+      // Every device of this person at once (owner, 2026-10-30).
+      html += '<button type="button" class="small danger" data-signout-all="' + esc(p.id) +
+        '">Sign out all devices</button></div>';
     }
     c.devices.innerHTML = html;
     c.seenEls = {};
@@ -1228,15 +1233,21 @@
       });
   }
 
+  // What signing a device out does, said the same in every question.
+  var SIGNOUT_EFFECT = "It signs out of Alexandria. Signed in with an Alexandria Account, " +
+    "it also signs out of every server login the account gave it; logins added on the " +
+    "device itself, and its downloads, stay.";
+
   // Every device of one person not seen in STALE_DAYS, after one question.
   function revokeStale(pid) {
     var p = profileById(pid);
     var list = p ? (p.devices || []).filter(isStale) : [];
     if (!list.length) return;
-    if (!confirm("Revoke " + plural(list.length, "device", "devices") + " of " + p.name +
+    if (!confirm("Sign out " + plural(list.length, "device", "devices") + " of " + p.name +
                  "'s not seen in " + STALE_DAYS + " days?\n\n" +
                  list.map(function (d) { return "• " + (d.label || "unnamed device"); }).join("\n") +
-                 "\n\nEach signs out. Their other devices and all their history are untouched.")) return;
+                 "\n\nEach one: " + SIGNOUT_EFFECT +
+                 "\n\nTheir other devices and all their history are untouched.")) return;
     var done = 0, failed = 0;
     list.reduce(function (chain, d) {
       return chain.then(function () {
@@ -1246,17 +1257,35 @@
           });
       });
     }, Promise.resolve()).then(function () {
-      toast(failed ? "Revoked " + done + "; " + failed + " could not be revoked."
-                   : "Revoked " + plural(done, "device", "devices") + ".", failed > 0);
+      toast(failed ? "Signed out " + done + "; " + failed + " could not be signed out."
+                   : "Signed out " + plural(done, "device", "devices") + ".", failed > 0);
       load();
     });
   }
 
   function revoke(id, label) {
-    if (!confirm('Revoke "' + label + '"?\n\nThat device signs out. Their ' +
+    if (!confirm('Sign out "' + label + '"?\n\n' + SIGNOUT_EFFECT + '\n\nTheir ' +
                  'other devices and all their history are untouched.')) return;
     api("/admin/devices/" + encodeURIComponent(id), { method: "DELETE" })
-      .then(function () { toast("Device revoked."); load(); })
+      .then(function () { toast("Device signed out."); load(); })
+      .catch(function (e) { toast(e.message, true); });
+  }
+
+  // Every device of one person, and their phones' Manage-server sign-ins.
+  function signOutAll(pid) {
+    var p = profileById(pid);
+    var list = p ? (p.devices || []) : [];
+    if (!list.length) return;
+    if (!confirm("Sign out all of " + p.name + "'s devices?\n\n" +
+                 list.map(function (d) { return "• " + (d.label || "unnamed device"); }).join("\n") +
+                 "\n\nEach one: " + SIGNOUT_EFFECT + " Their phones signed in to manage " +
+                 "the server sign out of that too.\n\nTheir account, their services and " +
+                 "all their history are untouched; they can sign in again.")) return;
+    api("/admin/profiles/" + encodeURIComponent(pid) + "/devices", { method: "DELETE" })
+      .then(function (r) {
+        toast("Signed out " + plural((r && r.revoked) || 0, "device", "devices") + ".");
+        load();
+      })
       .catch(function (e) { toast(e.message, true); });
   }
 
@@ -3656,6 +3685,7 @@
     else if (d.tab) selectTab(d.for, d.tab);
     else if (d.approve) approve(d.approve);
     else if (d.revokeStale) revokeStale(d.revokeStale);
+    else if (d.signoutAll) signOutAll(d.signoutAll);
     else if (d.revoke) revoke(d.revoke, d.devlabel);
     else if (d.delete) removeProfile(d.delete, d.pname);
     else if (d.revokeAdmin) revokeAdminDevice(d.revokeAdmin, d.adlabel);

@@ -24,6 +24,12 @@ var (
 // can tell it apart from the admin token at a glance.
 const tokenPrefix = "alxp_"
 
+// LooksLikeDeviceToken: shaped like a profile (device) token — what a
+// signed-out device still holds — and not an admin credential.
+func LooksLikeDeviceToken(token string) bool {
+	return strings.HasPrefix(token, tokenPrefix)
+}
+
 // Profile is a name tag, not an account.
 //
 // There is no password and no registration. Its only job is keeping one
@@ -247,6 +253,40 @@ func (r *ProfileRepository) RevokeToken(tokenID string) error {
 		return ErrTokenNotFound
 	}
 	return nil
+}
+
+// RevokeAllTokens signs out EVERY device of one person (owner,
+// 2026-10-30: sign users out "remotely, from the server manager"): their
+// link tokens, the Alexandria Accounts keys sealed to them, and their
+// phones' Manage-server sign-ins. Their history, their account login and
+// their services stay; each device has to sign in again. Returns how many
+// devices it signed out (Manage-server sign-ins not counted).
+func (r *ProfileRepository) RevokeAllTokens(profileID string) (int, error) {
+	if _, err := r.GetByID(profileID); err != nil {
+		return 0, err
+	}
+	tx, err := database.DB.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM account_device_keys WHERE token_id IN
+		(SELECT id FROM profile_tokens WHERE profile_id = ?)`, profileID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`DELETE FROM admin_device_tokens
+		WHERE profile_id = ? AND profile_id != ''`, profileID); err != nil {
+		return 0, err
+	}
+	res, err := tx.Exec(`DELETE FROM profile_tokens WHERE profile_id = ?`, profileID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int(n), nil
 }
 
 // RenameToken changes the label a device was linked with — the name the

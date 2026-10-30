@@ -173,6 +173,7 @@ var wantRoutes = []string{
 	"DELETE /api/v1/admin/devices/:tokenId",
 	"DELETE /api/v1/admin/profiles/:id",
 	"DELETE /api/v1/admin/profiles/:id/account",
+	"DELETE /api/v1/admin/profiles/:id/devices",
 	"DELETE /api/v1/admin/profiles/:id/invite",
 	"DELETE /api/v1/admin/profiles/:id/services/:sid",
 	"DELETE /api/v1/admin/service-admins/:id",
@@ -2094,11 +2095,82 @@ func TestDevicesMeNamesTheCallersOwnLink(t *testing.T) {
 		}
 	}
 
-	// The key is the one a revoke takes: revoked, the device is no one.
+	// An admin credential is not a signed-out device: no token-revoked code.
+	for name, hdr := range map[string]map[string]string{
+		"environment token": bearer(testAPIToken),
+		"phone admin token": bearer(phone.token),
+	} {
+		if r := s.do("GET", "/api/v1/devices/me", nil, hdr); r.str("code") != "" {
+			t.Errorf("%s was told %q", name, r.str("code"))
+		}
+	}
+
+	// The key is the one a revoke takes: revoked, the device is no one —
+	// and is told so in the one code a signed-in app signs itself out on.
 	s.expectStatus(http.StatusOK, "DELETE", "/api/v1/admin/devices/"+me.str("deviceKey"),
 		nil, bearer(phone.token))
-	if r := s.do("GET", "/api/v1/devices/me", nil, device); r.status != http.StatusUnauthorized {
-		t.Fatalf("a revoked device: %d %v, want 401", r.status, r)
+	if r := s.do("GET", "/api/v1/devices/me", nil, device); r.status != http.StatusUnauthorized ||
+		r.str("code") != "token-revoked" {
+		t.Fatalf("a revoked device: %d %v, want 401 token-revoked", r.status, r)
 	}
 	s.expectStatus(http.StatusOK, "GET", "/api/v1/devices/me", nil, bearer(sibling.str("token")))
+}
+
+// "Sign out all devices" of one person (owner, 2026-10-30): every device
+// token of that person goes and each reads token-revoked; another
+// person's devices, and the person themselves, stay.
+func TestSignOutAllDevicesOfOnePerson(t *testing.T) {
+	s := newTestServer(t)
+	if !hasCapability(t, s, "devices.sign-out") {
+		t.Fatal("/health does not advertise devices.sign-out")
+	}
+	admin := bearer(testAPIToken)
+	link := func(label, person string) response {
+		code, claimSecret := s.linkRequest(label)
+		s.expectStatus(http.StatusOK, "POST", approvePath,
+			map[string]string{"code": code, "name": person}, admin)
+		return s.expectStatus(http.StatusOK, "POST", "/api/v1/link/claim",
+			map[string]string{"claimSecret": claimSecret}, nil)
+	}
+	kateClaim := link("Kate's iPhone", "Kate")
+	kate, katePhone := kateClaim.str("profileId"), bearer(kateClaim.str("token"))
+	chrisPhone := bearer(link("Chris's iPhone", "Chris").str("token"))
+	kateTV := bearer(s.expectStatus(http.StatusCreated, "POST", "/api/v1/devices",
+		map[string]string{"label": "Kate's TV"}, katePhone).str("token"))
+	// A Manage-server sign-in each, made with their accounts.
+	chris := s.expectStatus(http.StatusOK, "GET", "/api/v1/devices/me", nil, chrisPhone).str("profileId")
+	now := time.Now().Unix()
+	for id, pid := range map[string]string{"adm-kate": kate, "adm-chris": chris} {
+		if _, err := database.DB.Exec(`INSERT INTO admin_device_tokens
+			(id, token_hash, label, created_at, last_used_at, expires_at, profile_id, scope)
+			VALUES (?, ?, 'phone', ?, ?, ?, ?, 'manage')`, id, "hash-"+id, now, now, now+3600, pid); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r := s.expectStatus(http.StatusOK, "DELETE", "/api/v1/admin/profiles/"+kate+"/devices", nil, admin)
+	if n, _ := r.body["revoked"].(float64); n != 2 {
+		t.Fatalf("signed out %v, want 2", r)
+	}
+	for id, want := range map[string]int{"adm-kate": 0, "adm-chris": 1} {
+		var n int
+		if err := database.DB.QueryRow(`SELECT COUNT(*) FROM admin_device_tokens WHERE id = ?`, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != want {
+			t.Errorf("%s: %d rows, want %d", id, n, want)
+		}
+	}
+	for name, hdr := range map[string]map[string]string{"Kate's phone": katePhone, "Kate's TV": kateTV} {
+		if r := s.do("GET", "/api/v1/devices/me", nil, hdr); r.status != http.StatusUnauthorized ||
+			r.str("code") != "token-revoked" {
+			t.Errorf("%s: %d %v, want 401 token-revoked", name, r.status, r)
+		}
+	}
+	s.expectStatus(http.StatusOK, "GET", "/api/v1/devices/me", nil, chrisPhone)
+	list := s.expectStatus(http.StatusOK, "GET", "/api/v1/admin/profiles", nil, admin)
+	if !bytes.Contains(list.raw, []byte(`"name":"Kate"`)) {
+		t.Fatalf("Kate herself went too: %v", list)
+	}
+	s.expectStatus(http.StatusNotFound, "DELETE", "/api/v1/admin/profiles/no-such-person/devices", nil, admin)
 }
