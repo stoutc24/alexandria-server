@@ -299,6 +299,9 @@ func (c *Catalog) buildMusic() {
 		c.register(ar.ID, ar)
 	}
 	playedRank := 0
+	// SHOWCASE_SHORT_TRACKS=1: every song 20-29 s, so a probe can watch
+	// the TV's Queue row follow real song changes.
+	short := os.Getenv("SHOWCASE_SHORT_TRACKS") == "1"
 	for i, a := range albums {
 		al := &Album{ID: fmt.Sprintf("al%02d", i+1), Index: i, Title: a.Title, Artist: c.Artists[a.Artist], Year: a.Year,
 			Genre: c.Artists[a.Artist].Genre, AddedAt: c.daysAgo(a.Added), Played: a.Played}
@@ -310,6 +313,9 @@ func (c *Catalog) buildMusic() {
 			seed := hash("track|" + a.Title + "|" + t)
 			tr := &Track{ID: fmt.Sprintf("tr%02d%02d", i+1, j+1), Album: al, Index: j + 1, Title: t,
 				Duration: 150 + float64(seed%230), Seed: seed}
+			if short {
+				tr.Duration = 20 + float64(seed%10)
+			}
 			if a.Played > 0 {
 				tr.Plays = 1 + int(seed%9)
 			}
