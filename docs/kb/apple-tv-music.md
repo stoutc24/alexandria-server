@@ -18,6 +18,11 @@ opens as a row along the bottom of the screen:
   - **Remove from Queue**
 
   The song playing now has no menu.
+- When the next song starts, the row moves along so the new song sits in the
+  middle, and the focus moves to it. If you were looking through other songs,
+  it waits until you have left the remote alone for 5 seconds. If the focus
+  is on the switches or the player's buttons, it stays there and only the
+  row moves. (Apple TV build 190 and later.)
 - Press **Menu** (or Back) to close the Queue. The music keeps playing.
 
 It works for Plex, Jellyfin and Navidrome music, including stations.
@@ -45,6 +50,11 @@ under the player's controls (**Hide Lyrics** puts the song details back).
 
 The controls stay under the lyrics, so you can pause or skip while reading.
 (The look above is Apple TV build 189 and later.)
+
+The screensaver doesn't start while the lyrics are on screen. After **Hide
+Lyrics**, it waits its usual time (Settings › Screensaver) before it starts.
+The Screensaver button still starts it at once. (Apple TV build 190 and
+later.)
 
 ## The screensaver's song lines
 
