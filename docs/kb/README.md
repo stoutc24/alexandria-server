@@ -94,6 +94,10 @@ These were proven in tests and simulators, not yet on hardware:
       Apple TV made the leader leads; a leading Apple TV whose lead is
       given away follows (added 2026-10-30; proven on the party rig with
       the iPhone and Apple TV simulators).
+- [ ] Party Play with MP3/AAC songs: phones and computers stay in sync as
+      with FLAC, and a device joining lands on the party's position (added
+      2026-10-30; measured on the Android emulator: a follower's drift
+      471 ms → 3 ms; not on an iPhone, Windows or in a room).
 - [ ] Signing a device out: the device notices within about 15 seconds,
       loses its account's logins and keeps hand-added ones and downloads;
       a closed app notices on its next open (added 2026-10-30; proven on
