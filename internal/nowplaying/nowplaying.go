@@ -93,6 +93,21 @@ type State struct {
 	// index into the published list; the leader adds the offset back).
 	QueueOffset int `json:"queueOffset,omitempty"`
 
+	// Shuffle and Repeat are the LEADER's own play modes (owner,
+	// 2026-10-31: Shuffle and Repeat on the Remote), as its reports say:
+	// shuffle on or off; repeat "off", "all" or "one". Leader-owned like
+	// isPlaying: every accepted report sets both to exactly what it
+	// carries, so a mode a report leaves out is one that leader cannot do
+	// (it predates them) and reads as absent — a Remote shows a button
+	// only for a mode that is present — and nothing is carried over from
+	// another device. A repeat other than those three reads as absent too.
+	// A setShuffle or setRepeat intent changes them here at once and the
+	// leader carries it out on its own queue (applyModeLocked). Unknown
+	// again after a hand-over or with the seat vacant, until a leader
+	// reports.
+	Shuffle *bool  `json:"shuffle,omitempty"`
+	Repeat  string `json:"repeat,omitempty"`
+
 	// PositionMs is the leader's position in milliseconds. PositionSec
 	// stays for readers that predate it, but every anchor computation
 	// uses this: whole seconds put followers up to a second off before
@@ -431,6 +446,9 @@ const (
 	// OutcomeAhead: a live chunk starts further ahead than the talker can
 	// have captured.
 	OutcomeAhead
+	// OutcomeLeaderLacksMode: a setShuffle or setRepeat for a mode the
+	// leader's reports do not carry — it cannot do it (it predates them).
+	OutcomeLeaderLacksMode
 )
 
 // ReportOpts is who is reporting and what they had seen. Device identity
@@ -478,11 +496,13 @@ type ReportOpts struct {
 // or the position it wants, computed from the state it saw, so two rooms
 // pressing skip at once cannot skip twice.
 type IntentRequest struct {
-	// Type: setPlaying | setPositionMs | setIndex.
+	// Type: setPlaying | setPositionMs | setIndex | setShuffle | setRepeat.
 	Type            string
 	Playing         bool
 	PositionMs      int64
 	Index           int
+	Shuffle         bool
+	Repeat          string
 	BasedOnRevision int64
 	// IfQueueRevision, when set on setIndex, is the queue revision the
 	// index was computed against. A reorder or a re-published window
@@ -498,10 +518,26 @@ const (
 	IntentSetPlaying    = "setPlaying"
 	IntentSetPositionMs = "setPositionMs"
 	IntentSetIndex      = "setIndex"
+	// The leader's play modes (applyModeLocked): carried out by the leader
+	// on its own queue; the playing song does not move.
+	IntentSetShuffle = "setShuffle"
+	IntentSetRepeat  = "setRepeat"
 	// Queue edits (EditQueue): carried out by the leader, not the server.
 	IntentAddToQueue      = "addToQueue"
 	IntentRemoveFromQueue = "removeFromQueue"
 )
+
+// Repeat modes: State.Repeat and a setRepeat intent's value.
+const (
+	RepeatOff = "off"
+	RepeatAll = "all"
+	RepeatOne = "one"
+)
+
+// ValidRepeat: one of the three repeat modes, exactly as spelled.
+func ValidRepeat(v string) bool {
+	return v == RepeatOff || v == RepeatAll || v == RepeatOne
+}
 
 // QueueEdit is one change a device asked of the leader's queue. An add
 // carries Items (metadata only, like the published queue) for after the
@@ -934,6 +970,14 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 	st.QueueEdits = nil
 	// Nor does party audio: a body that carries it changes nothing.
 	clearReadTimeAudio(&st)
+	// The play modes are the leader's own, exactly as this report carries
+	// them (State.Shuffle): nothing is carried forward from the stored
+	// state, and a repeat that is not one of the three reads as one this
+	// leader cannot do — never as a refusal, so a heartbeat never fails on
+	// it.
+	if !ValidRepeat(st.Repeat) {
+		st.Repeat = ""
+	}
 	st.LeaderEditsQueue = opts.EditsQueue
 	if opts.QueueEditAck != nil {
 		s.ackEditsLocked(profileID, *opts.QueueEditAck)
@@ -1231,6 +1275,10 @@ func (s *Store) ApplyIntent(profileID, byLabel string, in IntentRequest) (State,
 	if seatLive && st.LegacyLeader {
 		return s.readLocked(profileID, st, nowMs), OutcomeLegacyLeader
 	}
+	if in.Type == IntentSetShuffle || in.Type == IntentSetRepeat {
+		// The song does not move: none of what follows applies.
+		return s.applyModeLocked(profileID, byLabel, in, st, now, seatLive)
+	}
 	// Taken before the switch moves the item: the next-track
 	// announcement standing when the intent lands, if any.
 	hadNext := isNextItemSchedule(st)
@@ -1348,6 +1396,83 @@ func (s *Store) ApplyIntent(profileID, byLabel string, in IntentRequest) (State,
 	return s.readLocked(profileID, st, nowMs), OutcomeOK
 }
 
+// applyModeLocked is ApplyIntent's setShuffle and setRepeat: a change to
+// the leader's play modes, which the leader carries out on its own queue
+// (owner, 2026-10-31: "Yes, Remote only"). The state shows the new mode at
+// once; it is the leader's to keep, so a leader that cannot do the mode
+// (its reports carry none) is refused, and so is a press while nobody
+// leads to carry it out (a vacant seat, a leader asleep) — the same rule
+// as a queue edit.
+//
+// It shares with the other intents only the bookkeeping that makes the
+// leader act: lastIntent and lastIntentRevision. A leader carries out an
+// intent its reports have not acknowledged (lastIntentRevision past
+// leaderAckRevision), named by lastIntent.type; and its heartbeat from
+// before the press is refused stale, with this state to apply, instead of
+// putting the old mode back. Its first report that has seen the press is
+// the ack and re-anchors from the leader's own clock, as after any intent
+// — so a leader whose player hitched while it reshuffled is followed
+// where it really is.
+//
+// The playing song does not move, so nothing that says where the music is
+// changes here: not the position, updatedAtMs, the anchor or its revision,
+// and not a scheduled start. A start of the current item still holds at
+// its instant. A next-track announcement stands until the leader's own
+// report withdraws or replaces it, as after a queue edit — which also
+// changes what comes next and leaves it alone. Only the leader knows
+// whether a new order changed its next track, and it repeats or withdraws
+// the announcement on every report. Cancelling it here, as ApplyIntent
+// does, would buy nothing and cost the boundary: a follower that already
+// latched it keeps its latch when the fields merely vanish, only the
+// leader's re-announcement of ANOTHER item moves it, and the same (item,
+// T) the leader re-sends after an intent's cancel is refused until T + 2 s
+// — every device would then cross that boundary unscheduled.
+func (s *Store) applyModeLocked(profileID, byLabel string, in IntentRequest, st State, now time.Time, seatLive bool) (State, Outcome) {
+	nowMs := now.UnixMilli()
+	if !seatLive {
+		return s.readLocked(profileID, st, nowMs), OutcomeLeaderAsleep
+	}
+	switch in.Type {
+	case IntentSetShuffle:
+		if st.Shuffle == nil {
+			return s.readLocked(profileID, st, nowMs), OutcomeLeaderLacksMode
+		}
+		if *st.Shuffle == in.Shuffle {
+			return s.readLocked(profileID, st, nowMs), OutcomeOK
+		}
+		v := in.Shuffle
+		st.Shuffle = &v // a new value: a read's copy keeps the old one
+	default: // IntentSetRepeat
+		if !ValidRepeat(in.Repeat) {
+			// The handler refuses it first (400); here, as an unknown
+			// intent is.
+			return s.readLocked(profileID, st, nowMs), OutcomeStale
+		}
+		if st.Repeat == "" {
+			return s.readLocked(profileID, st, nowMs), OutcomeLeaderLacksMode
+		}
+		if st.Repeat == in.Repeat {
+			return s.readLocked(profileID, st, nowMs), OutcomeOK
+		}
+		st.Repeat = in.Repeat
+	}
+	rev := s.nextRevLocked(profileID)
+	st.Revision = rev
+	st.IntentSeq++
+	st.LastIntentRevision = rev
+	st.LastIntent = &Intent{
+		Seq:      st.IntentSeq,
+		Type:     in.Type,
+		ByLabel:  byLabel,
+		AtMs:     nowMs,
+		Revision: rev,
+	}
+	s.m[profileID] = st
+	s.lastActivity[profileID] = now
+	s.notifyLocked(profileID)
+	return s.readLocked(profileID, st, nowMs), OutcomeOK
+}
+
 // HandOver passes the seat to a live follower: the explicit "make this
 // device the leader". The seat holder may ask, and so may any device
 // taking part in the party — a follower (for itself or another), a
@@ -1409,6 +1534,9 @@ func (s *Store) HandOver(profileID, fromDeviceID, fromLabel, toDeviceKey string)
 	st.SeatVacantSinceMs = 0
 	st.HandedOverAtMs = nowMs
 	st.StartAtMs, st.StartPositionMs, st.StartItemID = 0, 0, ""
+	// The play modes were the old leader's: unknown until the new holder
+	// reports its own, so no Remote offers a mode it may not have.
+	st.Shuffle, st.Repeat = nil, ""
 	// The new leader is nobody's follower: left in place, it would be
 	// counted among its own followers (and the party would look one
 	// device bigger than it is) until its heartbeat aged out.
@@ -1786,6 +1914,8 @@ func (s *Store) Get(profileID string) (State, bool) {
 		st.LeaderTokenID = ""
 		st.LeaderLabel = ""
 		st.SeatVacantSinceMs = nowMs
+		// Nobody leads to keep the play modes: unknown until one does.
+		st.Shuffle, st.Repeat = nil, ""
 		st.Revision = s.nextRevLocked(profileID)
 		s.m[profileID] = st
 		s.notifyLocked(profileID)
@@ -1915,6 +2045,8 @@ func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcom
 		st.LeaderLabel = ""
 		st.SeatVacantSinceMs = now.UnixMilli()
 		st.EndedByLeader = true
+		// The play modes go with the leader: unknown until one claims it.
+		st.Shuffle, st.Repeat = nil, ""
 		// A next-track announcement is the leaving leader's word about
 		// its own boundary: it goes with the seat, so nobody arriving
 		// from here on arms on it (a follower that already armed keeps

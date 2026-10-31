@@ -355,6 +355,70 @@ func TestPartyAudioIsThePersonsOwn(t *testing.T) {
 	}
 }
 
+// The leader's play modes (2026-10-31), against the real routes: a press
+// on the Remote reaches the leading device, the leader's heartbeat from
+// before it cannot undo it, the leader's report is what every device
+// reads, and another person's press reaches only their own party.
+func TestPlayModesOverTheRealRoutes(t *testing.T) {
+	s := newTestServer(t)
+	if !hasCapability(t, s, "nowplaying.shuffle-repeat") {
+		t.Fatal("/health does not advertise nowplaying.shuffle-repeat")
+	}
+	kate := s.linkedDevice("Kate", "Kate's iPhone")
+	mint := func(label string) map[string]string {
+		return bearer(s.expectStatus(http.StatusCreated, "POST", "/api/v1/devices",
+			map[string]string{"label": label}, kate).str("token"))
+	}
+	remote := mint("Kate's Remote")
+	tv := mint("Kate's TV")
+	chris := s.linkedDevice("Chris", "Chris's iPhone")
+
+	report := func(based any, shuffle bool, repeat string) response {
+		return s.do("PUT", "/api/v1/nowplaying/", map[string]any{
+			"itemId": "a", "title": "A", "isPlaying": true, "positionMs": 60000,
+			"basedOnRevision": based, "shuffle": shuffle, "repeat": repeat}, kate)
+	}
+	led := report(0, false, "off")
+	first, _ := led.body["state"].(map[string]any)
+	if led.status != http.StatusOK || first["shuffle"] != false || first["repeat"] != "off" {
+		t.Fatalf("the leader's report: %d %v", led.status, led)
+	}
+	s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/follow", map[string]any{"role": "follower"}, tv)
+	s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/follow", map[string]any{"role": "controller"}, remote)
+
+	r := s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/intent",
+		map[string]any{"type": "setShuffle", "shuffle": true}, remote)
+	pressed, _ := r.body["state"].(map[string]any)
+	last, _ := pressed["lastIntent"].(map[string]any)
+	if pressed["shuffle"] != true || last["type"] != "setShuffle" || last["byLabel"] != "Kate's Remote" {
+		t.Fatalf("the press: %v", r)
+	}
+
+	if stale := report(first["revision"], false, "off"); stale.status != http.StatusConflict || stale.str("code") != "stale" {
+		t.Fatalf("the leader's heartbeat from before the press: %d %v", stale.status, stale)
+	}
+	if ack := report(pressed["revision"], true, "off"); ack.status != http.StatusOK {
+		t.Fatalf("the leader's ack: %d %v", ack.status, ack)
+	}
+	seen := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/", nil, tv)
+	ackRev, _ := seen.body["leaderAckRevision"].(float64)
+	intentRev, _ := seen.body["lastIntentRevision"].(float64)
+	if seen.body["shuffle"] != true || seen.body["repeat"] != "off" || intentRev == 0 || ackRev <= intentRev {
+		t.Fatalf("the TV's read: %v", seen)
+	}
+
+	if r := s.do("POST", "/api/v1/nowplaying/intent", map[string]any{"type": "setRepeat", "repeat": "sometimes"}, remote); r.status != http.StatusBadRequest {
+		t.Fatalf("an unknown repeat: %d %v", r.status, r)
+	}
+	if r := s.do("POST", "/api/v1/nowplaying/intent", map[string]any{"type": "setShuffle", "shuffle": false}, chris); r.status != http.StatusNotFound ||
+		r.str("code") != "no-session" {
+		t.Fatalf("Chris pressing with no party of his own: %d %v", r.status, r)
+	}
+	if again := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/", nil, tv); again.body["shuffle"] != true {
+		t.Fatalf("Chris's press reached Kate's party: %v", again)
+	}
+}
+
 // testClip is a canonical announcement: 16 kHz mono 16-bit PCM, n
 // samples, with a 44-byte header.
 func testClip(n int) string {

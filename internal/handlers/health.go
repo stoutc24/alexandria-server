@@ -107,6 +107,13 @@ var capabilities = []string{
 	// /nowplaying/live/:id/audio (PCM chunks in; "PAL1" frames out), POST
 	// /nowplaying/live/:id/end; state.announcement of kind "live".
 	"nowplaying.live-announce",
+	// The leader's play modes: its reports carry shuffle (a boolean) and
+	// repeat ("off", "all", "one"), published on the state as reported
+	// (absent = that leader can't do it); POST /nowplaying/intent takes
+	// setShuffle {shuffle} and setRepeat {repeat}, carried out by the
+	// leader like setPlaying (409 leader-cannot-shuffle / -repeat when it
+	// can't).
+	"nowplaying.shuffle-repeat",
 	// Managing the server from a phone, all of it live together:
 	// POST /admin/auth/device-token (a phone's admin sign-in, "Bearer
 	// alxa_…", accepted by every requireAdmin route); GET and DELETE

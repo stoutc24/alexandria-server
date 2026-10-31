@@ -381,6 +381,21 @@ devices reconcile to it. Nothing dispatches a command at a device.
   state to catch up on: `stale`, `legacy-leader` (the playing device
   predates this), `leader-asleep` (a suspended phone cannot be resumed
   from here — iOS, not us), `no-queue`.
+- **Play modes** (2026-10-31: Shuffle and Repeat on the Remote). The
+  leader's reports carry `shuffle` (bool) and `repeat` (`off`, `all`,
+  `one`), kept exactly as reported: a mode a report leaves out is one
+  that leader cannot do, absent from the state, so a Remote offers only
+  what the leader can carry out and nothing of another device's lingers
+  (a hand-over or a vacant seat clears both until a leader reports).
+  `setShuffle {shuffle}` and `setRepeat {repeat}` change the state at
+  once and set `lastIntent` / `lastIntentRevision`, so the leader
+  carries them out like a pause and its heartbeat from before the press
+  is `409 stale` instead of undoing it. They never touch the position,
+  the anchor or a scheduled start — the song does not move, and the
+  leader's own report keeps or withdraws a next-track announcement, as
+  after a queue edit. Refusals: `leader-cannot-shuffle` /
+  `leader-cannot-repeat`, `leader-asleep` (nobody leads to carry it
+  out), `legacy-leader`. Capability `nowplaying.shuffle-repeat`.
 - **The leader converges like everyone else.** After an intent the
   leader's next report based on the old revision is `409 stale` with
   the state to apply; the first report that has seen it is the ack,

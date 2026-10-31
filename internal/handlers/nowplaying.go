@@ -279,8 +279,10 @@ func (h *NowPlayingHandler) Follow(c *fiber.Ctx) error {
 
 // Intent is a device proposing a state change: setPlaying, setPositionMs
 // or setIndex, each absolute, each based on the revision the device
-// last saw. The server mutates the state and answers with it; the
-// leader converges through its own long-poll like every follower.
+// last saw; or setShuffle {shuffle} / setRepeat {repeat: off|all|one},
+// the leader's play modes. The server mutates the state and answers with
+// it; the leader converges through its own long-poll like every
+// follower.
 func (h *NowPlayingHandler) Intent(c *fiber.Ctx) error {
 	profileID := middleware.ProfileID(c)
 	if profileID == "" {
@@ -299,6 +301,10 @@ func (h *NowPlayingHandler) Intent(c *fiber.Ctx) error {
 		Items  []nowplaying.QueueItem `json:"items"`
 		Next   bool                   `json:"next"`
 		ItemID string                 `json:"itemId"`
+		// The play modes: setShuffle carries shuffle (a JSON boolean),
+		// setRepeat carries repeat ("off", "all" or "one").
+		Shuffle *bool   `json:"shuffle"`
+		Repeat  *string `json:"repeat"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -327,13 +333,31 @@ func (h *NowPlayingHandler) Intent(c *fiber.Ctx) error {
 		}
 		in.Index = *body.Index
 		in.IfQueueRevision = body.IfQueueRevision
+	case nowplaying.IntentSetShuffle:
+		if body.Shuffle == nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "shuffle is required: true or false"})
+		}
+		in.Shuffle = *body.Shuffle
+	case nowplaying.IntentSetRepeat:
+		if body.Repeat == nil || !nowplaying.ValidRepeat(*body.Repeat) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": `repeat must be "off", "all" or "one"`})
+		}
+		in.Repeat = *body.Repeat
 	default:
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "type must be setPlaying, setPositionMs, setIndex, addToQueue or removeFromQueue",
+			"error": "type must be setPlaying, setPositionMs, setIndex, setShuffle, setRepeat, addToQueue or removeFromQueue",
 		})
 	}
 
 	st, outcome := h.store.ApplyIntent(profileID, deviceLabel, in)
+	// mode names a play-mode intent in its refusals; "" for the others.
+	mode := ""
+	switch in.Type {
+	case nowplaying.IntentSetShuffle:
+		mode = "shuffle"
+	case nowplaying.IntentSetRepeat:
+		mode = "repeat"
+	}
 	switch outcome {
 	case nowplaying.OutcomeNoSession:
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -344,10 +368,21 @@ func (h *NowPlayingHandler) Intent(c *fiber.Ctx) error {
 		return refused(c, "legacy-leader", "the playing device cannot be controlled remotely; update Alexandria on it", st)
 	case nowplaying.OutcomeLeaderAsleep:
 		label := st.LeaderLabel
-		if label == "" {
+		switch {
+		case mode != "" && label == "":
+			return refused(c, "leader-asleep", "nobody is leading the party right now", st)
+		case mode != "":
+			return refused(c, "leader-asleep", label+" is asleep and can't change "+mode+" from here", st)
+		case label == "":
 			label = "the playing device"
 		}
 		return refused(c, "leader-asleep", label+" is asleep and cannot resume from here", st)
+	case nowplaying.OutcomeLeaderLacksMode:
+		label := st.LeaderLabel
+		if label == "" {
+			label = "the playing device"
+		}
+		return refused(c, "leader-cannot-"+mode, label+" can't change "+mode+"; update Alexandria on it", st)
 	case nowplaying.OutcomeStale:
 		return refused(c, "stale", "the session changed since this device looked", st)
 	case nowplaying.OutcomeNoQueue:
