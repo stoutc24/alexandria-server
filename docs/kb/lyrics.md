@@ -15,9 +15,9 @@ Lyrics that load are kept on the device, so they open at once next time.
 
 ## When Plex can't fetch the lyrics
 
-Plex gets most lyrics from LyricFind each time you open them, and that
-service sometimes fails for a while: every song's lyrics come back "not
-found", then they return. When that happens:
+Plex gets most lyrics from LyricFind each time you open them, and
+sometimes it answers "not found" for a while before they come back. When
+that happens:
 
 - The Lyrics pane says **Plex couldn't fetch these lyrics just now** and
   tries again every 15 seconds while it's open.

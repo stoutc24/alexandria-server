@@ -56,8 +56,8 @@ app.)
 
 ## Lyrics
 
-When your Plex server has lyrics for a song, choose **Lyrics** in the row
-under the player's controls (**Hide Lyrics** puts the song details back).
+Choose **Lyrics** in the row under the player's controls (**Hide Lyrics**
+puts the song details back). The button is there for every song.
 
 - **Timed lyrics** follow the song: the line being sung is bright white, a
   third of the way down, and the lines around it are faded.
@@ -68,6 +68,22 @@ under the player's controls (**Hide Lyrics** puts the song details back).
 The controls stay under the lyrics, so you can pause or skip while reading.
 (The look above is Apple TV build 189 and later.)
 
+### Where the lyrics come from
+
+As on the phone (Apple TV build 191 and later):
+
+1. Your own server: Plex (with Plex Pass and LyricFind, or a `.lrc` file
+   next to the song) or Jellyfin.
+2. When your server has none, or only lyrics without timing, the Apple TV
+   asks [LRCLib](https://lrclib.net), a free lyrics library, for timed ones
+   once you open **Lyrics**. Those say **Lyrics from LRCLib** above them.
+   LRCLib is sent the song's title, artist, album and length, and only for
+   songs whose lyrics you open.
+
+Builds 189 and 190 showed LyricFind's lyrics as untimed, scrolling at an
+even pace, because the last two lines (the credits) have no time. Build
+191 follows the sung line.
+
 The screensaver doesn't start while the lyrics are on screen. After **Hide
 Lyrics**, it waits its usual time (Settings › Screensaver) before it starts.
 The Screensaver button still starts it at once. (Apple TV build 190 and
@@ -75,15 +91,16 @@ later.)
 
 ### When Plex can't fetch the lyrics
 
-Plex gets most lyrics from LyricFind each time you open them, and that
-service sometimes fails for a while: every song's lyrics come back "not
-found", then they return. From Apple TV build 190:
+Plex gets most lyrics from LyricFind each time you open them, and
+sometimes it answers "not found" for a while before they come back. From
+Apple TV build 190:
 
 - **Lyrics** stays in the row for a song Plex lists lyrics for, even while
   Plex can't fetch them. Open it and it says **Plex couldn't fetch these
-  lyrics just now**, then tries again every 15 seconds.
-- With the panel closed, the Apple TV tries again by itself 20 and 60
-  seconds into the trouble.
+  lyrics just now**, then tries again every 15 seconds. From build 191 it
+  first shows LRCLib's lyrics for the song, if LRCLib has them.
+- With the panel closed, the Apple TV tries again by itself: 3, 8, 20 and
+  60 seconds into the trouble (build 191; 20 and 60 seconds in build 190).
 - Lyrics that loaded once are kept on the Apple TV (the last 500 songs
   played), so those songs show their lyrics even while Plex can't.
 

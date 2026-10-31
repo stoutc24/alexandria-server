@@ -101,6 +101,16 @@ These were proven in tests and simulators, not yet on hardware:
       (Apple TV 190 and the next phone builds; proven in the Apple TV and
       iPhone simulators against a test server that fails the way a real
       Plex did on 2026-10-30).
+- [ ] Apple TV 191 lyrics: LyricFind's lyrics follow the sung line (190
+      scrolled them at an even pace); a song without its server's lyrics
+      gets LRCLib's once Lyrics is opened, marked "Lyrics from LRCLib";
+      Jellyfin songs show their server's lyrics (proven in the simulator
+      against a stand-in LRCLib, and the timing on three of a real Plex's
+      LyricFind lyrics, read-only).
+- [ ] iPhone 1245 Picture in Picture on Plex videos above 8 Mbps (e.g.
+      Expedition Unknown): the window starts, and the server copies the
+      video instead of re-encoding it (the server's own decision checked
+      read-only; PiP itself only on a real iPhone).
 - [ ] Apple TV following a party on its first song: a Queue pick, Next and
       Previous steer the party (fixed 2026-10-30; proven with the iPhone app
       leading in the simulator).
