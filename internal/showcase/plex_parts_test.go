@@ -173,3 +173,36 @@ func TestPlexLyricsDownSwitchAndCount(t *testing.T) {
 		t.Errorf("back up: readout down=%v requests=%d, want false 2", down, n)
 	}
 }
+
+// The LRCLib stand-in: off by default; on, /api/get answers one record and
+// /api/search a list of one, both with timed lyrics, and they are counted.
+func TestLRCLibStandIn(t *testing.T) {
+	cat := Build(time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC), nil).Half(1)
+	s := New(cat, "")
+	srv := httptest.NewServer(s.PlexHandler())
+	defer srv.Close()
+	if code, _ := jfGet(t, srv, "/api/get?artist_name=A&track_name=B"); code != http.StatusNotFound {
+		t.Errorf("off: /api/get answered %d, want 404", code)
+	}
+	s.LRCLib = true
+	code, data := jfGet(t, srv, "/api/get?artist_name=A&track_name=B&duration=200")
+	var got map[string]any
+	if code != http.StatusOK || json.Unmarshal(data, &got) != nil {
+		t.Fatalf("on: /api/get answered %d %s", code, data)
+	}
+	if got["trackName"] != "B" || got["artistName"] != "A" || got["syncedLyrics"] == "" || got["instrumental"] != false {
+		t.Errorf("record %v", got)
+	}
+	code, data = jfGet(t, srv, "/api/search?track_name=B&artist_name=A")
+	var list []map[string]any
+	if code != http.StatusOK || json.Unmarshal(data, &list) != nil || len(list) != 1 {
+		t.Errorf("search answered %d %s", code, data)
+	}
+	_, data = jfGet(t, srv, "/__showcase/lyrics")
+	var readout struct {
+		LRCLib int `json:"lrclib"`
+	}
+	if json.Unmarshal(data, &readout) != nil || readout.LRCLib != 2 {
+		t.Errorf("readout %s, want lrclib 2", data)
+	}
+}

@@ -55,9 +55,9 @@ func (s *Server) plex(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodPost {
 				s.LyricsDown = qStr(r, "down") == "1"
 			}
-			down, n := s.LyricsDown, s.lyricRequests
+			down, n, lrclib := s.LyricsDown, s.lyricRequests, s.lrclibRequests
 			s.mu.Unlock()
-			ok(w, map[string]any{"down": down, "requests": n})
+			ok(w, map[string]any{"down": down, "requests": n, "lrclib": lrclib})
 			return
 		}
 		if len(p) != 2 || p[1] != "parts" {
@@ -70,6 +70,27 @@ func (s *Server) plex(w http.ResponseWriter, r *http.Request) {
 			s.mu.Unlock()
 		}
 		ok(w, map[string]any{"parts": s.recordedParts(r.Method != http.MethodGet), "refusePlain": s.refusesPlain()})
+	case "api":
+		// A stand-in for LRCLib (lrclib.net) when SHOWCASE_LRCLIB=1: an app
+		// pointed here (the TV's -uitestLRCLibURL) finds timed lyrics for any
+		// song at /api/get and /api/search, in LRCLib's own record shape.
+		if !s.LRCLib || len(p) != 2 || (p[1] != "get" && p[1] != "search") {
+			notFound(w)
+			return
+		}
+		s.mu.Lock()
+		s.lrclibRequests++
+		s.mu.Unlock()
+		record := map[string]any{
+			"id": 1, "trackName": qStr(r, "track_name"), "artistName": qStr(r, "artist_name"),
+			"albumName": qStr(r, "album_name"), "duration": 0, "instrumental": false,
+			"plainLyrics": strings.Join(showcaseLRCLibLines, "\n"), "syncedLyrics": showcaseLRCLibLRC(),
+		}
+		if p[1] == "get" {
+			ok(w, record)
+		} else {
+			ok(w, []map[string]any{record})
+		}
 	case "identity":
 		ok(w, mc(map[string]any{"claimed": true, "machineIdentifier": plexMachineID, "version": "1.41.0.8992"}))
 	case "library":
@@ -340,6 +361,26 @@ var showcaseLyricLines = []string{
 	"Oh, oh, oh",
 }
 
+// showcaseLRCLibLines are the stand-in LRCLib's lyrics: made up, and unlike
+// the Plex lyric stream's, so a test can tell which source it is reading.
+var showcaseLRCLibLines = []string{
+	"Lighthouse keeper, light the way",
+	"Out past the shoals where the herring play",
+	"Salt on the window",
+	"Bells in the bay",
+}
+
+// showcaseLRCLibLRC is those lines as LRC, one every three seconds for ten
+// minutes.
+func showcaseLRCLibLRC() string {
+	var b strings.Builder
+	for i := 0; i < 200; i++ {
+		sec := 1 + i*3
+		fmt.Fprintf(&b, "[%02d:%02d.00] %s\n", sec/60, sec%60, showcaseLRCLibLines[i%len(showcaseLRCLibLines)])
+	}
+	return b.String()
+}
+
 // plexLyrics serves a lyric stream as LRC: a line every four seconds for
 // fifteen minutes, longer than any showcase track.
 func (s *Server) plexLyrics(w http.ResponseWriter, p []string) {
@@ -362,6 +403,10 @@ func (s *Server) plexLyrics(w http.ResponseWriter, p []string) {
 		sec := 2 + i*4
 		fmt.Fprintf(&b, "[%02d:%02d.00]%s\n", sec/60, sec%60, showcaseLyricLines[i%len(showcaseLyricLines)])
 	}
+	// Two untimed credit lines at the end, as LyricFind's lyrics on the
+	// owner's Plex have (2026-10-31): the Apple TV once read such a lyric
+	// as untimed and scrolled it by position.
+	b.WriteString("Writer(s): The Harbor Lights\nLyrics licensed for the showcase\n")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))
 }
