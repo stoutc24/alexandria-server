@@ -46,6 +46,12 @@ type Presence struct {
 	// has reported one. Informational: the server never acts on it.
 	DriftMs           *int64 `json:"driftMs,omitempty"`
 	DriftMeasuredAtMs int64  `json:"driftMeasuredAtMs,omitempty"`
+	// Volume is this device's own position on top of the party volume,
+	// 0–100 (absent = 100), and Features what its token said it can do
+	// (absent = none known). Both read-time, by the row's token
+	// (party_audio.go); never stored from a report.
+	Volume   *int     `json:"volume,omitempty"`
+	Features []string `json:"features,omitempty"`
 }
 
 // Intent is the last remote state change applied — kept so a device can
@@ -279,6 +285,34 @@ type State struct {
 	// It is how a device knows it leads, that a handover named it, and
 	// which follower row is its own.
 	YourDeviceKey string `json:"yourDeviceKey,omitempty"`
+
+	// Party volume (party_audio.go). Every field below is read-time;
+	// never stored from a report: Report clears them next to QueueEdits,
+	// so a PUT body that carries them changes nothing, and a leader that
+	// predates them cannot reset them by leaving them out.
+	//
+	// PartyVolume is the party slider's POSITION, 0–100 (read-time; never
+	// stored from a report). Absent = 100; 0 is real (silent music), which
+	// is why it is a pointer. PartyVolumeByLabel names the device that
+	// last set it (read-time; never stored from a report).
+	PartyVolume        *int   `json:"partyVolume,omitempty"`
+	PartyVolumeByLabel string `json:"partyVolumeByLabel,omitempty"`
+	// LeaderVolume is the seat holder's own device position, for the
+	// Remote's rows (read-time; never stored from a report). Absent = 100.
+	LeaderVolume *int `json:"leaderVolume,omitempty"`
+	// YourDeviceVolume is the REQUESTER'S own device position, stamped by
+	// the handler per response like YourDeviceKey (read-time; never
+	// stored from a report). Absent = 100. A device plays its music at
+	// partyVolume × yourDeviceVolume and never applies another row's.
+	YourDeviceVolume *int `json:"yourDeviceVolume,omitempty"`
+	// LeaderFeatures is what the seat holder's token said it can do, on
+	// its reports or while it followed (read-time; never stored from a
+	// report body's own field). Absent = none known.
+	LeaderFeatures []string `json:"leaderFeatures,omitempty"`
+	// deviceVolumes is a fresh per-read copy of every device position by
+	// token, for VolumeFor. Unexported, so encoding/json and BodyParser
+	// never see it either way.
+	deviceVolumes map[string]int
 }
 
 // QueueItem is one entry of the leader's play queue — METADATA ONLY.
@@ -362,6 +396,12 @@ const (
 	// OutcomeNotInParty: a hand-over asked by a device that neither
 	// holds the seat nor takes part in the party.
 	OutcomeNotInParty
+	// OutcomeNoSuchDevice: a device volume named neither the seat nor a
+	// live follower.
+	OutcomeNoSuchDevice
+	// OutcomeServerBusy: a store-wide or per-party cap is full (device
+	// volumes).
+	OutcomeServerBusy
 )
 
 // ReportOpts is who is reporting and what they had seen. Device identity
@@ -398,6 +438,10 @@ type ReportOpts struct {
 	// has carried out; every edit up to it is dropped. A leader repeats
 	// it on every report, so a refused one costs nothing.
 	QueueEditAck *int64
+	// Features is what the reporting device can do ("volume", …), already
+	// cleaned (CleanFeatures); nil = none sent, keep what is stored. Kept
+	// for its token only when the report is accepted.
+	Features []string
 }
 
 // IntentRequest is a proposed state change. Every type is absolute and
@@ -587,6 +631,11 @@ type Store struct {
 	// zero-latency wake and costs the server nothing.
 	waiting map[string]int
 
+	// audio[profile] is the party's volume and what its devices can do
+	// (party_audio.go). Memory only, never the database, disk or logs;
+	// gone with the state, and with a stop-all.
+	audio map[string]*partyAudio
+
 	// bootMs seeds every revision counter, so revisions are monotonic
 	// across restarts. A follower holding revision 57 across a restart
 	// used to be told "nothing new" forever (counter reset to 0).
@@ -609,6 +658,7 @@ func NewStore() *Store {
 		lastActivity:  make(map[string]time.Time),
 		waiters:       make(map[string]chan struct{}),
 		waiting:       make(map[string]int),
+		audio:         make(map[string]*partyAudio),
 		bootMs:        time.Now().UnixMilli(),
 	}
 }
@@ -661,6 +711,12 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 	defer s.mu.Unlock()
 
 	prev, had := s.m[profileID]
+	if had && (prev.Ended || s.staleLocked(prev, profileID, now)) {
+		// Expiry is lazy (Get) and this path never checks staleness, so
+		// without this a party volume would carry into an unrelated
+		// party started hours later. The session itself goes on as ever.
+		s.dropPartyAudioLocked(profileID)
+	}
 	if had && prev.Ended {
 		// An ended party is a tombstone, not a session: whoever reports
 		// next starts fresh — seat, anchor and intent bookkeeping alike.
@@ -835,6 +891,8 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 	// Queue edits never come from the body: the seat holder says only
 	// whether it carries them out, and how far it has.
 	st.QueueEdits = nil
+	// Nor does party audio: a body that carries it changes nothing.
+	clearReadTimeAudio(&st)
 	st.LeaderEditsQueue = opts.EditsQueue
 	if opts.QueueEditAck != nil {
 		s.ackEditsLocked(profileID, *opts.QueueEditAck)
@@ -883,8 +941,23 @@ func (s *Store) Report(profileID string, st State, opts ReportOpts) (State, Outc
 	}
 	s.m[profileID] = st
 	s.lastActivity[profileID] = now
+	if opts.Features != nil && opts.DeviceID != "" {
+		// What this device can do, kept for its token: it reads as
+		// leaderFeatures while it leads. The report bumps anyway.
+		s.setFeaturesLocked(profileID, opts.DeviceID, opts.Features)
+	}
 	s.notifyLocked(profileID)
 	return s.readLocked(profileID, st, nowMs), OutcomeOK
+}
+
+// staleLocked is Get's expiry rule: nothing — no report, intent or
+// follow — has touched the session for staleAfter. Caller holds the lock.
+func (s *Store) staleLocked(st State, profileID string, now time.Time) bool {
+	last := time.UnixMilli(st.UpdatedAtMs)
+	if a, has := s.lastActivity[profileID]; has && a.After(last) {
+		last = a
+	}
+	return now.Sub(last) > staleAfter
 }
 
 func (s *Store) qrevOrSeedLocked(profileID string) int64 {
@@ -1340,6 +1413,16 @@ func (s *Store) Join(profileID, deviceKey, label, role string) int64 {
 // ok is false, and nothing is recorded, when deviceKey is new and the
 // profile already lists MaxFollowersPerProfile live devices.
 func (s *Store) JoinWithDrift(profileID, deviceKey, label, role string, driftMs *int64, driftMeasuredAtMs int64) (rev int64, ok bool) {
+	return s.JoinFollow(profileID, deviceKey, "", label, role, driftMs, driftMeasuredAtMs, nil)
+}
+
+// JoinFollow is JoinWithDrift from an authenticated device: tokenID is
+// noted on the entry (as NoteToken does), and a FOLLOWER's features
+// (already cleaned; nil = none sent, keep what is stored) are kept for
+// its token while a session is live. A changed list bumps the revision
+// once, so the Remote learns at once who can play an announcement; it
+// never asks the leader for a fresh anchor, which only a join does.
+func (s *Store) JoinFollow(profileID, deviceKey, tokenID, label, role string, driftMs *int64, driftMeasuredAtMs int64, features []string) (rev int64, ok bool) {
 	if role != RoleViewer && role != RoleController {
 		role = RoleFollower
 	}
@@ -1372,6 +1455,9 @@ func (s *Store) JoinWithDrift(profileID, deviceKey, label, role string, driftMs 
 	e.label = label
 	e.role = role
 	e.last = now
+	if tokenID != "" {
+		e.tokenID = tokenID
+	}
 	if driftMs != nil {
 		v := *driftMs
 		e.driftMs = &v
@@ -1387,8 +1473,10 @@ func (s *Store) JoinWithDrift(profileID, deviceKey, label, role string, driftMs 
 	if !has {
 		return 0, true
 	}
-	if changed {
-		if role == RoleFollower && !st.Ended {
+	featuresChanged := role == RoleFollower && features != nil && tokenID != "" && !st.Ended &&
+		s.setFeaturesLocked(profileID, tokenID, features)
+	if changed || featuresChanged {
+		if changed && role == RoleFollower && !st.Ended {
 			s.anchorRefresh[profileID] = true
 		}
 		s.nextRevLocked(profileID)
@@ -1464,6 +1552,10 @@ func (s *Store) StopFollowing(profileID, deviceKey string) {
 // included) and the remote count, pruning expired entries. Caller
 // holds the write lock.
 func (s *Store) presenceLocked(profileID string) (followers []Presence, viewers, controllers int) {
+	a := s.audio[profileID]
+	if st, ok := s.m[profileID]; ok && st.Ended {
+		a = nil // never on an ended tombstone
+	}
 	for key, e := range s.followers[profileID] {
 		if time.Since(e.last) > followerTTL {
 			delete(s.followers[profileID], key)
@@ -1487,6 +1579,14 @@ func (s *Store) presenceLocked(profileID string) (followers []Presence, viewers,
 			p.DriftMs = &v
 			p.DriftMeasuredAtMs = e.driftAt.UnixMilli()
 		}
+		// Volume and features are kept by token: an Apple TV follows
+		// under a UUID it minted but leads under its token.
+		tok := e.tokenID
+		if tok == "" {
+			tok = key
+		}
+		p.Volume = a.deviceVolume(tok)
+		p.Features = a.featuresOf(tok)
 		followers = append(followers, p)
 	}
 	return followers, viewers, controllers
@@ -1513,6 +1613,11 @@ func (s *Store) readLocked(profileID string, st State, nowMs int64) State {
 				st.QueueEdits = append(st.QueueEdits, e)
 			}
 		}
+	}
+	// Party audio is never present on an ended tombstone.
+	clearReadTimeAudio(&st)
+	if !st.Ended {
+		s.decorateAudioLocked(profileID, &st, nowMs)
 	}
 	// The counter is the truth: presence changes bump it without
 	// rewriting the stored state, and a reader must see that bump or
@@ -1616,6 +1721,7 @@ func (s *Store) Get(profileID string) (State, bool) {
 		delete(s.edits, profileID)
 		delete(s.anchorRefresh, profileID)
 		delete(s.withdrawn, profileID)
+		s.dropPartyAudioLocked(profileID)
 		return State{}, false
 	}
 	if st.Ended {
@@ -1628,6 +1734,7 @@ func (s *Store) Get(profileID string) (State, bool) {
 			delete(s.edits, profileID)
 			delete(s.lastActivity, profileID)
 			delete(s.withdrawn, profileID)
+			s.dropPartyAudioLocked(profileID)
 			return State{}, false
 		}
 		return s.readLocked(profileID, st, nowMs), true
@@ -1755,6 +1862,9 @@ func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcom
 		delete(s.edits, profileID)
 		delete(s.anchorRefresh, profileID)
 		delete(s.withdrawn, profileID)
+		// The tombstone carries no party audio: the volumes and what the
+		// devices can do go now.
+		s.dropPartyAudioLocked(profileID)
 		s.lastActivity[profileID] = now
 		s.notifyLocked(profileID)
 		return EndAll
@@ -1784,6 +1894,7 @@ func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcom
 	delete(s.lastActivity, profileID)
 	delete(s.anchorRefresh, profileID)
 	delete(s.withdrawn, profileID)
+	s.dropPartyAudioLocked(profileID)
 	// Revisions deliberately SURVIVE a clear: a follower that reconnects
 	// must never see a revision go backwards, which it would read as
 	// "nothing changed" and sit on stale playback.

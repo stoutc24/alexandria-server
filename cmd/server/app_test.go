@@ -263,12 +263,20 @@ var wantRoutes = []string{
 	"POST /api/v1/nowplaying/follow",
 	"POST /api/v1/nowplaying/handover",
 	"POST /api/v1/nowplaying/intent",
+	"POST /api/v1/nowplaying/volume",
 	"POST /api/v1/stats/events",
 	"PUT /api/v1/accounts/device-key",
 	"PUT /api/v1/admin/profiles/:id/admin-access",
 	"PUT /api/v1/admin/profiles/:id/services/:sid/provision",
 	"PUT /api/v1/admin/profiles/:id/services/order",
 	"PUT /api/v1/nowplaying/",
+}
+
+// partyAudioRoutes are the party-audio routes: a profile token's alone,
+// like the rest of the party line. An id stands in where a path takes
+// one.
+var partyAudioRoutes = []struct{ method, path string }{
+	{"POST", "/api/v1/nowplaying/volume"},
 }
 
 // TestRouteTable pins the whole route table. A route that appears,
@@ -869,6 +877,13 @@ func TestDeviceTokenOpensNothingButAdmin(t *testing.T) {
 		{"POST", "/api/v1/admin/auth/enroll"},
 	} {
 		r := s.do(c.method, c.path, map[string]any{"password": testPassword}, auth)
+		if r.status != http.StatusUnauthorized {
+			t.Errorf("%v %s with an admin device token: %d %s", c.method, c.path, r.status, r)
+		}
+	}
+	// Party audio too: an admin credential is nobody's device.
+	for _, c := range partyAudioRoutes {
+		r := s.do(c.method, c.path, map[string]any{"volume": 40}, auth)
 		if r.status != http.StatusUnauthorized {
 			t.Errorf("%v %s with an admin device token: %d %s", c.method, c.path, r.status, r)
 		}
@@ -2024,6 +2039,21 @@ func hasCapability(t *testing.T, s *testServer, c string) bool {
 		}
 	}
 	return false
+}
+
+// Party audio's capabilities arrive with their routes, each in its own
+// commit: a client hides every control whose capability is missing.
+func TestPartyAudioCapabilitiesComeWithTheirRoutes(t *testing.T) {
+	s := newTestServer(t)
+	for c, want := range map[string]bool{
+		"nowplaying.volume":        true,
+		"nowplaying.announce":      false,
+		"nowplaying.live-announce": false,
+	} {
+		if got := hasCapability(t, s, c); got != want {
+			t.Errorf("/health lists %s: %v, want %v", c, got, want)
+		}
+	}
 }
 
 // 19. GET /devices/me: a linked device asks who it is (decision D-C),

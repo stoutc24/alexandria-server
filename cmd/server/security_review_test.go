@@ -302,3 +302,54 @@ func TestClaimCapsTheDeviceLabel(t *testing.T) {
 		t.Fatalf("the claimed label is %d bytes, want 80", n)
 	}
 }
+
+// Party audio (2026-10-31), against the real routes: a person's party
+// audio is that person's alone, who set it is the token's label, and a
+// signed-out device is told so on every party-audio route.
+func TestPartyAudioIsThePersonsOwn(t *testing.T) {
+	s := newTestServer(t)
+	kate := s.linkedDevice("Kate", "Kate's iPhone")
+	kateTV := bearer(s.expectStatus(http.StatusCreated, "POST", "/api/v1/devices",
+		map[string]string{"label": "Kate's TV"}, kate).str("token"))
+	chris := s.linkedDevice("Chris", "Chris's iPhone")
+
+	s.expectStatus(http.StatusOK, "PUT", "/api/v1/nowplaying/", map[string]any{
+		"itemId": "a", "title": "A", "isPlaying": true, "basedOnRevision": 0}, kate)
+	s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/follow",
+		map[string]any{"role": "follower", "features": []string{"volume"}}, kateTV)
+
+	// Chris has no party, and Kate's is not his to reach.
+	if r := s.do("POST", "/api/v1/nowplaying/volume", map[string]any{"volume": 5}, chris); r.status != http.StatusNotFound ||
+		r.str("code") != "no-session" {
+		t.Fatalf("Chris with no party: %d %v", r.status, r)
+	}
+
+	r := s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/volume", map[string]any{"volume": 40}, kateTV)
+	state, _ := r.body["state"].(map[string]any)
+	if state["partyVolume"] != float64(40) || state["partyVolumeByLabel"] != "Kate's TV" {
+		t.Fatalf("Kate's TV set the party: %v", r)
+	}
+
+	// Chris leading his own party sees none of Kate's.
+	s.expectStatus(http.StatusOK, "PUT", "/api/v1/nowplaying/", map[string]any{
+		"itemId": "b", "title": "B", "isPlaying": true, "basedOnRevision": 0}, chris)
+	mine := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/", nil, chris)
+	if _, has := mine.body["partyVolume"]; has {
+		t.Fatalf("Chris sees Kate's party volume: %v", mine)
+	}
+	s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/volume", map[string]any{"volume": 5}, chris)
+	theirs := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/", nil, kate)
+	if theirs.body["partyVolume"] != float64(40) {
+		t.Fatalf("Chris's volume reached Kate's party: %v", theirs)
+	}
+
+	// Signed out, Kate's TV is told so on every party-audio route.
+	me := s.expectStatus(http.StatusOK, "GET", "/api/v1/devices/me", nil, kateTV)
+	s.expectStatus(http.StatusOK, "DELETE", "/api/v1/admin/devices/"+me.str("deviceKey"), nil, bearer(testAPIToken))
+	for _, c := range partyAudioRoutes {
+		if r := s.do(c.method, c.path, map[string]any{"volume": 40}, kateTV); r.status != http.StatusUnauthorized ||
+			r.str("code") != "token-revoked" {
+			t.Errorf("%s %s with a revoked token: %d %v, want 401 token-revoked", c.method, c.path, r.status, r)
+		}
+	}
+}

@@ -47,6 +47,8 @@ func unauthorizedProfile(c *fiber.Ctx) error {
 func stamped(c *fiber.Ctx, st nowplaying.State) nowplaying.State {
 	st.ServerNowMs = time.Now().UnixMilli()
 	st.YourDeviceKey, _ = middleware.Device(c)
+	// The requester's own device level, per response like its key.
+	st.YourDeviceVolume = st.VolumeFor(st.YourDeviceKey)
 	return st
 }
 
@@ -93,6 +95,10 @@ func (h *NowPlayingHandler) Report(c *fiber.Ctx) error {
 		// QueueEditAck: the last edit seq it carried out.
 		EditsQueue   bool   `json:"editsQueue"`
 		QueueEditAck *int64 `json:"queueEditAck"`
+		// Features: what this device can do ("volume", …). A request
+		// field, not a state field; kept only when the report is
+		// accepted, and an invalid list is ignored rather than refused.
+		Features []string `json:"features"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -123,6 +129,7 @@ func (h *NowPlayingHandler) Report(c *fiber.Ctx) error {
 		EditsQueue:   req.EditsQueue,
 		QueueEditAck: req.QueueEditAck,
 	}
+	opts.Features, _ = nowplaying.CleanFeatures(req.Features)
 	if req.PositionMs != nil {
 		st.PositionMs = *req.PositionMs
 		opts.HasPositionMs = true
@@ -224,6 +231,10 @@ func (h *NowPlayingHandler) Follow(c *fiber.Ctx) error {
 		// the dashboard; never acted on by the server.
 		DriftMs           *int64 `json:"driftMs"`
 		DriftMeasuredAtMs int64  `json:"driftMeasuredAtMs"`
+		// Features: what this device can do ("volume", "announce", …),
+		// kept for its token when it follows. Absent keeps what is kept;
+		// an invalid list is ignored, never refused.
+		Features []string `json:"features"`
 	}
 	_ = c.BodyParser(&body)
 	// Older TVs mint their own key; anything newer is keyed on its
@@ -248,7 +259,9 @@ func (h *NowPlayingHandler) Follow(c *fiber.Ctx) error {
 	}
 	// The revision the join (or the refresh request) landed at: an
 	// anchor revision past it was taken after this device arrived.
-	rev, ok := h.store.JoinWithDrift(profileID, key, deviceLabel, body.Role, body.DriftMs, body.DriftMeasuredAtMs)
+	features, _ := nowplaying.CleanFeatures(body.Features)
+	rev, ok := h.store.JoinFollow(profileID, key, deviceID, deviceLabel, body.Role,
+		body.DriftMs, body.DriftMeasuredAtMs, features)
 	if !ok {
 		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
 			"error": "too many devices are following this person's playback",

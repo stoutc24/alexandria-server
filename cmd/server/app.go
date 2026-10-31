@@ -376,6 +376,8 @@ func buildApp(cfg *config.Config) *fiber.App {
 	// The seat holder makes another device the leader.
 	np.Post("/handover", nowPlayingHandler.HandOver)
 	np.Delete("/", nowPlayingHandler.Clear)
+	// Party audio: the party's volume and each device's own level.
+	np.Post("/volume", nowPlayingHandler.SetVolume)
 	// The party's clock, for the devices' offset measurement.
 	v1.Get("/time", requireProfile, handlers.Time)
 

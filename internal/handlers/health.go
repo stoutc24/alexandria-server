@@ -92,6 +92,11 @@ var capabilities = []string{
 	"nowplaying.handover-any",
 	// driftMs on POST /follow, listed per follower on the state.
 	"nowplaying.drift",
+	// Party volume: POST /nowplaying/volume (the party slider, or one
+	// device's own level); on the state partyVolume, partyVolumeByLabel,
+	// leaderVolume, yourDeviceVolume, followers[].volume, leaderFeatures
+	// and followers[].features; `features` on POST /follow and the PUT.
+	"nowplaying.volume",
 	// Managing the server from a phone, all of it live together:
 	// POST /admin/auth/device-token (a phone's admin sign-in, "Bearer
 	// alxa_…", accepted by every requireAdmin route); GET and DELETE
