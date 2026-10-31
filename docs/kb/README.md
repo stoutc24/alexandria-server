@@ -21,6 +21,8 @@ installing and running the Alexandria companion server itself, see the
 | [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag; the Artist tab; a party on a big screen |
 | [Adding and removing songs at a party](party-queue.md) | Play Next, Add to Party Queue and ✕ from party devices and the Remote; Plex songs; messages |
 | [Choosing who leads a party](party-leader.md) | Make leader from the leading device or any follower; taking the lead; the old leader's message |
+| [Party volume](party-volume.md) | The party slider on the Remote and the leading device; each device's own level; which devices follow it |
+| [Announcements at a party](party-announcements.md) | Message or Live; who hears it; the leading device's switch; stopping one; limits; your voice stays private |
 | [Signing a device out](signing-devices-out.md) | Sign out one device or all of a person's, on the web or in the app; what the device loses and keeps; when it notices |
 | [Alexandria on the Apple TV Home screen](apple-tv-home-screen.md) | The Top Shelf: Continue and Recently Added above the icons, and how to get it showing |
 | [Music on the Apple TV](apple-tv-music.md) | The Queue (browse, play, move, remove, Shuffle/Repeat/Autoplay; at a party); leaving the app while music plays (Control Center); lyrics, and when Plex can't fetch them; the screensaver's song lines |
@@ -32,6 +34,13 @@ Contact for questions or problems: stoutservers@gmail.com
 ## Check on a real device before publishing
 
 These were proven in tests and simulators, not yet on hardware:
+
+- [ ] Party volume and announcements (both pages): written from the agreed
+      design and the server alone, ahead of the app builds. Check every
+      label and message against the shipped phone and Apple TV apps, then
+      in a room: the party slider and each device's level, a message and
+      live voice heard together on every speaker (server added 2026-10-31;
+      proven on a test server over loopback, no app yet).
 
 - [ ] Mac: closing the window keeps music playing; the Dock icon brings it
       back; a video pauses on close (build 1230).
