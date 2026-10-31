@@ -8,8 +8,9 @@ import (
 )
 
 // Announcements: the party's PA system. A device in the party records a
-// short voice message, and every speaking device dips its music, plays a
-// chime and then the voice at the same instant on the party clock.
+// short voice message — or talks live (live.go) — and every speaking
+// device dips its music, plays a chime and then the voice at the same
+// instant on the party clock.
 //
 // The SERVER picks every instant; devices only read them. One
 // announcement at a time per party, rate limited per profile, and the
@@ -65,8 +66,17 @@ type announcement struct {
 	sizeBytes        int
 	stoppedAtMs      int64
 	stoppedByLabel   string
-	// clip is the uploaded WAV (the handler's own copy).
+	// A live one: capture starts at captureFromMs on the talker's clock,
+	// and it can last until maxEndsAtMs. Once ended, endSample is how many
+	// samples it holds and voiceEndsAtMs is when the last is heard.
+	captureFromMs int64
+	maxEndsAtMs   int64
+	ended         bool
+	endSample     int64
+	// clip is the uploaded WAV (the handler's own copy); live the relayed
+	// voice.
 	clip []byte
+	live *liveBuf
 	// cleanup zeroes it all RetainAfterEndMs past its end.
 	cleanup *time.Timer
 }
@@ -83,20 +93,37 @@ type AnnouncementView struct {
 	ChimeAtMs       int64 `json:"chimeAtMs"`
 	VoiceStartsAtMs int64 `json:"voiceStartsAtMs"`
 	SampleRate      int   `json:"sampleRate"`
-	// A clip's length and size.
+	// A clip's length and size. VoiceEndsAtMs is a live one's too, once it
+	// has ended.
 	DurationMs    int64 `json:"durationMs,omitempty"`
 	VoiceEndsAtMs int64 `json:"voiceEndsAtMs,omitempty"`
 	SizeBytes     int   `json:"sizeBytes,omitempty"`
+	// A live one: capture starts at CaptureFromMs; it lasts at most until
+	// MaxEndsAtMs. Live while open; once ended, Ended and EndSample (a
+	// pointer: 0 samples is a real end).
+	CaptureFromMs int64  `json:"captureFromMs,omitempty"`
+	MaxEndsAtMs   int64  `json:"maxEndsAtMs,omitempty"`
+	Live          bool   `json:"live,omitempty"`
+	Ended         bool   `json:"ended,omitempty"`
+	EndSample     *int64 `json:"endSample,omitempty"`
 	// Stopped early, by the seat holder or the sender.
 	StoppedAtMs    int64  `json:"stoppedAtMs,omitempty"`
 	StoppedByLabel string `json:"stoppedByLabel,omitempty"`
 }
 
+// open: a live announcement that has not ended.
+func (ann *announcement) open() bool {
+	return ann.kind == KindLive && !ann.ended
+}
+
 // effectiveEnd is when the announcement stops sounding: when it was
-// stopped, else its voice's end.
+// stopped, else its voice's end — unknown while a live one is open.
 func (ann *announcement) effectiveEnd() (int64, bool) {
-	if ann.stoppedAtMs > 0 {
+	switch {
+	case ann.stoppedAtMs > 0:
 		return ann.stoppedAtMs, true
+	case ann.open():
+		return 0, false
 	}
 	return ann.voiceEndsAtMs, true
 }
@@ -115,11 +142,11 @@ func (ann *announcement) busy(nowMs int64) bool {
 
 // over: its voice has ended on its own, so a stop changes nothing.
 func (ann *announcement) over(nowMs int64) bool {
-	return nowMs >= ann.voiceEndsAtMs
+	return !ann.open() && nowMs >= ann.voiceEndsAtMs
 }
 
 func (ann *announcement) view() AnnouncementView {
-	return AnnouncementView{
+	v := AnnouncementView{
 		ID:              ann.id,
 		Kind:            ann.kind,
 		ByLabel:         ann.byLabel,
@@ -133,6 +160,16 @@ func (ann *announcement) view() AnnouncementView {
 		StoppedAtMs:     ann.stoppedAtMs,
 		StoppedByLabel:  ann.stoppedByLabel,
 	}
+	if ann.kind == KindLive {
+		v.CaptureFromMs = ann.captureFromMs
+		v.MaxEndsAtMs = ann.maxEndsAtMs
+		v.Live = !ann.ended
+		if ann.ended {
+			end := ann.endSample
+			v.Ended, v.EndSample = true, &end
+		}
+	}
+	return v
 }
 
 // ParseClipWAV checks a clip is EXACTLY the one format the party plays: a
@@ -314,6 +351,12 @@ func (s *Store) StopAnnouncement(profileID, tokenID, label, id string) (State, O
 		return s.readLocked(profileID, st, nowMs), OutcomeOK
 	}
 	ann.stoppedAtMs, ann.stoppedByLabel = nowMs, label
+	if ann.live != nil {
+		// Live ends here, at what has arrived; every parked reader wakes to
+		// a frame that says stop.
+		s.endLiveLocked(profileID, ann, ann.live.total, nowMs)
+		ann.live.wakeAll()
+	}
 	s.armCleanupLocked(profileID, ann, nowMs)
 	return s.partyAudioChangedLocked(profileID, st, now), OutcomeOK
 }
@@ -366,7 +409,8 @@ func (s *Store) sweepAnnouncementLocked(profileID string, nowMs int64) {
 }
 
 // deleteAnnouncementLocked forgets the party's announcement: its bytes
-// zeroed in place, the global count given back, its timers stopped.
+// zeroed in place, the global counts given back, its timers stopped, and
+// any reader parked on it woken (it finds the announcement gone).
 func (s *Store) deleteAnnouncementLocked(profileID string) {
 	a := s.audio[profileID]
 	if a == nil || a.ann == nil {
@@ -379,5 +423,19 @@ func (s *Store) deleteAnnouncementLocked(profileID string) {
 	s.clipBytesTotal -= int64(len(ann.clip))
 	clear(ann.clip)
 	ann.clip = nil
+	if lb := ann.live; lb != nil {
+		if lb.watchdog != nil {
+			lb.watchdog.Stop()
+		}
+		if !ann.ended {
+			ann.ended = true
+			s.liveSessions--
+		}
+		for i := range lb.runs {
+			clear(lb.runs[i].pcm)
+		}
+		lb.runs = nil
+		lb.wakeAll()
+	}
 	a.ann = nil
 }

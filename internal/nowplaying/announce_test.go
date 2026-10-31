@@ -45,9 +45,15 @@ func shiftAnnouncement(s *Store, profileID string, deltaMs int64) {
 	ann := s.audio[profileID].ann
 	ann.chimeAtMs += deltaMs
 	ann.voiceStartsAtMs += deltaMs
-	ann.voiceEndsAtMs += deltaMs
+	if !ann.open() {
+		ann.voiceEndsAtMs += deltaMs
+	}
 	if ann.stoppedAtMs > 0 {
 		ann.stoppedAtMs += deltaMs
+	}
+	if ann.kind == KindLive {
+		ann.captureFromMs += deltaMs
+		ann.maxEndsAtMs += deltaMs
 	}
 }
 

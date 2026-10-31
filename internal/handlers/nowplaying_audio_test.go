@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stoutsolutions/alexandria-server/internal/nowplaying"
@@ -46,6 +48,10 @@ func audioApp(store *nowplaying.Store) *fiber.App {
 	app.Post("/announcements", h.PostClip)
 	app.Get("/announcements/:id", h.GetClip)
 	app.Post("/announcements/:id/stop", h.StopAnnouncement)
+	app.Post("/live", h.StartLive)
+	app.Post("/live/:id/audio", h.PostLiveAudio)
+	app.Get("/live/:id/audio", h.GetLiveAudio)
+	app.Post("/live/:id/end", h.EndLive)
 	return app
 }
 
@@ -521,5 +527,127 @@ func TestStopAnswers(t *testing.T) {
 	}
 	if r := callJSON(t, app, "POST", "/announcements/"+id+"/stop", "tok-tv", ""); r.status != 200 {
 		t.Fatalf("a repeat stop: %d %s", r.status, r.raw)
+	}
+}
+
+// ---- live ---------------------------------------------------------------
+
+func liveChunk(n int, seed byte) []byte {
+	b := make([]byte, 2*n)
+	for i := range b {
+		b[i] = seed + byte(i*3)
+	}
+	return b
+}
+
+func TestLiveAnswers(t *testing.T) {
+	store := nowplaying.NewStore()
+	app := audioApp(store)
+	if r := call(t, app, "POST", "/live", "tok-remote", "", nil); r.status != 404 || r.code() != "no-session" {
+		t.Fatalf("no session: %d %s", r.status, r.raw)
+	}
+	audioSession(t, app)
+	if r := call(t, app, "POST", "/live", "tok-stranger", "", nil); r.status != 409 || r.code() != "not-in-party" {
+		t.Fatalf("a stranger: %d %s", r.status, r.raw)
+	}
+	r := call(t, app, "POST", "/live", "tok-remote", "application/json", []byte(`{}`))
+	ann, _ := r.body["announcement"].(map[string]any)
+	if r.status != 200 || ann == nil || ann["kind"] != "live" || ann["live"] != true {
+		t.Fatalf("start: %d %s", r.status, r.raw)
+	}
+	id := ann["id"].(string)
+	chime, capture := ann["chimeAtMs"].(float64), ann["captureFromMs"].(float64)
+	voice, maxEnds := ann["voiceStartsAtMs"].(float64), ann["maxEndsAtMs"].(float64)
+	if capture != chime+1150 || voice != capture+1000 || maxEnds != voice+120000 {
+		t.Fatalf("instants: %v", ann)
+	}
+	for _, k := range []string{"voiceEndsAtMs", "endSample", "ended", "durationMs"} {
+		if _, has := ann[k]; has {
+			t.Errorf("an open live announcement carries %s: %v", k, ann)
+		}
+	}
+	if r := call(t, app, "POST", "/live", "tok-tv", "", nil); r.status != 409 || r.code() != "busy" {
+		t.Fatalf("live during live: %d %s", r.status, r.raw)
+	}
+
+	audio := "/live/" + id + "/audio"
+	for name, c := range map[string]struct {
+		query  string
+		body   []byte
+		status int
+		code   string
+	}{
+		"no from":                       {"", liveChunk(10, 1), 400, "bad-chunk"},
+		"negative from":                 {"?from=-1", liveChunk(10, 1), 400, "bad-chunk"},
+		"fractional from":               {"?from=1.5", liveChunk(10, 1), 400, "bad-chunk"},
+		"words for from":                {"?from=abc", liveChunk(10, 1), 400, "bad-chunk"},
+		"empty":                         {"?from=0", nil, 400, "bad-chunk"},
+		"odd":                           {"?from=0", []byte{1, 2, 3}, 400, "bad-chunk"},
+		"over 64 KiB":                   {"?from=0", make([]byte, nowplaying.MaxLiveChunkBytes+2), 413, "too-large"},
+		"ahead (capture has not begun)": {"?from=0", liveChunk(10, 1), 409, "ahead"},
+	} {
+		r := call(t, app, "POST", audio+c.query, "tok-remote", "application/octet-stream", c.body)
+		if r.status != c.status || r.code() != c.code {
+			t.Errorf("%s: %d %s, want %d %s", name, r.status, r.raw, c.status, c.code)
+		}
+	}
+	if r := call(t, app, "POST", audio+"?from=0", "tok-tv", "application/octet-stream", liveChunk(10, 1)); r.status != 404 ||
+		r.code() != "not-found" {
+		t.Fatalf("a member who is not the talker: %d %s", r.status, r.raw)
+	}
+
+	// Capture may begin 2 s early by the slack: from 0 is taken ~150 ms in.
+	time.Sleep(250 * time.Millisecond)
+	voiceSamples := liveChunk(3200, 9)
+	r = call(t, app, "POST", audio+"?from=0", "tok-remote", "application/octet-stream", voiceSamples)
+	if r.status != 200 || r.body["total"] != float64(3200) {
+		t.Fatalf("a chunk: %d %s", r.status, r.raw)
+	}
+
+	// A reader gets a PAL1 frame: the contract's golden header, then the
+	// samples asked for.
+	got := call(t, app, "GET", audio+"?from=1600", "tok-tv", "", nil)
+	golden, _ := hex.DecodeString("50414c314006000000000000800c00000000000000000000")
+	if got.status != 200 || len(got.raw) != 24+3200 || !bytes.Equal(got.raw[:24], golden) ||
+		!bytes.Equal(got.raw[24:], voiceSamples[3200:]) {
+		t.Fatalf("frame: %d, %d bytes, header % x", got.status, len(got.raw), got.raw[:min(24, len(got.raw))])
+	}
+	if got.header.Get("Content-Type") != "application/octet-stream" || got.header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("frame headers: %v", got.header)
+	}
+	if r := call(t, app, "GET", audio+"?from=x", "tok-tv", "", nil); r.status != 400 || r.code() != "bad-chunk" {
+		t.Fatalf("a bad from: %d %s", r.status, r.raw)
+	}
+	if r := call(t, app, "GET", audio+"?from=0", "tok-stranger", "", nil); r.status != 404 || r.code() != "not-found" {
+		t.Fatalf("a stranger reading: %d %s", r.status, r.raw)
+	}
+
+	// The end: only the talker, once; its end on the answer and the state.
+	if r := callJSON(t, app, "POST", "/live/"+id+"/end", "tok-tv", `{"endSample":10}`); r.status != 404 || r.code() != "not-found" {
+		t.Fatalf("a member ending it: %d %s", r.status, r.raw)
+	}
+	r = callJSON(t, app, "POST", "/live/"+id+"/end", "tok-remote", `{"endSample":3200}`)
+	ended, _ := r.body["announcement"].(map[string]any)
+	if r.status != 200 || ended["ended"] != true || ended["endSample"] != float64(3200) || ended["live"] != nil ||
+		ended["voiceEndsAtMs"] != voice+200 {
+		t.Fatalf("end: %d %s", r.status, r.raw)
+	}
+	if st, _ := r.state()["announcement"].(map[string]any); st == nil || st["ended"] != true {
+		t.Fatalf("the state after the end: %s", r.raw)
+	}
+	if r := call(t, app, "POST", "/live/"+id+"/end", "tok-remote", "", []byte("not json")); r.status != 200 {
+		t.Fatalf("a repeat end with a body that does not parse: %d %s", r.status, r.raw)
+	}
+	r = call(t, app, "POST", audio+"?from=3200", "tok-remote", "application/octet-stream", liveChunk(10, 1))
+	if _, hasState := r.body["state"]; r.status != 409 || r.code() != "live-ended" || r.body["endSample"] != float64(3200) || hasState {
+		t.Fatalf("a chunk after the end: %d %s", r.status, r.raw)
+	}
+	got = call(t, app, "GET", audio+"?from=3200", "tok-tv", "", nil)
+	if got.status != 200 || len(got.raw) != 24 || binary.LittleEndian.Uint32(got.raw[20:]) != 1 {
+		t.Fatalf("a read past the end: %d % x", got.status, got.raw)
+	}
+	// A live id is no clip.
+	if r := call(t, app, "GET", "/announcements/"+id, "tok-tv", "", nil); r.status != 404 || r.code() != "not-found" {
+		t.Fatalf("a live id as a clip: %d %s", r.status, r.raw)
 	}
 }

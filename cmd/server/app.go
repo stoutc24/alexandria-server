@@ -387,6 +387,13 @@ func buildApp(cfg *config.Config) *fiber.App {
 	np.Post("/announcements", nowPlayingHandler.PostClip)
 	np.Get("/announcements/:id", nowPlayingHandler.GetClip)
 	np.Post("/announcements/:id/stop", nowPlayingHandler.StopAnnouncement)
+	// Live announcements: a talker's voice relayed in chunks, heard about
+	// a second after it is spoken. The chunk routes are out of the access
+	// log too: they carry an id, about ten times a second per device.
+	np.Post("/live", nowPlayingHandler.StartLive)
+	np.Post("/live/:id/audio", nowPlayingHandler.PostLiveAudio)
+	np.Get("/live/:id/audio", nowPlayingHandler.GetLiveAudio)
+	np.Post("/live/:id/end", nowPlayingHandler.EndLive)
 	// The party's clock, for the devices' offset measurement.
 	v1.Get("/time", requireProfile, handlers.Time)
 
@@ -399,10 +406,13 @@ func buildApp(cfg *config.Config) *fiber.App {
 }
 
 // quietPaths are the requests the access log skips: every path that
-// carries an announcement's id, which is a key to someone's voice. POST
-// /announcements, which carries none, is still logged.
+// carries an announcement's id, which is a key to someone's voice — and
+// the live chunks among them would be about ten lines a second per
+// device. POST /announcements and POST /live, which carry none, are
+// still logged.
 var quietPaths = []string{
 	"/api/v1/nowplaying/announcements/",
+	"/api/v1/nowplaying/live/",
 }
 
 // quietAccessLog is the access logger's Next: true skips the line. The

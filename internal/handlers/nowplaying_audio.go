@@ -11,8 +11,9 @@ import (
 )
 
 // Party audio: the party's volume and each device's own level on top of
-// it, and announcements — a recorded voice message every speaking device
-// plays at one instant. Every route needs a live session (404
+// it, and announcements — a recorded voice message, or a live voice,
+// every speaking device plays at one instant. Every route needs a live
+// session (404
 // no-session); who is asking — the token id and its label — comes from
 // the token, never a body; and every refusal is {"error": <English
 // diagnostic, never UI copy>, "code": <code>}, a 409 also carrying the
@@ -247,4 +248,129 @@ func (h *NowPlayingHandler) StopAnnouncement(c *fiber.Ctx) error {
 			"only the device leading the party or the one that sent it can stop an announcement", st)
 	}
 	return c.JSON(fiber.Map{"ok": true, "state": stamped(c, st)})
+}
+
+// ---- live ---------------------------------------------------------------
+
+// StartLive opens a live announcement for this device, the talker: the
+// same refusals as a clip, then 503 server-busy when the server already
+// relays as many as it can. The body is ignored. The answer's instants
+// say when to capture from (captureFromMs) and when the room hears it.
+func (h *NowPlayingHandler) StartLive(c *fiber.Ctx) error {
+	profileID := middleware.ProfileID(c)
+	if profileID == "" {
+		return unauthorizedProfile(c)
+	}
+	deviceID, deviceLabel := middleware.Device(c)
+	st, ann, outcome := h.store.StartLive(profileID, deviceID, deviceLabel)
+	if outcome != nowplaying.OutcomeOK {
+		return startRefused(c, outcome, st)
+	}
+	return c.JSON(fiber.Map{"ok": true, "announcement": ann, "state": stamped(c, st)})
+}
+
+// liveFrom reads ?from=: a whole number of samples, 0 or more.
+func liveFrom(c *fiber.Ctx) (int64, bool) {
+	from, err := strconv.ParseInt(c.Query("from"), 10, 64)
+	return from, err == nil && from >= 0
+}
+
+func badChunk(c *fiber.Ctx, message string) error {
+	return audioRefusal(c, fiber.StatusBadRequest, "bad-chunk", message)
+}
+
+// PostLiveAudio is the talker's voice samples [from, from+n): PCM s16le,
+// mono, 16 kHz, 2 to 65,536 bytes. Only the talker; anyone else, and an
+// unknown id, gets 404 not-found. Once it has ended or been stopped, 409
+// live-ended with endSample. Never party news: the party's revision does
+// not move.
+func (h *NowPlayingHandler) PostLiveAudio(c *fiber.Ctx) error {
+	profileID := middleware.ProfileID(c)
+	if profileID == "" {
+		return unauthorizedProfile(c)
+	}
+	deviceID, _ := middleware.Device(c)
+	from, ok := liveFrom(c)
+	if !ok {
+		return badChunk(c, "from must be a whole number of samples, 0 or more")
+	}
+	raw := c.Request().Body()
+	switch {
+	case len(raw) > nowplaying.MaxLiveChunkBytes:
+		return audioRefusal(c, fiber.StatusRequestEntityTooLarge, "too-large", "a chunk is at most 64 KiB")
+	case len(raw) == 0 || len(raw)%2 != 0:
+		return badChunk(c, "a chunk is whole 16-bit samples, at least one")
+	}
+	total, endSample, outcome := h.store.AppendLive(profileID, deviceID, c.Params("id"), from, copyBody(c))
+	switch outcome {
+	case nowplaying.OutcomeNoSession:
+		return noSession(c)
+	case nowplaying.OutcomeNotFound:
+		return notFound(c)
+	case nowplaying.OutcomeLiveEnded:
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error":     "this live announcement has ended",
+			"code":      "live-ended",
+			"endSample": endSample,
+		})
+	case nowplaying.OutcomeAhead:
+		return audioRefusal(c, fiber.StatusConflict, "ahead",
+			"that chunk starts further ahead than can have been captured yet")
+	}
+	return c.JSON(fiber.Map{"ok": true, "total": total})
+}
+
+// GetLiveAudio is a listener's next voice samples from ?from=, as one
+// PAL1 frame (nowplaying.EncodeFrame). It answers at once when there is
+// anything at or past from, or the announcement has ended; otherwise it
+// holds the request up to nowplaying.LiveHold for a chunk. Only a device
+// in the party; anyone else gets 404 not-found.
+func (h *NowPlayingHandler) GetLiveAudio(c *fiber.Ctx) error {
+	profileID := middleware.ProfileID(c)
+	if profileID == "" {
+		return unauthorizedProfile(c)
+	}
+	deviceID, _ := middleware.Device(c)
+	from, ok := liveFrom(c)
+	if !ok {
+		return badChunk(c, "from must be a whole number of samples, 0 or more")
+	}
+	// c.Context() ends the hold on shutdown (see WaitForChange).
+	r, outcome := h.store.ReadLive(c.Context(), profileID, deviceID, c.Params("id"), from, nowplaying.LiveHold)
+	switch outcome {
+	case nowplaying.OutcomeOK:
+	case nowplaying.OutcomeNoSession:
+		return noSession(c)
+	default:
+		return notFound(c)
+	}
+	c.Set(fiber.HeaderContentType, fiber.MIMEOctetStream)
+	c.Set(fiber.HeaderCacheControl, "no-store")
+	return c.Send(nowplaying.EncodeFrame(r))
+}
+
+// EndLive is the talker ending its live announcement: {"endSample": n}
+// (optional; default and ceiling, what has arrived). Best effort by
+// design — a body that does not parse ends it at what has arrived. A
+// repeat answers 200 without a bump.
+func (h *NowPlayingHandler) EndLive(c *fiber.Ctx) error {
+	profileID := middleware.ProfileID(c)
+	if profileID == "" {
+		return unauthorizedProfile(c)
+	}
+	deviceID, _ := middleware.Device(c)
+	var body struct {
+		EndSample *int64 `json:"endSample"`
+	}
+	if len(c.Request().Body()) > 0 && partyAudioJSON(c, &body) != nil {
+		body.EndSample = nil
+	}
+	st, ann, outcome := h.store.EndLive(profileID, deviceID, c.Params("id"), body.EndSample)
+	switch outcome {
+	case nowplaying.OutcomeNoSession:
+		return noSession(c)
+	case nowplaying.OutcomeNotFound:
+		return notFound(c)
+	}
+	return c.JSON(fiber.Map{"ok": true, "announcement": ann, "state": stamped(c, st)})
 }

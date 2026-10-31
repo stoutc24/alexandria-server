@@ -202,6 +202,7 @@ var wantRoutes = []string{
 	"GET /api/v1/devices/me",
 	"GET /api/v1/nowplaying/",
 	"GET /api/v1/nowplaying/announcements/:id",
+	"GET /api/v1/nowplaying/live/:id/audio",
 	"GET /api/v1/nowplaying/queue",
 	"GET /api/v1/stats/summary",
 	"GET /api/v1/time",
@@ -230,6 +231,7 @@ var wantRoutes = []string{
 	"HEAD /api/v1/devices/me",
 	"HEAD /api/v1/nowplaying/",
 	"HEAD /api/v1/nowplaying/announcements/:id",
+	"HEAD /api/v1/nowplaying/live/:id/audio",
 	"HEAD /api/v1/nowplaying/queue",
 	"HEAD /api/v1/stats/summary",
 	"HEAD /api/v1/time",
@@ -268,6 +270,9 @@ var wantRoutes = []string{
 	"POST /api/v1/nowplaying/follow",
 	"POST /api/v1/nowplaying/handover",
 	"POST /api/v1/nowplaying/intent",
+	"POST /api/v1/nowplaying/live",
+	"POST /api/v1/nowplaying/live/:id/audio",
+	"POST /api/v1/nowplaying/live/:id/end",
 	"POST /api/v1/nowplaying/volume",
 	"POST /api/v1/stats/events",
 	"PUT /api/v1/accounts/device-key",
@@ -286,6 +291,10 @@ var partyAudioRoutes = []struct{ method, path string }{
 	{"POST", "/api/v1/nowplaying/announcements"},
 	{"GET", "/api/v1/nowplaying/announcements/0123456789abcdef0123456789abcdef"},
 	{"POST", "/api/v1/nowplaying/announcements/0123456789abcdef0123456789abcdef/stop"},
+	{"POST", "/api/v1/nowplaying/live"},
+	{"POST", "/api/v1/nowplaying/live/0123456789abcdef0123456789abcdef/audio?from=0"},
+	{"GET", "/api/v1/nowplaying/live/0123456789abcdef0123456789abcdef/audio?from=0"},
+	{"POST", "/api/v1/nowplaying/live/0123456789abcdef0123456789abcdef/end"},
 }
 
 // TestRouteTable pins the whole route table. A route that appears,
@@ -2057,7 +2066,7 @@ func TestPartyAudioCapabilitiesComeWithTheirRoutes(t *testing.T) {
 	for c, want := range map[string]bool{
 		"nowplaying.volume":        true,
 		"nowplaying.announce":      true,
-		"nowplaying.live-announce": false,
+		"nowplaying.live-announce": true,
 	} {
 		if got := hasCapability(t, s, c); got != want {
 			t.Errorf("/health lists %s: %v, want %v", c, got, want)

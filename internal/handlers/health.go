@@ -103,6 +103,10 @@ var capabilities = []string{
 	// /nowplaying/announcements/:id, POST /nowplaying/announcements/:id/
 	// stop; state.announcement of kind "clip".
 	"nowplaying.announce",
+	// Live announcements: POST /nowplaying/live, POST and GET
+	// /nowplaying/live/:id/audio (PCM chunks in; "PAL1" frames out), POST
+	// /nowplaying/live/:id/end; state.announcement of kind "live".
+	"nowplaying.live-announce",
 	// Managing the server from a phone, all of it live together:
 	// POST /admin/auth/device-token (a phone's admin sign-in, "Bearer
 	// alxa_…", accepted by every requireAdmin route); GET and DELETE

@@ -416,19 +416,61 @@ func TestAnnouncementsAreThePartysOwn(t *testing.T) {
 	}
 }
 
+// Live voice is its own party's alone too: another person's token can
+// neither read, feed nor end it, and is told exactly what a made-up id
+// gets.
+func TestLiveAnnouncementsAreThePartysOwn(t *testing.T) {
+	s := newTestServer(t)
+	kate := s.linkedDevice("Kate", "Kate's iPhone")
+	chris := s.linkedDevice("Chris", "Chris's iPhone")
+	for _, d := range []map[string]string{kate, chris} {
+		s.expectStatus(http.StatusOK, "PUT", "/api/v1/nowplaying/", map[string]any{
+			"itemId": "a", "title": "A", "isPlaying": true, "basedOnRevision": 0}, d)
+	}
+	start := s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/live", nil, kate)
+	ann, _ := start.body["announcement"].(map[string]any)
+	id, _ := ann["id"].(string)
+	if ann["kind"] != "live" || len(id) != 32 {
+		t.Fatalf("Kate's live announcement: %v", start)
+	}
+	zeros := strings.Repeat("0", 32)
+	real := s.do("GET", "/api/v1/nowplaying/live/"+id+"/audio?from=0", nil, chris)
+	madeUp := s.do("GET", "/api/v1/nowplaying/live/"+zeros+"/audio?from=0", nil, chris)
+	if real.status != http.StatusNotFound || real.str("code") != "not-found" || string(real.raw) != string(madeUp.raw) {
+		t.Fatalf("Chris reading Kate's live voice: %d %v (a made-up id: %v)", real.status, real, madeUp)
+	}
+	if r, _ := s.sendRaw("POST", "/api/v1/nowplaying/live/"+id+"/audio?from=0", "application/octet-stream",
+		"\x01\x02", chris); r.status != http.StatusNotFound {
+		t.Fatalf("Chris feeding Kate's live voice: %d %v", r.status, r)
+	}
+	if r := s.do("POST", "/api/v1/nowplaying/live/"+id+"/end", nil, chris); r.status != http.StatusNotFound {
+		t.Fatalf("Chris ending Kate's live voice: %d %v", r.status, r)
+	}
+	// Kate ends it; her own read answers at once, ended.
+	s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/live/"+id+"/end", map[string]any{"endSample": 0}, kate)
+	frame := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/live/"+id+"/audio?from=0", nil, kate)
+	if len(frame.raw) != 24 || string(frame.raw[:4]) != "PAL1" || frame.raw[20] != 1 {
+		t.Fatalf("Kate's read of her ended live voice: % x", frame.raw)
+	}
+}
+
 // The access log never names an announcement: every path that carries an
-// id is skipped, in any case; the upload itself, which carries none, is
-// still logged.
+// id is skipped, in any case; the clip upload and the live start, which
+// carry none, are still logged.
 func TestTheAccessLogSkipsAnnouncementIDs(t *testing.T) {
 	for path, quiet := range map[string]bool{
 		"/api/v1/nowplaying/announcements/0123456789abcdef0123456789abcdef":      true,
 		"/api/v1/nowplaying/announcements/0123456789abcdef0123456789abcdef/stop": true,
 		"/API/V1/NowPlaying/Announcements/0123456789abcdef0123456789abcdef":      true,
-		"/api/v1/nowplaying/announcements":                                       false,
-		"/api/v1/nowplaying/announce-policy":                                     false,
-		"/api/v1/nowplaying/volume":                                              false,
-		"/api/v1/nowplaying/":                                                    false,
-		"/api/v1/nowplaying":                                                     false,
+		"/api/v1/nowplaying/live/0123456789abcdef0123456789abcdef/audio":         true,
+		"/api/v1/nowplaying/live/0123456789abcdef0123456789abcdef/end":           true,
+		"/api/v1/nowplaying/LIVE/0123456789abcdef0123456789abcdef/audio":         true,
+		"/api/v1/nowplaying/live":            false,
+		"/api/v1/nowplaying/announcements":   false,
+		"/api/v1/nowplaying/announce-policy": false,
+		"/api/v1/nowplaying/volume":          false,
+		"/api/v1/nowplaying/":                false,
+		"/api/v1/nowplaying":                 false,
 	} {
 		if got := quietPath(path); got != quiet {
 			t.Errorf("quietPath(%q) = %v, want %v", path, got, quiet)

@@ -425,6 +425,12 @@ const (
 	// OutcomeNotAllowed: only the seat holder or the sender may stop an
 	// announcement.
 	OutcomeNotAllowed
+	// OutcomeLiveEnded: the live announcement has ended (or was stopped);
+	// the talker stops sending.
+	OutcomeLiveEnded
+	// OutcomeAhead: a live chunk starts further ahead than the talker can
+	// have captured.
+	OutcomeAhead
 )
 
 // ReportOpts is who is reporting and what they had seen. Device identity
@@ -666,6 +672,9 @@ type Store struct {
 	// clipBytesTotal is every party's clip bytes together, against
 	// MaxClipBytesTotal: nothing else bounds memory across profiles.
 	clipBytesTotal int64
+	// liveSessions is how many live announcements are open across every
+	// profile, against MaxLiveSessions.
+	liveSessions int
 
 	// bootMs seeds every revision counter, so revisions are monotonic
 	// across restarts. A follower holding revision 57 across a restart
