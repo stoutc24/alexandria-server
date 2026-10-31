@@ -26,6 +26,7 @@ installing and running the Alexandria companion server itself, see the
 | [Music on the Apple TV](apple-tv-music.md) | The Queue (browse, play, move, remove, Shuffle/Repeat/Autoplay; at a party); leaving the app while music plays (Control Center); lyrics, and when Plex can't fetch them; the screensaver's song lines |
 | [Lyrics on the phone, tablet and computer](lyrics.md) | Where lyrics come from (your server, then LRCLib); when Plex can't fetch them; lyrics kept on the device |
 | [TV shows on the Apple TV](apple-tv-shows.md) | Which season a show opens on, Play All (Specials left out), Play Season and Auto-play |
+| [Watching videos on the phone, tablet and computer](videos.md) | The seek bar and its preview pictures (and where they come from), Picture in Picture on iPhone, iPad and Android |
 
 Contact for questions or problems: stoutservers@gmail.com
 
@@ -107,10 +108,22 @@ These were proven in tests and simulators, not yet on hardware:
       Jellyfin songs show their server's lyrics (proven in the simulator
       against a stand-in LRCLib, and the timing on three of a real Plex's
       LyricFind lyrics, read-only).
-- [ ] iPhone 1245 Picture in Picture on Plex videos above 8 Mbps (e.g.
-      Expedition Unknown): the window starts, and the server copies the
-      video instead of re-encoding it (the server's own decision checked
-      read-only; PiP itself only on a real iPhone).
+- [x] iPhone 1245 Picture in Picture on Plex videos above 8 Mbps (e.g.
+      Expedition Unknown): the window starts (confirmed on the owner's
+      iPhone, 2026-10-31).
+- [ ] iPhone and iPad 1246: swiping up from a playing video opens Picture
+      in Picture, a paused one doesn't, and coming back carries on where
+      the window was instead of ending the episode (the clock fix proven
+      in unit tests; the window itself only on a real iPhone).
+- [ ] Android 1246 Picture in Picture: Home from a playing video opens the
+      window, Play/Pause and × work, and full size again lands at the
+      right spot (proven on the Android emulator, which can't draw the
+      picture itself; not on a phone).
+- [ ] Every app, 1246: the seek bar follows the finger and seeks once;
+      preview pictures from the video itself on a Plex without preview
+      thumbnails, and from Plex thumbnails / Jellyfin trickplay where they
+      exist (proven in the iPhone simulator against a test server; Mac and
+      Windows keyboards and real networks untested).
 - [ ] Apple TV following a party on its first song: a Queue pick, Next and
       Previous steer the party (fixed 2026-10-30; proven with the iPhone app
       leading in the simulator).
