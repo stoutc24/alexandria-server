@@ -73,6 +73,23 @@ Lyrics**, it waits its usual time (Settings › Screensaver) before it starts.
 The Screensaver button still starts it at once. (Apple TV build 190 and
 later.)
 
+### When Plex can't fetch the lyrics
+
+Plex gets most lyrics from LyricFind each time you open them, and that
+service sometimes fails for a while: every song's lyrics come back "not
+found", then they return. From Apple TV build 190:
+
+- **Lyrics** stays in the row for a song Plex lists lyrics for, even while
+  Plex can't fetch them. Open it and it says **Plex couldn't fetch these
+  lyrics just now**, then tries again every 15 seconds.
+- With the panel closed, the Apple TV tries again by itself 20 and 60
+  seconds into the trouble.
+- Lyrics that loaded once are kept on the Apple TV (the last 500 songs
+  played), so those songs show their lyrics even while Plex can't.
+
+Before build 190, one failed fetch removed the Lyrics button for the rest
+of the song.
+
 ## The screensaver's song lines
 
 While music plays, the screensaver shows:

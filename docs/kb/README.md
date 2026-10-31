@@ -23,7 +23,8 @@ installing and running the Alexandria companion server itself, see the
 | [Choosing who leads a party](party-leader.md) | Make leader from the leading device or any follower; taking the lead; the old leader's message |
 | [Signing a device out](signing-devices-out.md) | Sign out one device or all of a person's, on the web or in the app; what the device loses and keeps; when it notices |
 | [Alexandria on the Apple TV Home screen](apple-tv-home-screen.md) | The Top Shelf: Continue and Recently Added above the icons, and how to get it showing |
-| [Music on the Apple TV](apple-tv-music.md) | The Queue (browse, play, move, remove, Shuffle/Repeat/Autoplay; at a party); leaving the app while music plays (Control Center); lyrics; the screensaver's song lines |
+| [Music on the Apple TV](apple-tv-music.md) | The Queue (browse, play, move, remove, Shuffle/Repeat/Autoplay; at a party); leaving the app while music plays (Control Center); lyrics, and when Plex can't fetch them; the screensaver's song lines |
+| [Lyrics on the phone, tablet and computer](lyrics.md) | Where lyrics come from (your server, then LRCLib); when Plex can't fetch them; lyrics kept on the device |
 | [TV shows on the Apple TV](apple-tv-shows.md) | Which season a show opens on, Play All (Specials left out), Play Season and Auto-play |
 
 Contact for questions or problems: stoutservers@gmail.com
@@ -94,6 +95,12 @@ These were proven in tests and simulators, not yet on hardware:
 - [ ] Apple TV: no screensaver while lyrics are open; the Queue row follows
       the playing song; the Lyrics button keeps the focus at a song change
       (build 190; proven in the simulator).
+- [ ] Lyrics while Plex can't fetch them: the Apple TV keeps the Lyrics
+      button and both say "Plex couldn't fetch these lyrics just now", then
+      show them once Plex can; songs that loaded before keep their lyrics
+      (Apple TV 190 and the next phone builds; proven in the Apple TV and
+      iPhone simulators against a test server that fails the way a real
+      Plex did on 2026-10-30).
 - [ ] Apple TV following a party on its first song: a Queue pick, Next and
       Previous steer the party (fixed 2026-10-30; proven with the iPhone app
       leading in the simulator).
