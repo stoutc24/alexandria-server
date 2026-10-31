@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -40,6 +42,10 @@ func audioApp(store *nowplaying.Store) *fiber.App {
 	app.Get("/nowplaying", h.Get)
 	app.Post("/follow", h.Follow)
 	app.Post("/volume", h.SetVolume)
+	app.Post("/announce-policy", h.SetAnnouncePolicy)
+	app.Post("/announcements", h.PostClip)
+	app.Get("/announcements/:id", h.GetClip)
+	app.Post("/announcements/:id/stop", h.StopAnnouncement)
 	return app
 }
 
@@ -247,5 +253,273 @@ func TestPartyAudioCannotComeFromAReportBody(t *testing.T) {
 	}
 	if f, _ := rows[0].(map[string]any)["features"].([]any); len(f) != 1 || f[0] != "volume" {
 		t.Fatalf("the TV row's features: %s", got.raw)
+	}
+}
+
+// ---- announcements ------------------------------------------------------
+
+// clipWAV is a canonical clip of n samples (16 kHz mono 16-bit PCM) whose
+// samples carry seed, so two clips never match.
+func clipWAV(n int, seed byte) []byte {
+	le := binary.LittleEndian
+	data := 2 * n
+	b := make([]byte, 44+data)
+	copy(b[0:], "RIFF")
+	le.PutUint32(b[4:], uint32(36+data))
+	copy(b[8:], "WAVEfmt ")
+	le.PutUint32(b[16:], 16)
+	le.PutUint16(b[20:], 1)
+	le.PutUint16(b[22:], 1)
+	le.PutUint32(b[24:], 16000)
+	le.PutUint32(b[28:], 32000)
+	le.PutUint16(b[32:], 2)
+	le.PutUint16(b[34:], 16)
+	copy(b[36:], "data")
+	le.PutUint32(b[40:], uint32(data))
+	for i := 44; i < len(b); i++ {
+		b[i] = seed + byte(i)
+	}
+	return b
+}
+
+func postClip(t *testing.T, app *fiber.App, device string, wav []byte) audioReply {
+	t.Helper()
+	return call(t, app, "POST", "/announcements", device, "audio/wav", wav)
+}
+
+func TestAnnouncePolicyAnswers(t *testing.T) {
+	store := nowplaying.NewStore()
+	app := audioApp(store)
+	if r := callJSON(t, app, "POST", "/announce-policy", "tok-phone", `{"leaderOnly":true}`); r.status != 404 || r.code() != "no-session" {
+		t.Fatalf("no session: %d %s", r.status, r.raw)
+	}
+	audioSession(t, app)
+	for _, body := range []string{``, `{}`, `{"leaderOnly":"yes"}`, `{"leaderOnly":1}`, `nope`} {
+		if r := callJSON(t, app, "POST", "/announce-policy", "tok-phone", body); r.status != 400 || r.code() != "bad-request" {
+			t.Errorf("%q: %d %s, want 400 bad-request", body, r.status, r.raw)
+		}
+	}
+	r := callJSON(t, app, "POST", "/announce-policy", "tok-tv", `{"leaderOnly":true}`)
+	if r.status != 409 || r.code() != "not-leader" || r.state() == nil {
+		t.Fatalf("a follower: %d %s", r.status, r.raw)
+	}
+	r = callJSON(t, app, "POST", "/announce-policy", "tok-phone", `{"leaderOnly":true}`)
+	if r.status != 200 || r.state()["announceLeaderOnly"] != true {
+		t.Fatalf("the holder: %d %s", r.status, r.raw)
+	}
+	// While it stands, a member's clip is refused with the state.
+	r = postClip(t, app, "tok-tv", clipWAV(16000, 1))
+	if r.status != 409 || r.code() != "leader-only" || r.state()["announceLeaderOnly"] != true {
+		t.Fatalf("a member's clip while leader-only: %d %s", r.status, r.raw)
+	}
+}
+
+// The body is checked in the contract's order before the store is asked.
+func TestClipUploadsAreCheckedInOrder(t *testing.T) {
+	store := nowplaying.NewStore()
+	app := audioApp(store)
+	bad := clipWAV(16000, 1)
+	bad[22] = 2 // stereo
+	big := make([]byte, nowplaying.MaxClipBytes+1)
+	for name, c := range map[string]struct {
+		ctype  string
+		body   []byte
+		status int
+		code   string
+	}{
+		"text/plain":                  {"text/plain", clipWAV(16000, 1), 415, "unsupported-type"},
+		"no type":                     {"", clipWAV(16000, 1), 415, "unsupported-type"},
+		"audio/mp4":                   {"audio/mp4", clipWAV(16000, 1), 415, "unsupported-type"},
+		"a wav lookalike":             {"audio/wavx", clipWAV(16000, 1), 415, "unsupported-type"},
+		"415 before empty":            {"text/plain", nil, 415, "unsupported-type"},
+		"empty":                       {"audio/wav", nil, 400, "bad-audio"},
+		"over 2 MiB":                  {"audio/wav", big, 413, "too-large"},
+		"a bad header":                {"audio/wav", bad, 400, "bad-audio"},
+		"299 ms":                      {"audio/wav", clipWAV(4784, 1), 400, "too-short"},
+		"60.501 s":                    {"audio/wav", clipWAV(968_016, 1), 413, "too-large"},
+		"body checks before session":  {"audio/x-wav", clipWAV(16, 1), 400, "too-short"},
+		"a good clip with no session": {"Audio/WAV; codecs=1", clipWAV(16000, 1), 404, "no-session"},
+		"audio/wave, no session":      {"audio/wave", clipWAV(16000, 1), 404, "no-session"},
+	} {
+		r := call(t, app, "POST", "/announcements", "tok-phone", c.ctype, c.body)
+		if r.status != c.status || r.code() != c.code {
+			t.Errorf("%s: %d %q, want %d %s", name, r.status, r.code(), c.status, c.code)
+		}
+	}
+	// A gzip Content-Encoding is never decompressed: the bytes are taken
+	// as they came, so a compressed clip is just a bad one.
+	audioSession(t, app)
+	r := call(t, app, "POST", "/announcements", "tok-phone", "audio/wav", []byte{0x1f, 0x8b, 8, 0, 0, 0, 0, 0},
+		"Content-Encoding", "gzip")
+	if r.status != 400 || r.code() != "bad-audio" {
+		t.Fatalf("a gzip body: %d %s", r.status, r.raw)
+	}
+}
+
+func TestClipAnswers(t *testing.T) {
+	store := nowplaying.NewStore()
+	app := audioApp(store)
+	audioSession(t, app)
+
+	if r := postClip(t, app, "tok-stranger", clipWAV(16000, 1)); r.status != 409 || r.code() != "not-in-party" || r.state() == nil {
+		t.Fatalf("a stranger: %d %s", r.status, r.raw)
+	}
+
+	wav := clipWAV(3*16000, 7)
+	r := postClip(t, app, "tok-remote", wav)
+	ann, _ := r.body["announcement"].(map[string]any)
+	if r.status != 200 || r.body["ok"] != true || ann == nil {
+		t.Fatalf("upload: %d %s", r.status, r.raw)
+	}
+	for k, want := range map[string]any{
+		"kind": "clip", "byLabel": "tok-remote label", "byDeviceKey": "tok-remote", "sampleRate": float64(16000),
+		"durationMs": float64(3000), "sizeBytes": float64(len(wav)),
+	} {
+		if ann[k] != want {
+			t.Errorf("announcement %s = %v, want %v", k, ann[k], want)
+		}
+	}
+	chime, _ := ann["chimeAtMs"].(float64)
+	voice, _ := ann["voiceStartsAtMs"].(float64)
+	ends, _ := ann["voiceEndsAtMs"].(float64)
+	now, _ := r.state()["serverNowMs"].(float64)
+	if id, _ := ann["id"].(string); len(id) != 32 || voice != chime+1100 || ends != voice+3000 ||
+		chime < now+1300 || chime > now+1500 {
+		t.Fatalf("instants: %v (server now %v)", ann, now)
+	}
+	if st, _ := r.state()["announcement"].(map[string]any); st == nil || st["id"] != ann["id"] {
+		t.Fatalf("the state does not list it: %s", r.raw)
+	}
+
+	// Busy, with the state naming who.
+	r = postClip(t, app, "tok-tv", clipWAV(16000, 2))
+	busy, _ := r.state()["announcement"].(map[string]any)
+	if r.status != 409 || r.code() != "busy" || busy == nil || busy["byLabel"] != "tok-remote label" {
+		t.Fatalf("a second clip: %d %s", r.status, r.raw)
+	}
+}
+
+// Every refusal the store can give an announcement start maps to the
+// contract's status and code, with the state exactly where the contract
+// marks one. (The store's own tests reach each outcome; this pins the
+// wire.)
+func TestStartRefusalsMapToTheContract(t *testing.T) {
+	app := fiber.New()
+	app.Get("/refuse/:n", func(c *fiber.Ctx) error {
+		n, _ := strconv.Atoi(c.Params("n"))
+		return startRefused(c, nowplaying.Outcome(n), nowplaying.State{ItemID: "a", Revision: 7})
+	})
+	for _, c := range []struct {
+		outcome   nowplaying.Outcome
+		status    int
+		code      string
+		withState bool
+	}{
+		{nowplaying.OutcomeNoSession, 404, "no-session", false},
+		{nowplaying.OutcomeNotInParty, 409, "not-in-party", true},
+		{nowplaying.OutcomeLeaderOnly, 409, "leader-only", true},
+		{nowplaying.OutcomeAnnounceBusy, 409, "busy", true},
+		{nowplaying.OutcomeRateLimited, 429, "rate-limited", false},
+		{nowplaying.OutcomeServerBusy, 503, "server-busy", false},
+	} {
+		r := call(t, app, "GET", "/refuse/"+strconv.Itoa(int(c.outcome)), "", "", nil)
+		_, hasState := r.body["state"]
+		if r.status != c.status || r.code() != c.code || hasState != c.withState || r.body["error"] == nil {
+			t.Errorf("outcome %d: %d %s, want %d %s (state %v)", c.outcome, r.status, r.raw, c.status, c.code, c.withState)
+		}
+	}
+}
+
+// Fiber reuses the request buffer (Immutable is off): the store must keep
+// its own copy, or the next request's body overwrites a kept clip.
+func TestClipBytesAreCopiedOutOfTheRequestBuffer(t *testing.T) {
+	app := fiber.New()
+	app.Post("/copy", func(c *fiber.Ctx) error {
+		raw := c.Request().Body()
+		cp := copyBody(c)
+		if len(cp) != len(raw) || !bytes.Equal(cp, raw) || &cp[0] == &raw[0] {
+			return c.SendStatus(500)
+		}
+		return c.SendStatus(200)
+	})
+	if r := call(t, app, "POST", "/copy", "", "audio/wav", clipWAV(100, 1)); r.status != 200 {
+		t.Fatal("copyBody shares the request's backing array")
+	}
+
+	// Two uploads back to back, the first stopped: the second (refused,
+	// busy) still passes through the same request buffer.
+	store := nowplaying.NewStore()
+	audio := audioApp(store)
+	audioSession(t, audio)
+	first, second := clipWAV(16000, 11), clipWAV(16000, 99)
+	r := postClip(t, audio, "tok-remote", first)
+	id, _ := r.body["announcement"].(map[string]any)["id"].(string)
+	callJSON(t, audio, "POST", "/announcements/"+id+"/stop", "tok-remote", "")
+	if r := postClip(t, audio, "tok-phone", second); r.status != 409 || r.code() != "busy" {
+		t.Fatalf("second upload: %d %s", r.status, r.raw)
+	}
+	got := call(t, audio, "GET", "/announcements/"+id, "tok-tv", "", nil)
+	if got.status != 200 || !bytes.Equal(got.raw, first) {
+		t.Fatalf("the first clip after a second upload: %d, equal %v", got.status, bytes.Equal(got.raw, first))
+	}
+}
+
+func TestGetClipAnswers(t *testing.T) {
+	store := nowplaying.NewStore()
+	app := audioApp(store)
+	audioSession(t, app)
+	wav := clipWAV(16000, 42)
+	r := postClip(t, app, "tok-remote", wav)
+	id := r.body["announcement"].(map[string]any)["id"].(string)
+
+	got := call(t, app, "GET", "/announcements/"+id, "tok-tv", "", nil)
+	if got.status != 200 || !bytes.Equal(got.raw, wav) {
+		t.Fatalf("fetch: %d, %d bytes", got.status, len(got.raw))
+	}
+	if ct := got.header.Get("Content-Type"); ct != "audio/wav" {
+		t.Errorf("Content-Type %q", ct)
+	}
+	if cc := got.header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control %q", cc)
+	}
+	if cl := got.header.Get("Content-Length"); cl != strconv.Itoa(len(wav)) {
+		t.Errorf("Content-Length %q, want %d", cl, len(wav))
+	}
+	for name, c := range map[string]struct{ device, profile, id string }{
+		"not in the party": {"tok-stranger", "p1", id},
+		"another profile":  {"tok-sarah", "p2", id},
+		"unknown":          {"tok-tv", "p1", strings.Repeat("0", 32)},
+	} {
+		if name == "another profile" {
+			call(t, app, "PUT", "/nowplaying", "tok-sarah", "application/json",
+				[]byte(`{"itemId":"q","title":"Q","isPlaying":true,"basedOnRevision":0}`), "X-Test-Profile", "p2")
+		}
+		r := call(t, app, "GET", "/announcements/"+c.id, c.device, "", nil, "X-Test-Profile", c.profile)
+		if r.status != 404 || r.code() != "not-found" || len(r.raw) > 200 || bytes.Contains(r.raw, wav[44:80]) {
+			t.Errorf("%s: %d %s, want 404 not-found", name, r.status, r.raw)
+		}
+	}
+}
+
+func TestStopAnswers(t *testing.T) {
+	store := nowplaying.NewStore()
+	app := audioApp(store)
+	audioSession(t, app)
+	r := postClip(t, app, "tok-tv", clipWAV(3*16000, 3))
+	id := r.body["announcement"].(map[string]any)["id"].(string)
+	if r := callJSON(t, app, "POST", "/announcements/"+id+"/stop", "tok-remote", ""); r.status != 409 ||
+		r.code() != "not-allowed" || r.state() == nil {
+		t.Fatalf("a bystander: %d %s", r.status, r.raw)
+	}
+	if r := callJSON(t, app, "POST", "/announcements/nope/stop", "tok-phone", ""); r.status != 404 || r.code() != "not-found" {
+		t.Fatalf("unknown: %d %s", r.status, r.raw)
+	}
+	r = callJSON(t, app, "POST", "/announcements/"+id+"/stop", "tok-phone", `{"ignored":true}`)
+	ann, _ := r.state()["announcement"].(map[string]any)
+	if r.status != 200 || ann == nil || ann["stoppedAtMs"] == nil || ann["stoppedByLabel"] != "tok-phone label" {
+		t.Fatalf("the holder's stop: %d %s", r.status, r.raw)
+	}
+	if r := callJSON(t, app, "POST", "/announcements/"+id+"/stop", "tok-tv", ""); r.status != 200 {
+		t.Fatalf("a repeat stop: %d %s", r.status, r.raw)
 	}
 }

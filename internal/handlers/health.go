@@ -97,6 +97,12 @@ var capabilities = []string{
 	// leaderVolume, yourDeviceVolume, followers[].volume, leaderFeatures
 	// and followers[].features; `features` on POST /follow and the PUT.
 	"nowplaying.volume",
+	// Announcements: POST /nowplaying/announce-policy (the seat holder's
+	// leader-only switch, announceLeaderOnly on the state), POST
+	// /nowplaying/announcements (a 16 kHz mono PCM WAV clip), GET
+	// /nowplaying/announcements/:id, POST /nowplaying/announcements/:id/
+	// stop; state.announcement of kind "clip".
+	"nowplaying.announce",
 	// Managing the server from a phone, all of it live together:
 	// POST /admin/auth/device-token (a phone's admin sign-in, "Bearer
 	// alxa_…", accepted by every requireAdmin route); GET and DELETE

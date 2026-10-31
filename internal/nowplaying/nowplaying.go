@@ -309,6 +309,16 @@ type State struct {
 	// its reports or while it followed (read-time; never stored from a
 	// report body's own field). Absent = none known.
 	LeaderFeatures []string `json:"leaderFeatures,omitempty"`
+	// AnnounceLeaderOnly: only the seat holder may start an announcement
+	// (read-time; never stored from a report). True only while the token
+	// that switched it on holds the seat: a hand-over, a take-over or a
+	// vacant seat reads false, and its setter taking the seat back reads
+	// its setting again.
+	AnnounceLeaderOnly bool `json:"announceLeaderOnly,omitempty"`
+	// Announcement is the voice the party is playing, from its start until
+	// AnnounceListedAfterEndMs past its end (read-time; never stored from
+	// a report). See announce.go.
+	Announcement *AnnouncementView `json:"announcement,omitempty"`
 	// deviceVolumes is a fresh per-read copy of every device position by
 	// token, for VolumeFor. Unexported, so encoding/json and BodyParser
 	// never see it either way.
@@ -400,8 +410,21 @@ const (
 	// live follower.
 	OutcomeNoSuchDevice
 	// OutcomeServerBusy: a store-wide or per-party cap is full (device
-	// volumes).
+	// volumes, announcement bytes).
 	OutcomeServerBusy
+	// OutcomeLeaderOnly: the seat holder has said only it may announce.
+	OutcomeLeaderOnly
+	// OutcomeAnnounceBusy: the party is already playing an announcement.
+	OutcomeAnnounceBusy
+	// OutcomeRateLimited: too many announcements this minute.
+	OutcomeRateLimited
+	// OutcomeNotFound: no such announcement for this device — unknown,
+	// expired, another profile's, or the caller is not in the party. Never
+	// says which.
+	OutcomeNotFound
+	// OutcomeNotAllowed: only the seat holder or the sender may stop an
+	// announcement.
+	OutcomeNotAllowed
 )
 
 // ReportOpts is who is reporting and what they had seen. Device identity
@@ -631,10 +654,18 @@ type Store struct {
 	// zero-latency wake and costs the server nothing.
 	waiting map[string]int
 
-	// audio[profile] is the party's volume and what its devices can do
-	// (party_audio.go). Memory only, never the database, disk or logs;
-	// gone with the state, and with a stop-all.
+	// audio[profile] is the party's volume, what its devices can do and
+	// its announcement (party_audio.go, announce.go). Memory only, never
+	// the database, disk or logs; gone with the state, and with a
+	// stop-all.
 	audio map[string]*partyAudio
+	// announced[profile] are when its announcements started, for the
+	// rolling per-minute limit. Per PROFILE, so a stop-all and a new party
+	// buy no fresh allowance; pruned on every start.
+	announced map[string][]int64
+	// clipBytesTotal is every party's clip bytes together, against
+	// MaxClipBytesTotal: nothing else bounds memory across profiles.
+	clipBytesTotal int64
 
 	// bootMs seeds every revision counter, so revisions are monotonic
 	// across restarts. A follower holding revision 57 across a restart
@@ -659,6 +690,7 @@ func NewStore() *Store {
 		waiters:       make(map[string]chan struct{}),
 		waiting:       make(map[string]int),
 		audio:         make(map[string]*partyAudio),
+		announced:     make(map[string][]int64),
 		bootMs:        time.Now().UnixMilli(),
 	}
 }
@@ -1862,8 +1894,8 @@ func (s *Store) EndBy(profileID, deviceID, deviceLabel, reason string) EndOutcom
 		delete(s.edits, profileID)
 		delete(s.anchorRefresh, profileID)
 		delete(s.withdrawn, profileID)
-		// The tombstone carries no party audio: the volumes and what the
-		// devices can do go now.
+		// The tombstone carries no party audio: the volumes, what the
+		// devices can do and any announcement go now, its bytes zeroed.
 		s.dropPartyAudioLocked(profileID)
 		s.lastActivity[profileID] = now
 		s.notifyLocked(profileID)

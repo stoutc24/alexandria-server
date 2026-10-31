@@ -10,6 +10,7 @@ package main
 // adminauth's, against a frozen clock.
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -350,6 +351,87 @@ func TestPartyAudioIsThePersonsOwn(t *testing.T) {
 		if r := s.do(c.method, c.path, map[string]any{"volume": 40}, kateTV); r.status != http.StatusUnauthorized ||
 			r.str("code") != "token-revoked" {
 			t.Errorf("%s %s with a revoked token: %d %v, want 401 token-revoked", c.method, c.path, r.status, r)
+		}
+	}
+}
+
+// testClip is a canonical announcement: 16 kHz mono 16-bit PCM, n
+// samples, with a 44-byte header.
+func testClip(n int) string {
+	le := binary.LittleEndian
+	b := make([]byte, 44+2*n)
+	copy(b, "RIFF")
+	le.PutUint32(b[4:], uint32(36+2*n))
+	copy(b[8:], "WAVEfmt ")
+	le.PutUint32(b[16:], 16)
+	le.PutUint16(b[20:], 1)
+	le.PutUint16(b[22:], 1)
+	le.PutUint32(b[24:], 16000)
+	le.PutUint32(b[28:], 32000)
+	le.PutUint16(b[32:], 2)
+	le.PutUint16(b[34:], 16)
+	copy(b[36:], "data")
+	le.PutUint32(b[40:], uint32(2*n))
+	for i := 44; i < len(b); i++ {
+		b[i] = byte(i * 7)
+	}
+	return string(b)
+}
+
+// A clip is its own party's alone: another person's token gets exactly the
+// answer a made-up id gets, and can neither fetch nor stop it.
+func TestAnnouncementsAreThePartysOwn(t *testing.T) {
+	s := newTestServer(t)
+	kate := s.linkedDevice("Kate", "Kate's iPhone")
+	chris := s.linkedDevice("Chris", "Chris's iPhone")
+	for _, d := range []map[string]string{kate, chris} {
+		s.expectStatus(http.StatusOK, "PUT", "/api/v1/nowplaying/", map[string]any{
+			"itemId": "a", "title": "A", "isPlaying": true, "basedOnRevision": 0}, d)
+	}
+	clip := testClip(16000)
+	up, err := s.sendRaw("POST", "/api/v1/nowplaying/announcements", "audio/wav", clip, kate)
+	if err != nil || up.status != http.StatusOK {
+		t.Fatalf("Kate's clip: %v %d %v", err, up.status, up)
+	}
+	ann, _ := up.body["announcement"].(map[string]any)
+	id, _ := ann["id"].(string)
+	if ann["byLabel"] != "Kate's iPhone" || len(id) != 32 {
+		t.Fatalf("announcement: %v", ann)
+	}
+
+	got := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/announcements/"+id, nil, kate)
+	if string(got.raw) != clip || got.header.Get("Cache-Control") != "no-store" || got.header.Get("Content-Type") != "audio/wav" {
+		t.Fatalf("Kate's own fetch: %d bytes, headers %v", len(got.raw), got.header)
+	}
+	real := s.do("GET", "/api/v1/nowplaying/announcements/"+id, nil, chris)
+	madeUp := s.do("GET", "/api/v1/nowplaying/announcements/"+strings.Repeat("0", 32), nil, chris)
+	if real.status != http.StatusNotFound || real.str("code") != "not-found" || string(real.raw) != string(madeUp.raw) {
+		t.Fatalf("Chris fetching Kate's clip: %d %v (a made-up id: %v)", real.status, real, madeUp)
+	}
+	if r := s.do("POST", "/api/v1/nowplaying/announcements/"+id+"/stop", nil, chris); r.status != http.StatusNotFound {
+		t.Fatalf("Chris stopping Kate's clip: %d %v", r.status, r)
+	}
+	if st := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/", nil, chris); st.body["announcement"] != nil {
+		t.Fatalf("Chris's party lists Kate's announcement: %v", st)
+	}
+}
+
+// The access log never names an announcement: every path that carries an
+// id is skipped, in any case; the upload itself, which carries none, is
+// still logged.
+func TestTheAccessLogSkipsAnnouncementIDs(t *testing.T) {
+	for path, quiet := range map[string]bool{
+		"/api/v1/nowplaying/announcements/0123456789abcdef0123456789abcdef":      true,
+		"/api/v1/nowplaying/announcements/0123456789abcdef0123456789abcdef/stop": true,
+		"/API/V1/NowPlaying/Announcements/0123456789abcdef0123456789abcdef":      true,
+		"/api/v1/nowplaying/announcements":                                       false,
+		"/api/v1/nowplaying/announce-policy":                                     false,
+		"/api/v1/nowplaying/volume":                                              false,
+		"/api/v1/nowplaying/":                                                    false,
+		"/api/v1/nowplaying":                                                     false,
+	} {
+		if got := quietPath(path); got != quiet {
+			t.Errorf("quietPath(%q) = %v, want %v", path, got, quiet)
 		}
 	}
 }

@@ -184,7 +184,8 @@ func TestReportBodyCannotPlantPartyAudio(t *testing.T) {
 	s.SetPartyVolume("p1", "tok-tv", "Living Room TV", 40)
 	planted := State{Source: "plex", ItemID: "a", IsPlaying: true, DurationSec: 200,
 		PartyVolume: intp(0), PartyVolumeByLabel: "evil", LeaderVolume: intp(1),
-		YourDeviceVolume: intp(2), LeaderFeatures: []string{"evil"},
+		YourDeviceVolume: intp(2), LeaderFeatures: []string{"evil"}, AnnounceLeaderOnly: true,
+		Announcement:  &AnnouncementView{ID: "evil", Kind: KindClip, ChimeAtMs: 1, VoiceStartsAtMs: 2},
 		deviceVolumes: map[string]int{"tok-phone": 3}}
 	st, out := s.Report("p1", planted, ReportOpts{DeviceID: "tok-phone", BasedOnRevision: rev(0)})
 	if out != OutcomeOK {
@@ -193,15 +194,23 @@ func TestReportBodyCannotPlantPartyAudio(t *testing.T) {
 	for _, got := range []State{st, func() State { g, _ := s.Get("p1"); return g }()} {
 		if !volIs(got.PartyVolume, 40) || got.PartyVolumeByLabel != "Living Room TV" ||
 			got.LeaderVolume != nil || got.YourDeviceVolume != nil || got.LeaderFeatures != nil ||
-			got.VolumeFor("tok-phone") != nil {
+			got.AnnounceLeaderOnly || got.Announcement != nil || got.VolumeFor("tok-phone") != nil {
 			t.Fatalf("the body planted party audio: %+v", got)
 		}
 	}
 	s.mu.RLock()
 	stored := s.m["p1"]
 	s.mu.RUnlock()
-	if stored.PartyVolume != nil || stored.LeaderFeatures != nil || stored.deviceVolumes != nil {
+	if stored.PartyVolume != nil || stored.LeaderFeatures != nil || stored.deviceVolumes != nil ||
+		stored.AnnounceLeaderOnly || stored.Announcement != nil {
 		t.Fatalf("the stored state kept body fields: %+v", stored)
+	}
+	// Nor can it plant into a refused report's answer, or a policy.
+	if _, out := s.Report("p1", planted, ReportOpts{DeviceID: "tok-pc", BasedOnRevision: rev(0)}); out != OutcomeSeatHeld {
+		t.Fatalf("expected a seat-held refusal: %v", out)
+	}
+	if got, _ := s.Get("p1"); got.AnnounceLeaderOnly || got.Announcement != nil {
+		t.Fatalf("a refused body planted party audio: %+v", got)
 	}
 }
 

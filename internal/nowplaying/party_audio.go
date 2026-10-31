@@ -2,7 +2,8 @@ package nowplaying
 
 import "time"
 
-// Party volume, and what each device in the party can do.
+// Party volume, what each device in the party can do, and who may make
+// an announcement (the announcement itself is announce.go).
 //
 // Kept like queue edits: in a store map beside the state (Store.audio),
 // added to the state at READ time, and never decoded from a report — so a
@@ -45,6 +46,18 @@ type partyAudio struct {
 	devices map[string]int
 	// features[token] is what that device said it can do.
 	features map[string][]string
+	// policyLeaderOnly is the seat holder's "only I may announce",
+	// stored with the token that set it (policyBy): it reads true only
+	// while that token holds the seat (leaderOnly).
+	policyLeaderOnly bool
+	policyBy         string
+	// ann is the party's announcement, one at a time (announce.go).
+	ann *announcement
+}
+
+// leaderOnly is the read-time announceLeaderOnly for a state. Nil-safe.
+func (a *partyAudio) leaderOnly(st State) bool {
+	return a != nil && a.policyLeaderOnly && a.policyBy != "" && a.policyBy == st.LeaderTokenID
 }
 
 // deviceVolume is tok's own position, nil for 100. Nil-safe.
@@ -79,8 +92,10 @@ func (s *Store) audioLocked(profileID string) *partyAudio {
 }
 
 // dropPartyAudioLocked forgets everything party audio holds for the
-// profile. Caller holds the write lock.
+// profile, an announcement's bytes zeroed first. Caller holds the write
+// lock.
 func (s *Store) dropPartyAudioLocked(profileID string) {
+	s.deleteAnnouncementLocked(profileID)
 	delete(s.audio, profileID)
 }
 
@@ -106,6 +121,8 @@ func clearReadTimeAudio(st *State) {
 	st.LeaderVolume = nil
 	st.YourDeviceVolume = nil
 	st.LeaderFeatures = nil
+	st.AnnounceLeaderOnly = false
+	st.Announcement = nil
 	st.deviceVolumes = nil
 }
 
@@ -123,6 +140,12 @@ func (s *Store) decorateAudioLocked(profileID string, st *State, nowMs int64) {
 	}
 	st.LeaderVolume = a.deviceVolume(st.LeaderTokenID)
 	st.LeaderFeatures = a.featuresOf(st.LeaderTokenID)
+	st.AnnounceLeaderOnly = a.leaderOnly(*st)
+	s.sweepAnnouncementLocked(profileID, nowMs)
+	if a.ann != nil && a.ann.listed(nowMs) {
+		v := a.ann.view()
+		st.Announcement = &v
+	}
 	if len(a.devices) > 0 {
 		st.deviceVolumes = make(map[string]int, len(a.devices))
 		for tok, v := range a.devices {
@@ -246,6 +269,38 @@ func (s *Store) SetDeviceVolume(profileID, tokenID, deviceKey string, v int) (St
 			a.devices = make(map[string]int)
 		}
 		a.devices[tok] = v
+	}
+	return s.partyAudioChangedLocked(profileID, st, now), OutcomeOK
+}
+
+// SetAnnouncePolicy is the seat holder's "only I may announce" (or not):
+// only the seat holder, live or dormant, may set it. It is kept with the
+// setter's token and reads true only while that token holds the seat, so
+// a leading Apple TV (no microphone) or an older build (no switch) can
+// never inherit a party nobody can announce to, or switch back on. An
+// unchanged setting answers OK without a bump.
+func (s *Store) SetAnnouncePolicy(profileID, tokenID string, leaderOnly bool) (State, Outcome) {
+	now := time.Now()
+	nowMs := now.UnixMilli()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.partySessionLocked(profileID, now)
+	if !ok {
+		return State{}, OutcomeNoSession
+	}
+	if tokenID == "" || st.LeaderTokenID != tokenID {
+		return s.readLocked(profileID, st, nowMs), OutcomeNotLeader
+	}
+	a := s.audio[profileID]
+	if a != nil && a.policyBy == tokenID && a.policyLeaderOnly == leaderOnly {
+		return s.readLocked(profileID, st, nowMs), OutcomeOK
+	}
+	before := a.leaderOnly(st)
+	a = s.audioLocked(profileID)
+	a.policyLeaderOnly, a.policyBy = leaderOnly, tokenID
+	if a.leaderOnly(st) == before {
+		// Kept as this holder's choice, but nothing anyone reads moved.
+		return s.readLocked(profileID, st, nowMs), OutcomeOK
 	}
 	return s.partyAudioChangedLocked(profileID, st, now), OutcomeOK
 }
