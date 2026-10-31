@@ -44,6 +44,15 @@ type Server struct {
 	// long, every four seconds — for the lyrics panels. Off unless
 	// SHOWCASE_LYRICS=1 is set, so the store screenshots are unchanged.
 	Lyrics bool
+	// LyricsDown answers every lyric stream with Plex's 404 page while the
+	// tracks still list their lyric streams — the owner's Plex on
+	// 2026-10-30, when its live LyricFind lookups failed for every song for
+	// a while and then came back. Off unless SHOWCASE_LYRICS_DOWN=1 is set
+	// or a probe POSTs /__showcase/lyrics?down=1 (read through lyricsDown).
+	// GET /__showcase/lyrics counts the lyric requests, so a probe can see a
+	// retry, or a saved copy that needed none.
+	LyricsDown    bool
+	lyricRequests int
 	// Books makes the Jellyfin dialect also serve the catalog's audiobooks
 	// as a "books" view (AudioBook items with Chapters, one WAV each — the
 	// Audiobookshelf dialect's books, in Jellyfin's shape), plus the
@@ -106,6 +115,13 @@ func (s *Server) recordPart(rec partRequest) {
 	if len(s.partRequests) > 500 {
 		s.partRequests = s.partRequests[len(s.partRequests)-500:]
 	}
+}
+
+// lyricsDown reads LyricsDown (a probe may switch it mid-run).
+func (s *Server) lyricsDown() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.LyricsDown
 }
 
 // refusesPlain reads RefusePlainParts (a probe may switch it mid-run).
@@ -184,6 +200,7 @@ func New(cat *Catalog, clipsDir string) *Server {
 	return &Server{cat: cat, clipsDir: clipsDir, Token: "showcase-token", progress: map[string]float64{},
 		log: log.New(os.Stdout, "", log.Ltime), LossyMusic: os.Getenv("SHOWCASE_LOSSY_MUSIC") == "1",
 		Lyrics:                 os.Getenv("SHOWCASE_LYRICS") == "1",
+		LyricsDown:             os.Getenv("SHOWCASE_LYRICS_DOWN") == "1",
 		Books:                  os.Getenv("SHOWCASE_JELLYFIN_BOOKS") == "1",
 		RefusePlainParts:       os.Getenv("SHOWCASE_PLEX_REFUSE_PLAIN") == "1",
 		RefuseJellyfinDownload: os.Getenv("SHOWCASE_JELLYFIN_REFUSE_DOWNLOAD") == "1",

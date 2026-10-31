@@ -48,6 +48,18 @@ func (s *Server) plex(w http.ResponseWriter, r *http.Request) {
 		// GET /__showcase/parts → the song-file requests; DELETE clears;
 		// POST ?refusePlain=1|0 turns RefusePlainParts on or off (and
 		// clears), so one probe run covers both.
+		// GET /__showcase/lyrics → whether lyrics are down and how many
+		// lyric requests came; POST ?down=1|0 switches LyricsDown.
+		if len(p) == 2 && p[1] == "lyrics" {
+			s.mu.Lock()
+			if r.Method == http.MethodPost {
+				s.LyricsDown = qStr(r, "down") == "1"
+			}
+			down, n := s.LyricsDown, s.lyricRequests
+			s.mu.Unlock()
+			ok(w, map[string]any{"down": down, "requests": n})
+			return
+		}
 		if len(p) != 2 || p[1] != "parts" {
 			notFound(w)
 			return
@@ -333,6 +345,16 @@ var showcaseLyricLines = []string{
 func (s *Server) plexLyrics(w http.ResponseWriter, p []string) {
 	if !s.Lyrics || len(p) == 0 {
 		notFound(w)
+		return
+	}
+	s.mu.Lock()
+	s.lyricRequests++
+	s.mu.Unlock()
+	if s.lyricsDown() {
+		// What the owner's Plex sent while LyricFind was failing.
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("<html><head><title>Not Found</title></head><body><h1>404 Not Found</h1></body></html>"))
 		return
 	}
 	var b strings.Builder

@@ -132,3 +132,44 @@ func TestJellyfinSongLogAndDownloadRefusal(t *testing.T) {
 		}
 	}
 }
+
+// Lyrics down: the track still lists its lyric stream, the stream answers
+// Plex's 404, and /__showcase/lyrics switches it back and counts requests.
+func TestPlexLyricsDownSwitchAndCount(t *testing.T) {
+	cat := Build(time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC), nil).Half(1)
+	s := New(cat, "")
+	s.Lyrics = true
+	s.LyricsDown = true
+	srv := httptest.NewServer(s.PlexHandler())
+	defer srv.Close()
+	stream := fmt.Sprintf("/library/streams/%d", (cat.plexKey[cat.Tracks[0].ID]*10+1)*10+4)
+
+	state := func() (bool, int) {
+		t.Helper()
+		_, data := jfGet(t, srv, "/__showcase/lyrics")
+		var out struct {
+			Down     bool `json:"down"`
+			Requests int  `json:"requests"`
+		}
+		if err := json.Unmarshal(data, &out); err != nil {
+			t.Fatalf("lyrics readout: %v", err)
+		}
+		return out.Down, out.Requests
+	}
+
+	if code, _ := jfGet(t, srv, stream); code != http.StatusNotFound {
+		t.Errorf("down: lyric stream answered %d, want 404", code)
+	}
+	if down, n := state(); !down || n != 1 {
+		t.Errorf("down: readout down=%v requests=%d, want true 1", down, n)
+	}
+	if resp, err := http.Post(srv.URL+"/__showcase/lyrics?down=0", "", nil); err == nil {
+		resp.Body.Close()
+	}
+	if code, body := jfGet(t, srv, stream); code != http.StatusOK || len(body) == 0 {
+		t.Errorf("back up: lyric stream answered %d (%d bytes), want 200 with text", code, len(body))
+	}
+	if down, n := state(); down || n != 2 {
+		t.Errorf("back up: readout down=%v requests=%d, want false 2", down, n)
+	}
+}
