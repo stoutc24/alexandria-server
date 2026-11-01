@@ -39,11 +39,19 @@ music too.
 - **The leader loses power or its connection:** the devices following it
   finish the song they are on, then wait. About a minute and a half after the
   leader went quiet, one of them takes the party over and plays on.
+- **A song won't play on the leading Apple TV:** it says "*song* couldn't
+  play here" and hands the party on. Within a few seconds, a device that was
+  following takes the lead and plays on.
 
 ## While you follow
 
 Shuffle and Repeat belong to the leader. Its choices apply to everyone in the
 party.
+
+If **Share what's playing** is off on your Apple TV (**Settings › Companion
+Server**), it can't take a party over. When the leader leaves, your Apple TV
+leaves the party and keeps playing the music on its own. Choose **Rejoin
+party** to go back.
 
 **Tip:** give each Apple TV its own name in **Settings › Companion Server ›
 Device name**, so you can tell which one is leading. Two Apple TVs both called
