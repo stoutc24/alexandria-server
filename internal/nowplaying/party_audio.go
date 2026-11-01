@@ -33,6 +33,11 @@ const (
 	// outlive a device leaving, and a profile token can mint more tokens;
 	// when full, tokens that are neither the seat nor a live device go.
 	maxFeatureTokens = MaxFollowersPerProfile
+	// maxPolicyTokens caps how many holders' announce switches one party
+	// keeps. Only a token holding the seat adds one, so no household
+	// meets it; when full, a holder switching its own on forgets the
+	// others' (SetAnnouncePolicy).
+	maxPolicyTokens = MaxFollowersPerProfile
 )
 
 // partyAudio is one party's volume and its devices' features. Caller
@@ -46,18 +51,19 @@ type partyAudio struct {
 	devices map[string]int
 	// features[token] is what that device said it can do.
 	features map[string][]string
-	// policyLeaderOnly is the seat holder's "only I may announce",
-	// stored with the token that set it (policyBy): it reads true only
-	// while that token holds the seat (leaderOnly).
-	policyLeaderOnly bool
-	policyBy         string
+	// policy[token] is true when that token, holding the seat, switched
+	// on "only I may announce" (no entry = off). Each holder's switch is
+	// its own: it reads only while that token holds the seat
+	// (leaderOnly), and no other holder's write touches it.
+	policy map[string]bool
 	// ann is the party's announcement, one at a time (announce.go).
 	ann *announcement
 }
 
-// leaderOnly is the read-time announceLeaderOnly for a state. Nil-safe.
+// leaderOnly is the read-time announceLeaderOnly for a state: the seat
+// holder's own switch. A vacant seat reads false. Nil-safe.
 func (a *partyAudio) leaderOnly(st State) bool {
-	return a != nil && a.policyLeaderOnly && a.policyBy != "" && a.policyBy == st.LeaderTokenID
+	return a != nil && st.LeaderTokenID != "" && a.policy[st.LeaderTokenID]
 }
 
 // deviceVolume is tok's own position, nil for 100. Nil-safe.
@@ -274,10 +280,12 @@ func (s *Store) SetDeviceVolume(profileID, tokenID, deviceKey string, v int) (St
 }
 
 // SetAnnouncePolicy is the seat holder's "only I may announce" (or not):
-// only the seat holder, live or dormant, may set it. It is kept with the
+// only the seat holder, live or dormant, may set it. It is kept for the
 // setter's token and reads true only while that token holds the seat, so
 // a leading Apple TV (no microphone) or an older build (no switch) can
-// never inherit a party nobody can announce to, or switch back on. An
+// never inherit a party nobody can announce to, or switch back on. Each
+// holder sets only its own, so a setter that takes the seat back finds
+// its setting again whatever holders in between set for themselves. An
 // unchanged setting answers OK without a bump.
 func (s *Store) SetAnnouncePolicy(profileID, tokenID string, leaderOnly bool) (State, Outcome) {
 	now := time.Now()
@@ -291,16 +299,25 @@ func (s *Store) SetAnnouncePolicy(profileID, tokenID string, leaderOnly bool) (S
 	if tokenID == "" || st.LeaderTokenID != tokenID {
 		return s.readLocked(profileID, st, nowMs), OutcomeNotLeader
 	}
+	// tokenID holds the seat, so what reads now is its own switch.
 	a := s.audio[profileID]
-	if a != nil && a.policyBy == tokenID && a.policyLeaderOnly == leaderOnly {
+	if a.leaderOnly(st) == leaderOnly {
 		return s.readLocked(profileID, st, nowMs), OutcomeOK
 	}
-	before := a.leaderOnly(st)
-	a = s.audioLocked(profileID)
-	a.policyLeaderOnly, a.policyBy = leaderOnly, tokenID
-	if a.leaderOnly(st) == before {
-		// Kept as this holder's choice, but nothing anyone reads moved.
-		return s.readLocked(profileID, st, nowMs), OutcomeOK
+	if leaderOnly {
+		a = s.audioLocked(profileID)
+		if len(a.policy) >= maxPolicyTokens {
+			// Full: forget the other holders' switches. None of them
+			// holds the seat, so nothing anyone reads moves; each reads
+			// off if it leads again.
+			clear(a.policy)
+		}
+		if a.policy == nil {
+			a.policy = make(map[string]bool)
+		}
+		a.policy[tokenID] = true
+	} else {
+		delete(a.policy, tokenID) // its switch read on, so a is set
 	}
 	return s.partyAudioChangedLocked(profileID, st, now), OutcomeOK
 }

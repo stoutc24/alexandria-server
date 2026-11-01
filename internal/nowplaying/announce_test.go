@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -259,6 +260,11 @@ func TestAnnouncePolicyFollowsItsSetter(t *testing.T) {
 	if st.AnnounceLeaderOnly {
 		t.Fatal("the switch outlived its setter's seat")
 	}
+	// The TV has no switch: while it leads, everyone can announce.
+	endedAgo(s, "p1", 1100)
+	if _, _, out := s.StartClip("p1", "tok-pc", "Windows PC", wav16k(16000), 1000); out != OutcomeOK {
+		t.Fatalf("a member while the TV leads: %v", out)
+	}
 	// The setter takes the seat back: its setting applies again.
 	st, out = s.Report("p1", State{Source: "plex", ItemID: "a", IsPlaying: true},
 		ReportOpts{DeviceID: "tok-phone", BasedOnRevision: rev(revOf(s, "p1")), TakeOver: true})
@@ -285,6 +291,80 @@ func TestAnnouncePolicyFollowsItsSetter(t *testing.T) {
 	}
 	if _, out := s.SetAnnouncePolicy("p1", "tok-phone", true); out != OutcomeNotLeader {
 		t.Fatalf("the old holder with the seat vacant: %v", out)
+	}
+}
+
+// 15 and 9, R2. Each holder's switch is its own: what a later holder sets
+// for itself never touches the first setter's, so taking the seat back
+// brings that setting back — either way round.
+func TestAnnouncePolicyIsEachHoldersOwn(t *testing.T) {
+	takeSeat := func(s *Store, tok string) State {
+		t.Helper()
+		st, out := s.Report("p1", State{Source: "plex", ItemID: "a", IsPlaying: true},
+			ReportOpts{DeviceID: tok, BasedOnRevision: rev(revOf(s, "p1")), TakeOver: true})
+		if out != OutcomeOK || st.LeaderTokenID != tok {
+			t.Fatalf("%s taking the seat: %v, leader %q", tok, out, st.LeaderTokenID)
+		}
+		return st
+	}
+	for name, writes := range map[string][]bool{
+		"off":          {false},
+		"on":           {true},
+		"on, then off": {true, false},
+	} {
+		s, _ := audioParty(t)
+		s.SetAnnouncePolicy("p1", "tok-phone", true)
+		st, out := s.HandOver("p1", "tok-phone", "Kate's iPhone", "tok-pc")
+		if out != OutcomeOK || st.LeaderTokenID != "tok-pc" || st.AnnounceLeaderOnly {
+			t.Fatalf("%s: the hand-over: %v, leader %q, leader-only %v", name, out, st.LeaderTokenID, st.AnnounceLeaderOnly)
+		}
+		for _, w := range writes {
+			if st, out := s.SetAnnouncePolicy("p1", "tok-pc", w); out != OutcomeOK || st.AnnounceLeaderOnly != w {
+				t.Fatalf("%s: the PC's own %v: %v, reads %v", name, w, out, st.AnnounceLeaderOnly)
+			}
+		}
+		if st := takeSeat(s, "tok-phone"); !st.AnnounceLeaderOnly {
+			t.Errorf("%s: the phone took the seat back and its switch was gone", name)
+		}
+		// The other way round: the phone switching its own off leaves the
+		// PC's as the PC last set it.
+		s.SetAnnouncePolicy("p1", "tok-phone", false)
+		if st, want := takeSeat(s, "tok-pc"), writes[len(writes)-1]; st.AnnounceLeaderOnly != want {
+			t.Errorf("%s: the PC took the seat back: leader-only %v, want its own %v", name, st.AnnounceLeaderOnly, want)
+		}
+	}
+}
+
+// The switches one party keeps are bounded. Full, the holder's own still
+// takes and the others go; off keeps no entry.
+func TestAnnouncePoliciesAreBoundedPerParty(t *testing.T) {
+	s, _ := audioParty(t)
+	s.mu.Lock()
+	a := s.audioLocked("p1")
+	a.policy = map[string]bool{}
+	for i := 0; len(a.policy) < maxPolicyTokens; i++ {
+		a.policy[fmt.Sprintf("tok-gone%d", i)] = true
+	}
+	s.mu.Unlock()
+	r := revOf(s, "p1")
+	st, out := s.SetAnnouncePolicy("p1", "tok-phone", true)
+	if out != OutcomeOK || !st.AnnounceLeaderOnly || revOf(s, "p1") <= r {
+		t.Fatalf("the holder's switch with the party full: %v, reads %v", out, st.AnnounceLeaderOnly)
+	}
+	s.mu.Lock()
+	n, mine := len(s.audio["p1"].policy), s.audio["p1"].policy["tok-phone"]
+	s.mu.Unlock()
+	if n > maxPolicyTokens || !mine {
+		t.Fatalf("%d switches kept (cap %d), the holder's kept %v", n, maxPolicyTokens, mine)
+	}
+	if st, out := s.SetAnnouncePolicy("p1", "tok-phone", false); out != OutcomeOK || st.AnnounceLeaderOnly {
+		t.Fatalf("switched off: %v, reads %v", out, st.AnnounceLeaderOnly)
+	}
+	s.mu.Lock()
+	_, kept := s.audio["p1"].policy["tok-phone"]
+	s.mu.Unlock()
+	if kept {
+		t.Fatal("off left an entry behind")
 	}
 }
 
