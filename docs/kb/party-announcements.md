@@ -38,8 +38,9 @@ it off and only the leading device can announce. The switch belongs to the
 device that set it: if another device becomes the leader, everyone can announce
 again.
 
-An Apple TV has no microphone. If an Apple TV leads with the switch off, nobody
-can announce until it is turned back on there.
+An Apple TV has no microphone and no announcement switch. While an Apple TV
+leads, everyone can announce. When your device leads again, its switch applies
+again.
 
 ## Stopping one
 
