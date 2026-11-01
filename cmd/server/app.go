@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -58,6 +59,7 @@ func buildApp(cfg *config.Config) *fiber.App {
 	app.Use(recover.New())
 	app.Use(logger.New(logger.Config{
 		Format: "${time} | ${status} | ${latency} | ${method} ${path}\n",
+		Next:   quietAccessLog,
 	}))
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
@@ -376,6 +378,22 @@ func buildApp(cfg *config.Config) *fiber.App {
 	// The seat holder makes another device the leader.
 	np.Post("/handover", nowPlayingHandler.HandOver)
 	np.Delete("/", nowPlayingHandler.Clear)
+	// Party audio: the party's volume and each device's own level.
+	np.Post("/volume", nowPlayingHandler.SetVolume)
+	// Announcements: who may make one, a recorded clip and its bytes, and
+	// stopping one. Memory only, and the routes that carry an id are
+	// kept out of the access log (quietAccessLog).
+	np.Post("/announce-policy", nowPlayingHandler.SetAnnouncePolicy)
+	np.Post("/announcements", nowPlayingHandler.PostClip)
+	np.Get("/announcements/:id", nowPlayingHandler.GetClip)
+	np.Post("/announcements/:id/stop", nowPlayingHandler.StopAnnouncement)
+	// Live announcements: a talker's voice relayed in chunks, heard about
+	// a second after it is spoken. The chunk routes are out of the access
+	// log too: they carry an id, about ten times a second per device.
+	np.Post("/live", nowPlayingHandler.StartLive)
+	np.Post("/live/:id/audio", nowPlayingHandler.PostLiveAudio)
+	np.Get("/live/:id/audio", nowPlayingHandler.GetLiveAudio)
+	np.Post("/live/:id/end", nowPlayingHandler.EndLive)
 	// The party's clock, for the devices' offset measurement.
 	v1.Get("/time", requireProfile, handlers.Time)
 
@@ -385,4 +403,29 @@ func buildApp(cfg *config.Config) *fiber.App {
 	stats.Delete("/", statsHandler.DeleteOwnStats)
 
 	return app
+}
+
+// quietPaths are the requests the access log skips: every path that
+// carries an announcement's id, which is a key to someone's voice — and
+// the live chunks among them would be about ten lines a second per
+// device. POST /announcements and POST /live, which carry none, are
+// still logged.
+var quietPaths = []string{
+	"/api/v1/nowplaying/announcements/",
+	"/api/v1/nowplaying/live/",
+}
+
+// quietAccessLog is the access logger's Next: true skips the line. The
+// router ignores case, so the check does too.
+func quietAccessLog(c *fiber.Ctx) bool {
+	return quietPath(c.Path())
+}
+
+func quietPath(path string) bool {
+	for _, prefix := range quietPaths {
+		if len(path) >= len(prefix) && strings.EqualFold(path[:len(prefix)], prefix) {
+			return true
+		}
+	}
+	return false
 }

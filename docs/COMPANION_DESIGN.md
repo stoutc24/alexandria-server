@@ -381,6 +381,21 @@ devices reconcile to it. Nothing dispatches a command at a device.
   state to catch up on: `stale`, `legacy-leader` (the playing device
   predates this), `leader-asleep` (a suspended phone cannot be resumed
   from here — iOS, not us), `no-queue`.
+- **Play modes** (2026-10-31: Shuffle and Repeat on the Remote). The
+  leader's reports carry `shuffle` (bool) and `repeat` (`off`, `all`,
+  `one`), kept exactly as reported: a mode a report leaves out is one
+  that leader cannot do, absent from the state, so a Remote offers only
+  what the leader can carry out and nothing of another device's lingers
+  (a hand-over or a vacant seat clears both until a leader reports).
+  `setShuffle {shuffle}` and `setRepeat {repeat}` change the state at
+  once and set `lastIntent` / `lastIntentRevision`, so the leader
+  carries them out like a pause and its heartbeat from before the press
+  is `409 stale` instead of undoing it. They never touch the position,
+  the anchor or a scheduled start — the song does not move, and the
+  leader's own report keeps or withdraws a next-track announcement, as
+  after a queue edit. Refusals: `leader-cannot-shuffle` /
+  `leader-cannot-repeat`, `leader-asleep` (nobody leads to carry it
+  out), `legacy-leader`. Capability `nowplaying.shuffle-repeat`.
 - **The leader converges like everyone else.** After an intent the
   leader's next report based on the old revision is `409 stale` with
   the state to apply; the first report that has seen it is the ack,
@@ -657,6 +672,51 @@ the new fields reads exactly as it did before.
 pre-announce rides `nowplaying.scheduled-start` (an older follower
 sees a `startItemId` it ignores). There is no per-device room-delay
 API: a room's output-chain delay is a knob on the device itself.
+
+#### Party volume and announcements (the PA system)
+
+- **Party volume** (`POST /nowplaying/volume`): the party slider
+  (`partyVolume`, 0–100, absent = 100, 0 is real) and each device's own
+  level on top of it, kept per device TOKEN — so an Apple TV keeps its
+  level when it moves from following (under a UUID) to leading (under
+  its token). The state lists `followers[].volume` and `leaderVolume`,
+  and tells each requester its own `yourDeviceVolume`. Any device in the
+  party may change them.
+- **Features** (`features` on `POST /follow` and the PUT): what each
+  device can do (`volume`, `announce`, `live-announce`), kept per token
+  and listed per row and as `leaderFeatures`, so the Remote can say who
+  will hear an announcement.
+- **Announcements**: a recorded clip (`POST /nowplaying/announcements`,
+  a 16 kHz mono 16-bit PCM WAV, 0.3–60.5 s) or live voice
+  (`POST /nowplaying/live`, then PCM chunks in and "PAL1" frames out,
+  at most 2 minutes). The SERVER picks the instants — when the chime
+  starts and when voice sample 0 is heard — and every speaking device
+  plays the same sample at the same moment on the party clock. One per
+  party at a time, 6 a minute per profile, 32 MiB of clips and 16 live
+  sessions across the server. The seat holder's leader-only switch
+  (`POST /nowplaying/announce-policy`) reads true only while the device
+  that set it holds the seat; the seat holder or the sender may stop one.
+- **Never through the intent path, never from a body.** All of it is
+  read-time, like queue edits: the PUT handler clears it, so an older
+  leader cannot reset it and nothing a body says can plant it. A change
+  bumps the revision and wakes the long-polls and touches no intent,
+  anchor or schedule field — the leader's next heartbeat is not stale and
+  a scheduled start stands. A live chunk never bumps at all.
+
+**Voice is the most private thing the party line carries.** It is held
+in the server's memory only — never the database, never disk, never a
+log — and only the profile's own party can fetch it, with the Bearer
+header (never a token in a URL). A clip is at most 60.5 seconds and a
+live announcement at most 2 minutes; live samples are dropped 3 seconds
+after they were due to play; everything is zeroed in place within 30
+seconds of the announcement ending, and at once when the party ends or
+expires. The access log skips every path that carries an announcement
+id (an id is a key to someone's voice). Clients delete any temporary
+file once it has played.
+
+`/health` advertises `nowplaying.volume`, `nowplaying.announce` and
+`nowplaying.live-announce`, each only alongside its routes; an app hides
+every control whose capability is missing.
 
 ### The honest limit
 

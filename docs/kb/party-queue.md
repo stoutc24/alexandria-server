@@ -15,6 +15,10 @@ The songs go into the party's queue instead of only your phone's.
 playlist or song and choose **Add to Party Queue**. The songs go at the end of
 the party's queue. The option shows while a party is playing on another device.
 
+**On the Remote:** tap **+ Add songs** next to **Up next**, find a song or
+album, and choose **Play Next** or **Add to Party Queue**. See
+[The party Remote](party-remote.md).
+
 **On an Apple TV following the party:** **Play Next** and **Add to Queue** go to
 the party's queue. On an Apple TV that isn't in the party, hold Select on an
 album, playlist or song and choose **Add to Party Queue**.

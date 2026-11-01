@@ -10,6 +10,7 @@ package main
 // adminauth's, against a frozen clock.
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -300,5 +301,243 @@ func TestClaimCapsTheDeviceLabel(t *testing.T) {
 	me := s.expectStatus(http.StatusOK, "GET", "/api/v1/devices/me", nil, bearer(claimed.str("token")))
 	if n := len(me.str("label")); n != 80 {
 		t.Fatalf("the claimed label is %d bytes, want 80", n)
+	}
+}
+
+// Party audio (2026-10-31), against the real routes: a person's party
+// audio is that person's alone, who set it is the token's label, and a
+// signed-out device is told so on every party-audio route.
+func TestPartyAudioIsThePersonsOwn(t *testing.T) {
+	s := newTestServer(t)
+	kate := s.linkedDevice("Kate", "Kate's iPhone")
+	kateTV := bearer(s.expectStatus(http.StatusCreated, "POST", "/api/v1/devices",
+		map[string]string{"label": "Kate's TV"}, kate).str("token"))
+	chris := s.linkedDevice("Chris", "Chris's iPhone")
+
+	s.expectStatus(http.StatusOK, "PUT", "/api/v1/nowplaying/", map[string]any{
+		"itemId": "a", "title": "A", "isPlaying": true, "basedOnRevision": 0}, kate)
+	s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/follow",
+		map[string]any{"role": "follower", "features": []string{"volume"}}, kateTV)
+
+	// Chris has no party, and Kate's is not his to reach.
+	if r := s.do("POST", "/api/v1/nowplaying/volume", map[string]any{"volume": 5}, chris); r.status != http.StatusNotFound ||
+		r.str("code") != "no-session" {
+		t.Fatalf("Chris with no party: %d %v", r.status, r)
+	}
+
+	r := s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/volume", map[string]any{"volume": 40}, kateTV)
+	state, _ := r.body["state"].(map[string]any)
+	if state["partyVolume"] != float64(40) || state["partyVolumeByLabel"] != "Kate's TV" {
+		t.Fatalf("Kate's TV set the party: %v", r)
+	}
+
+	// Chris leading his own party sees none of Kate's.
+	s.expectStatus(http.StatusOK, "PUT", "/api/v1/nowplaying/", map[string]any{
+		"itemId": "b", "title": "B", "isPlaying": true, "basedOnRevision": 0}, chris)
+	mine := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/", nil, chris)
+	if _, has := mine.body["partyVolume"]; has {
+		t.Fatalf("Chris sees Kate's party volume: %v", mine)
+	}
+	s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/volume", map[string]any{"volume": 5}, chris)
+	theirs := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/", nil, kate)
+	if theirs.body["partyVolume"] != float64(40) {
+		t.Fatalf("Chris's volume reached Kate's party: %v", theirs)
+	}
+
+	// Signed out, Kate's TV is told so on every party-audio route.
+	me := s.expectStatus(http.StatusOK, "GET", "/api/v1/devices/me", nil, kateTV)
+	s.expectStatus(http.StatusOK, "DELETE", "/api/v1/admin/devices/"+me.str("deviceKey"), nil, bearer(testAPIToken))
+	for _, c := range partyAudioRoutes {
+		if r := s.do(c.method, c.path, map[string]any{"volume": 40}, kateTV); r.status != http.StatusUnauthorized ||
+			r.str("code") != "token-revoked" {
+			t.Errorf("%s %s with a revoked token: %d %v, want 401 token-revoked", c.method, c.path, r.status, r)
+		}
+	}
+}
+
+// The leader's play modes (2026-10-31), against the real routes: a press
+// on the Remote reaches the leading device, the leader's heartbeat from
+// before it cannot undo it, the leader's report is what every device
+// reads, and another person's press reaches only their own party.
+func TestPlayModesOverTheRealRoutes(t *testing.T) {
+	s := newTestServer(t)
+	if !hasCapability(t, s, "nowplaying.shuffle-repeat") {
+		t.Fatal("/health does not advertise nowplaying.shuffle-repeat")
+	}
+	kate := s.linkedDevice("Kate", "Kate's iPhone")
+	mint := func(label string) map[string]string {
+		return bearer(s.expectStatus(http.StatusCreated, "POST", "/api/v1/devices",
+			map[string]string{"label": label}, kate).str("token"))
+	}
+	remote := mint("Kate's Remote")
+	tv := mint("Kate's TV")
+	chris := s.linkedDevice("Chris", "Chris's iPhone")
+
+	report := func(based any, shuffle bool, repeat string) response {
+		return s.do("PUT", "/api/v1/nowplaying/", map[string]any{
+			"itemId": "a", "title": "A", "isPlaying": true, "positionMs": 60000,
+			"basedOnRevision": based, "shuffle": shuffle, "repeat": repeat}, kate)
+	}
+	led := report(0, false, "off")
+	first, _ := led.body["state"].(map[string]any)
+	if led.status != http.StatusOK || first["shuffle"] != false || first["repeat"] != "off" {
+		t.Fatalf("the leader's report: %d %v", led.status, led)
+	}
+	s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/follow", map[string]any{"role": "follower"}, tv)
+	s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/follow", map[string]any{"role": "controller"}, remote)
+
+	r := s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/intent",
+		map[string]any{"type": "setShuffle", "shuffle": true}, remote)
+	pressed, _ := r.body["state"].(map[string]any)
+	last, _ := pressed["lastIntent"].(map[string]any)
+	if pressed["shuffle"] != true || last["type"] != "setShuffle" || last["byLabel"] != "Kate's Remote" {
+		t.Fatalf("the press: %v", r)
+	}
+
+	if stale := report(first["revision"], false, "off"); stale.status != http.StatusConflict || stale.str("code") != "stale" {
+		t.Fatalf("the leader's heartbeat from before the press: %d %v", stale.status, stale)
+	}
+	if ack := report(pressed["revision"], true, "off"); ack.status != http.StatusOK {
+		t.Fatalf("the leader's ack: %d %v", ack.status, ack)
+	}
+	seen := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/", nil, tv)
+	ackRev, _ := seen.body["leaderAckRevision"].(float64)
+	intentRev, _ := seen.body["lastIntentRevision"].(float64)
+	if seen.body["shuffle"] != true || seen.body["repeat"] != "off" || intentRev == 0 || ackRev <= intentRev {
+		t.Fatalf("the TV's read: %v", seen)
+	}
+
+	if r := s.do("POST", "/api/v1/nowplaying/intent", map[string]any{"type": "setRepeat", "repeat": "sometimes"}, remote); r.status != http.StatusBadRequest {
+		t.Fatalf("an unknown repeat: %d %v", r.status, r)
+	}
+	if r := s.do("POST", "/api/v1/nowplaying/intent", map[string]any{"type": "setShuffle", "shuffle": false}, chris); r.status != http.StatusNotFound ||
+		r.str("code") != "no-session" {
+		t.Fatalf("Chris pressing with no party of his own: %d %v", r.status, r)
+	}
+	if again := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/", nil, tv); again.body["shuffle"] != true {
+		t.Fatalf("Chris's press reached Kate's party: %v", again)
+	}
+}
+
+// testClip is a canonical announcement: 16 kHz mono 16-bit PCM, n
+// samples, with a 44-byte header.
+func testClip(n int) string {
+	le := binary.LittleEndian
+	b := make([]byte, 44+2*n)
+	copy(b, "RIFF")
+	le.PutUint32(b[4:], uint32(36+2*n))
+	copy(b[8:], "WAVEfmt ")
+	le.PutUint32(b[16:], 16)
+	le.PutUint16(b[20:], 1)
+	le.PutUint16(b[22:], 1)
+	le.PutUint32(b[24:], 16000)
+	le.PutUint32(b[28:], 32000)
+	le.PutUint16(b[32:], 2)
+	le.PutUint16(b[34:], 16)
+	copy(b[36:], "data")
+	le.PutUint32(b[40:], uint32(2*n))
+	for i := 44; i < len(b); i++ {
+		b[i] = byte(i * 7)
+	}
+	return string(b)
+}
+
+// A clip is its own party's alone: another person's token gets exactly the
+// answer a made-up id gets, and can neither fetch nor stop it.
+func TestAnnouncementsAreThePartysOwn(t *testing.T) {
+	s := newTestServer(t)
+	kate := s.linkedDevice("Kate", "Kate's iPhone")
+	chris := s.linkedDevice("Chris", "Chris's iPhone")
+	for _, d := range []map[string]string{kate, chris} {
+		s.expectStatus(http.StatusOK, "PUT", "/api/v1/nowplaying/", map[string]any{
+			"itemId": "a", "title": "A", "isPlaying": true, "basedOnRevision": 0}, d)
+	}
+	clip := testClip(16000)
+	up, err := s.sendRaw("POST", "/api/v1/nowplaying/announcements", "audio/wav", clip, kate)
+	if err != nil || up.status != http.StatusOK {
+		t.Fatalf("Kate's clip: %v %d %v", err, up.status, up)
+	}
+	ann, _ := up.body["announcement"].(map[string]any)
+	id, _ := ann["id"].(string)
+	if ann["byLabel"] != "Kate's iPhone" || len(id) != 32 {
+		t.Fatalf("announcement: %v", ann)
+	}
+
+	got := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/announcements/"+id, nil, kate)
+	if string(got.raw) != clip || got.header.Get("Cache-Control") != "no-store" || got.header.Get("Content-Type") != "audio/wav" {
+		t.Fatalf("Kate's own fetch: %d bytes, headers %v", len(got.raw), got.header)
+	}
+	real := s.do("GET", "/api/v1/nowplaying/announcements/"+id, nil, chris)
+	madeUp := s.do("GET", "/api/v1/nowplaying/announcements/"+strings.Repeat("0", 32), nil, chris)
+	if real.status != http.StatusNotFound || real.str("code") != "not-found" || string(real.raw) != string(madeUp.raw) {
+		t.Fatalf("Chris fetching Kate's clip: %d %v (a made-up id: %v)", real.status, real, madeUp)
+	}
+	if r := s.do("POST", "/api/v1/nowplaying/announcements/"+id+"/stop", nil, chris); r.status != http.StatusNotFound {
+		t.Fatalf("Chris stopping Kate's clip: %d %v", r.status, r)
+	}
+	if st := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/", nil, chris); st.body["announcement"] != nil {
+		t.Fatalf("Chris's party lists Kate's announcement: %v", st)
+	}
+}
+
+// Live voice is its own party's alone too: another person's token can
+// neither read, feed nor end it, and is told exactly what a made-up id
+// gets.
+func TestLiveAnnouncementsAreThePartysOwn(t *testing.T) {
+	s := newTestServer(t)
+	kate := s.linkedDevice("Kate", "Kate's iPhone")
+	chris := s.linkedDevice("Chris", "Chris's iPhone")
+	for _, d := range []map[string]string{kate, chris} {
+		s.expectStatus(http.StatusOK, "PUT", "/api/v1/nowplaying/", map[string]any{
+			"itemId": "a", "title": "A", "isPlaying": true, "basedOnRevision": 0}, d)
+	}
+	start := s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/live", nil, kate)
+	ann, _ := start.body["announcement"].(map[string]any)
+	id, _ := ann["id"].(string)
+	if ann["kind"] != "live" || len(id) != 32 {
+		t.Fatalf("Kate's live announcement: %v", start)
+	}
+	zeros := strings.Repeat("0", 32)
+	real := s.do("GET", "/api/v1/nowplaying/live/"+id+"/audio?from=0", nil, chris)
+	madeUp := s.do("GET", "/api/v1/nowplaying/live/"+zeros+"/audio?from=0", nil, chris)
+	if real.status != http.StatusNotFound || real.str("code") != "not-found" || string(real.raw) != string(madeUp.raw) {
+		t.Fatalf("Chris reading Kate's live voice: %d %v (a made-up id: %v)", real.status, real, madeUp)
+	}
+	if r, _ := s.sendRaw("POST", "/api/v1/nowplaying/live/"+id+"/audio?from=0", "application/octet-stream",
+		"\x01\x02", chris); r.status != http.StatusNotFound {
+		t.Fatalf("Chris feeding Kate's live voice: %d %v", r.status, r)
+	}
+	if r := s.do("POST", "/api/v1/nowplaying/live/"+id+"/end", nil, chris); r.status != http.StatusNotFound {
+		t.Fatalf("Chris ending Kate's live voice: %d %v", r.status, r)
+	}
+	// Kate ends it; her own read answers at once, ended.
+	s.expectStatus(http.StatusOK, "POST", "/api/v1/nowplaying/live/"+id+"/end", map[string]any{"endSample": 0}, kate)
+	frame := s.expectStatus(http.StatusOK, "GET", "/api/v1/nowplaying/live/"+id+"/audio?from=0", nil, kate)
+	if len(frame.raw) != 24 || string(frame.raw[:4]) != "PAL1" || frame.raw[20] != 1 {
+		t.Fatalf("Kate's read of her ended live voice: % x", frame.raw)
+	}
+}
+
+// The access log never names an announcement: every path that carries an
+// id is skipped, in any case; the clip upload and the live start, which
+// carry none, are still logged.
+func TestTheAccessLogSkipsAnnouncementIDs(t *testing.T) {
+	for path, quiet := range map[string]bool{
+		"/api/v1/nowplaying/announcements/0123456789abcdef0123456789abcdef":      true,
+		"/api/v1/nowplaying/announcements/0123456789abcdef0123456789abcdef/stop": true,
+		"/API/V1/NowPlaying/Announcements/0123456789abcdef0123456789abcdef":      true,
+		"/api/v1/nowplaying/live/0123456789abcdef0123456789abcdef/audio":         true,
+		"/api/v1/nowplaying/live/0123456789abcdef0123456789abcdef/end":           true,
+		"/api/v1/nowplaying/LIVE/0123456789abcdef0123456789abcdef/audio":         true,
+		"/api/v1/nowplaying/live":            false,
+		"/api/v1/nowplaying/announcements":   false,
+		"/api/v1/nowplaying/announce-policy": false,
+		"/api/v1/nowplaying/volume":          false,
+		"/api/v1/nowplaying/":                false,
+		"/api/v1/nowplaying":                 false,
+	} {
+		if got := quietPath(path); got != quiet {
+			t.Errorf("quietPath(%q) = %v, want %v", path, got, quiet)
+		}
 	}
 }

@@ -92,6 +92,28 @@ var capabilities = []string{
 	"nowplaying.handover-any",
 	// driftMs on POST /follow, listed per follower on the state.
 	"nowplaying.drift",
+	// Party volume: POST /nowplaying/volume (the party slider, or one
+	// device's own level); on the state partyVolume, partyVolumeByLabel,
+	// leaderVolume, yourDeviceVolume, followers[].volume, leaderFeatures
+	// and followers[].features; `features` on POST /follow and the PUT.
+	"nowplaying.volume",
+	// Announcements: POST /nowplaying/announce-policy (the seat holder's
+	// leader-only switch, announceLeaderOnly on the state), POST
+	// /nowplaying/announcements (a 16 kHz mono PCM WAV clip), GET
+	// /nowplaying/announcements/:id, POST /nowplaying/announcements/:id/
+	// stop; state.announcement of kind "clip".
+	"nowplaying.announce",
+	// Live announcements: POST /nowplaying/live, POST and GET
+	// /nowplaying/live/:id/audio (PCM chunks in; "PAL1" frames out), POST
+	// /nowplaying/live/:id/end; state.announcement of kind "live".
+	"nowplaying.live-announce",
+	// The leader's play modes: its reports carry shuffle (a boolean) and
+	// repeat ("off", "all", "one"), published on the state as reported
+	// (absent = that leader can't do it); POST /nowplaying/intent takes
+	// setShuffle {shuffle} and setRepeat {repeat}, carried out by the
+	// leader like setPlaying (409 leader-cannot-shuffle / -repeat when it
+	// can't).
+	"nowplaying.shuffle-repeat",
 	// Managing the server from a phone, all of it live together:
 	// POST /admin/auth/device-token (a phone's admin sign-in, "Bearer
 	// alxa_…", accepted by every requireAdmin route); GET and DELETE
