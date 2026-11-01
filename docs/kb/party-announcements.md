@@ -1,8 +1,10 @@
 # Announcements at a party
 
-Talk to every room in a Party Play party at once. The music dips on every
-device, a chime plays, and then your voice plays on every speaker at the same
-moment. When you finish, the music comes back up.
+Talk to every room in a Party Play party at once. The music dips to 10% on
+every device, a chime plays, and then your voice plays on every speaker at the
+same moment. When you finish, the music comes back up. (Before Alexandria
+build 1248 and Apple TV build 193, the music dipped to 20% and the voice was
+quieter.)
 
 ## Message or Live
 

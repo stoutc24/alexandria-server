@@ -20,9 +20,11 @@ device's own volume buttons or system volume.
 
 ## Each device's own level
 
-Open **Each device** under the party slider. Each device in the party has its
-own slider, on top of the party volume: turn one device down and the others stay
-as they are, and the party slider still moves them all.
+**Each device** is under the party slider, on the Remote and on the leading
+device's party panel. Each device in the party has its own slider, on top of
+the party volume: turn one device down and the others stay as they are, and the
+party slider still moves them all. (In Alexandria 3.2.1 build 1247, Each device
+is only on the Remote, and you tap it to open it.)
 
 The leading device is listed first. A device keeps its level when it becomes
 the leader.
