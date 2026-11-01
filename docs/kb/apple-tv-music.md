@@ -50,6 +50,9 @@ music keeps playing, as in Apple Music:
   starting an audiobook stops the music.
 - The Fireplace sound under the player pauses while you are outside the app
   and starts again when you come back.
+- The Apple TV's Now Playing pop-up in the top corner shows each new song
+  only while you are outside Alexandria. Inside the app, there's no pop-up
+  (Apple TV build 193 and later).
 
 (Apple TV build 190 and later. Audiobooks already kept playing outside the
 app.)
