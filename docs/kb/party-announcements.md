@@ -23,8 +23,12 @@ On a Mac or Windows PC, click the button to start and click it again to finish.
 ## Who hears it
 
 The line under the button says **Heard on:** and lists the devices that will
-play it. Devices listed under **Not on:** need an Alexandria update.
+play it. Devices listed under **Not on:** either need an Alexandria update
+("needs an update") or can't play announcements yet ("not available there
+yet").
 
+- Phones, tablets, Mac and Windows computers, and Apple TVs (build 192 and
+  later) play announcements.
 - A message also plays on your own device when it is playing the party.
 - Live voice never plays on your own device, so you don't hear yourself a
   second late. Your device's music still dips.
@@ -75,5 +79,8 @@ the button.
 | *Device* stopped the announcement | The leading device or the sender stopped it. |
 | Alexandria needs the microphone to make announcements. | Allow the microphone in Settings. **Open Settings** takes you there. |
 | Update Alexandria Server to make announcements | Your Alexandria Server is older than this feature. Update it. |
+| No device in the party can play announcements yet — update Alexandria on them | The other devices in the party run an older Alexandria. Update the app on them. |
+| No device in the party can play announcements yet | None of the other devices in the party can play announcements. |
+| Announcements can't be made from this device yet | This device can't record one yet (Alexandria on Linux). Use a phone or another computer. |
 
 Contact for questions or problems: stoutservers@gmail.com

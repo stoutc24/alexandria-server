@@ -23,6 +23,8 @@ installing and running the Alexandria companion server itself, see the
 | [Choosing who leads a party](party-leader.md) | Make leader from the leading device or any follower; taking the lead; the old leader's message |
 | [Party volume](party-volume.md) | The party slider on the Remote and the leading device; each device's own level; which devices follow it |
 | [Announcements at a party](party-announcements.md) | Message or Live; who hears it; the leading device's switch; stopping one; limits; your voice stays private |
+| [The party Remote](party-remote.md) | Shuffle and Repeat for the whole party; + Add songs; messages under the controls |
+| [Following a party on the Apple TV](apple-tv-party.md) | Join from Home or from the music player; joining at a song's end; when the leading Apple TV changes music, stops or goes away |
 | [Signing a device out](signing-devices-out.md) | Sign out one device or all of a person's, on the web or in the app; what the device loses and keeps; when it notices |
 | [Alexandria on the Apple TV Home screen](apple-tv-home-screen.md) | The Top Shelf: Continue and Recently Added above the icons, and how to get it showing |
 | [Music on the Apple TV](apple-tv-music.md) | The Queue (browse, play, move, remove, Shuffle/Repeat/Autoplay; at a party); leaving the app while music plays (Control Center); lyrics, and when Plex can't fetch them; the screensaver's song lines |
@@ -41,6 +43,17 @@ These were proven in tests and simulators, not yet on hardware:
       in a room: the party slider and each device's level, a message and
       live voice heard together on every speaker (server added 2026-10-31;
       proven on a test server over loopback, no app yet).
+- [ ] Announcements on Android phones (build 1247): a message and live voice
+      play on time with the music dipping, including through a Bluetooth
+      speaker (proven on the Android emulator only, with the output forced
+      to 44.1 kHz for the Bluetooth case).
+- [ ] The party Remote's Shuffle, Repeat and + Add songs with a phone and an
+      Apple TV leading (phone 1247, Apple TV 192; proven on the party rig and
+      in the simulators).
+- [ ] One Apple TV following another (Apple TV 192): in step at every song
+      change; the leading TV switching music, stopping, or losing power;
+      Join party in the player; a join at a song's end (proven on two Apple
+      TV simulators).
 
 - [ ] Mac: closing the window keeps music playing; the Dock icon brings it
       back; a video pauses on close (build 1230).
