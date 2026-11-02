@@ -30,6 +30,7 @@ installing and running the Alexandria companion server itself, see the
 | [Music on the Apple TV](apple-tv-music.md) | The Queue (browse, play, move, remove, Shuffle/Repeat/Autoplay; at a party); leaving the app while music plays (Control Center); lyrics, and when Plex can't fetch them; the screensaver's song lines |
 | [Lyrics on the phone, tablet and computer](lyrics.md) | Where lyrics come from (your server, then LRCLib); when Plex can't fetch them; lyrics kept on the device |
 | [TV shows on the Apple TV](apple-tv-shows.md) | Which season a show opens on, Play All (Specials left out), Play Season and Auto-play |
+| [How screens load, and data on cellular](loading-and-data-use.md) | Screens open from a saved copy; shelves that stay put; what downloads on cellular, Data Saver and Low Data Mode; Discover; signing out |
 | [Watching videos on the phone, tablet and computer](videos.md) | The seek bar and its preview pictures (and where they come from), Picture in Picture on iPhone, iPad and Android |
 
 Contact for questions or problems: stoutservers@gmail.com
@@ -55,6 +56,11 @@ These were proven in tests and simulators, not yet on hardware:
       change; the leading TV switching music, stopping, or losing power;
       Join party in the player; a join at a song's end (proven on two Apple
       TV simulators).
+- [ ] How screens load (build 1249): every service's screens opening from the
+      saved copy against real servers, shelves staying put, and cellular
+      using only small updates (proven in tests, an iPhone simulator against
+      a test server, and the Android emulator's cellular and Data Saver
+      detection; not yet on real servers or a phone on cellular).
 
 - [ ] Mac: closing the window keeps music playing; the Dock icon brings it
       back; a video pauses on close (build 1230).
