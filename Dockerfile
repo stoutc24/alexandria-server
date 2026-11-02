@@ -13,7 +13,7 @@
 # line is the MINIMUM version: building with a newer Go is fine, and an
 # out-of-support Go (1.22 was) ships without the standard library's
 # security fixes.
-FROM golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
+FROM golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
 
 WORKDIR /build
 
@@ -52,7 +52,7 @@ RUN set -e; out=THIRD_PARTY_NOTICES.txt; \
 # =============================================================================
 # Runtime stage - minimal image
 # =============================================================================
-FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
 # Labels for container metadata
 LABEL org.opencontainers.image.title="Alexandria Server"
