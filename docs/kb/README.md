@@ -21,7 +21,8 @@ installing and running the Alexandria companion server itself, see the
 | [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag; the Artist tab; a party on a big screen |
 | [Adding and removing songs at a party](party-queue.md) | Play Next, Add to Party Queue and ✕ from party devices and the Remote; Plex songs; messages |
 | [Choosing who leads a party](party-leader.md) | Make leader from the leading device or any follower; taking the lead; the old leader's message |
-| [Party volume](party-volume.md) | The party slider on the Remote and the leading device; each device's own level; which devices follow it |
+| [Party volume](party-volume.md) | The party slider on the Remote and the leading device; each device's own level; This device on a following phone; which devices follow it; full volume when nobody follows |
+| [Volume on Now Playing](volume.md) | The slider under the play controls: the device's volume on iPhone, iPad and Android, Alexandria's own on Mac and Windows; at a party |
 | [Announcements at a party](party-announcements.md) | Message or Live; who hears it; the leading device's switch; stopping one; limits; your voice stays private |
 | [The party Remote](party-remote.md) | Shuffle and Repeat for the whole party; + Add songs; messages under the controls |
 | [Following a party on the Apple TV](apple-tv-party.md) | Join from Home or from the music player; joining at a song's end; when the leading Apple TV changes music, stops or goes away |
@@ -31,6 +32,7 @@ installing and running the Alexandria companion server itself, see the
 | [Lyrics on the phone, tablet and computer](lyrics.md) | Where lyrics come from (your server, then LRCLib); when Plex can't fetch them; lyrics kept on the device |
 | [TV shows on the Apple TV](apple-tv-shows.md) | Which season a show opens on, Play All (Specials left out), Play Season and Auto-play |
 | [How screens load, and data on cellular](loading-and-data-use.md) | Screens open from a saved copy; shelves that stay put; what downloads on cellular, Data Saver and Low Data Mode; Discover; signing out |
+| [Recently Played and Top Artists in Plex Music](recently-played.md) | Plays from every device on your account; when a song shows up; whose plays; data |
 | [Watching videos on the phone, tablet and computer](videos.md) | The seek bar and its preview pictures (and where they come from), Picture in Picture on iPhone, iPad and Android |
 
 Contact for questions or problems: stoutservers@gmail.com
@@ -61,6 +63,17 @@ These were proven in tests and simulators, not yet on hardware:
       using only small updates (proven in tests, an iPhone simulator against
       a test server, and the Android emulator's cellular and Data Saver
       detection; not yet on real servers or a phone on cellular).
+- [ ] Plex Music Recently Played and Top Artists (build 1250, Apple TV 195):
+      a song played on the PC shows on the phone after a pull; nobody
+      else's plays show for the server owner (proven against a test server
+      only: whether a real Plex records the owner's plays as account 1, and
+      answers `/accounts` to the owner alone, is unverified).
+- [ ] Volume (build 1250, Apple TV 195): the Now Playing slider on an iPhone
+      (Apple's own slider: the simulator shows none), on Android (moves with
+      the buttons; proven on the emulator), and on Mac and Windows (Alexandria's
+      own volume, remembered); a leading device with nobody following back to
+      full volume after a minute; This device on a following phone (proven in
+      tests only).
 
 - [ ] Mac: closing the window keeps music playing; the Dock icon brings it
       back; a video pauses on close (build 1230).

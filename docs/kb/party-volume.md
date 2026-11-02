@@ -29,6 +29,10 @@ is only on the Remote, and you tap it to open it.)
 The leading device is listed first. A device keeps its level when it becomes
 the leader.
 
+**On a following phone or computer:** its own level is in its party panel, as
+**This device**, so it can turn itself up or down without a Remote (from
+Alexandria 3.2.1 build 1250).
+
 ## Which devices follow it
 
 Phones, iPads, Macs and Windows PCs with a current Alexandria, and the Apple TV.
@@ -40,6 +44,16 @@ under **Not changed on:**.
 The party volume and every device's level last as long as the party. They stay
 when another device becomes the leader. When the party ends, the next party
 starts at full volume.
+
+A device plays at these levels only while a party is on: while it follows, or
+while at least one device follows it. When the last device stops following,
+the leading device goes back to full volume after about a minute. If a device
+follows again, the levels come back. (Before build 1250 on phones and
+computers, and Apple TV 195, a leading device kept its level with nobody
+following, and only a Remote could change it.)
+
+Outside a party, the volume slider on Now Playing is always there: see
+[Volume on Now Playing](volume.md).
 
 ## If it doesn't change
 
