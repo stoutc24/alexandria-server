@@ -43,9 +43,26 @@ records, you see "Not enough similar music for …" and nothing changes.
 ## Genre, decade and AI stations
 
 - **Genre** ("Rap Radio"): every artist with that genre.
-- **Decade** ("1990s Radio"): records released in those ten years.
+- **Decade** ("1990s Radio"): records released in those ten years. From
+  Alexandria 3.2.1 build 1253 and Apple TV build 196:
+  - every artist with a record from that decade gets a turn before any
+    artist plays again, so one artist or one genre cannot fill the station;
+  - it plays two or three songs from a record at a time, not the whole
+    record, and no artist more than about one song in eight;
+  - what you play most only changes the order a little; every year of the
+    decade counts the same;
+  - records you played recently come later, not never;
+  - your whole library counts, however large.
 - **AI radio**: the genres and artists the AI named for that theme, and only
-  those.
+  those. From build 1253 the AI sees every artist in your library (with how
+  many albums each has and their main genre), not just your top 40. For a
+  very large library it sees an even sample across all of it. It never sees
+  song titles: Alexandria picks the songs on your device.
+
+**Compilations:** "Various Artists" records are left out of stations unless
+you asked for one (for example Soundtrack Radio). From a soundtrack or a
+compilation such as a "Legacy Collection", a station plays only the songs
+by the record's own artist.
 
 ## Intros and skits are skipped
 
