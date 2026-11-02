@@ -13,12 +13,22 @@ under the play controls. What it changes depends on the device:
 
 ## At a party
 
-The party volume and each device's own level are separate from this slider:
-see [Party volume](party-volume.md). They apply only while a party is on, so
-when a party is over, the slider and the volume buttons are all you need.
+From build 1251, during a party the slider is that device's own level in the
+party: the same number as its row under **Each device**. Move either one and
+both move. TVs are not included. They use the TV remote's volume.
 
-During a party, a following phone or computer has its own level in its party
-panel, as **This device**.
+- **Phone or tablet:** the slider sets its level in the party. The volume
+  buttons still set the phone's own volume, under it.
+- **Mac or Windows:** its level in the party and Alexandria's volume become
+  one. When the computer joins, its level starts at the volume it already
+  had, so joining never makes it louder.
+
+When the party is over, the slider goes back to the device's own volume. A
+computer goes back to the volume it had before the party. The party volume
+applies on top of every device's level: see [Party volume](party-volume.md).
+
+A following device also shows its level in its party panel, as **This
+device**.
 
 ## If the slider is missing
 

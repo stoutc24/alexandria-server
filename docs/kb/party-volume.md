@@ -33,6 +33,11 @@ the leader.
 **This device**, so it can turn itself up or down without a Remote (from
 Alexandria 3.2.1 build 1250).
 
+**Under Now Playing:** from build 1251, during a party the volume slider under
+the play controls on every phone, tablet and computer is that device's own
+level, the same as its row here. A computer joins at the volume it already had.
+See [Volume on Now Playing](volume.md).
+
 ## Which devices follow it
 
 Phones, iPads, Macs and Windows PCs with a current Alexandria, and the Apple TV.
