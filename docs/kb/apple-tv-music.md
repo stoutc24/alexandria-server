@@ -92,6 +92,11 @@ Lyrics**, it waits its usual time (Settings › Screensaver) before it starts.
 The Screensaver button still starts it at once. (Apple TV build 190 and
 later.)
 
+The screensaver also never starts while a film, an episode, live TV or a
+trailer is open, whether it is playing, paused or loading. Opening one puts a
+screensaver that is up away at once. It starts only while music or an
+audiobook is really playing. (Apple TV build 194 and later.)
+
 ### When Plex can't fetch the lyrics
 
 Plex gets most lyrics from LyricFind each time you open them, and
