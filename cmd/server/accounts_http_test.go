@@ -264,7 +264,19 @@ func TestAccountsTwoStepCode(t *testing.T) {
 	secret := r.str("secret")
 	step := time.Now().Unix() / 30
 	code, _ := adminauth.CodeAt(secret, step)
+	// The password too (security review, 2026-11-02): the phone's link
+	// alone cannot switch two-step on. An app too old to send it is told.
 	r = s.do("POST", "/api/v1/accounts/totp/enable", map[string]any{"code": code}, bearer(token))
+	if r.status != 400 || r.str("reason") != "password-required" {
+		t.Fatalf("enable without the password: %d %s", r.status, r)
+	}
+	r = s.do("POST", "/api/v1/accounts/totp/enable", map[string]any{
+		"code": code, "password": "not the password"}, bearer(token))
+	if r.status != 401 || r.str("reason") != "bad-credentials" {
+		t.Fatalf("enable with a wrong password: %d %s", r.status, r)
+	}
+	r = s.do("POST", "/api/v1/accounts/totp/enable", map[string]any{
+		"code": code, "password": "a long enough one"}, bearer(token))
 	if r.status != 200 || r.body["totpEnabled"] != true {
 		t.Fatalf("enable: %d %s", r.status, r)
 	}

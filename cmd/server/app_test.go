@@ -2041,8 +2041,18 @@ func TestHealthAdvertisesPhoneAdminAndThePublicURL(t *testing.T) {
 	if r.str("publicUrl") != "https://alexandria.example.com" {
 		t.Fatalf("publicUrl %v", r)
 	}
-	if r.str("version") != "0.3.0" {
+	if r.str("version") != "1.0.0" {
 		t.Fatalf("version changed: %v", r)
+	}
+	// What the apps read is still there; the Go release is not (anyone can
+	// read this page).
+	for _, k := range []string{"app", "status", "uptime", "database"} {
+		if _, ok := r.body[k]; !ok {
+			t.Fatalf("/health lacks %q: %v", k, r)
+		}
+	}
+	if _, ok := r.body["goVersion"]; ok {
+		t.Fatalf("/health tells strangers the Go release: %v", r)
 	}
 }
 

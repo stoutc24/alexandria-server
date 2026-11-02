@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/stoutsolutions/alexandria-server/internal/database"
+	"github.com/stoutsolutions/alexandria-server/internal/handlers"
 	"github.com/stoutsolutions/alexandria-server/internal/repository"
 )
 
@@ -52,7 +53,8 @@ func setUpHousehold(t *testing.T, s *testServer) household {
 	r = s.do("POST", "/api/v1/accounts/totp/setup", nil, bearer(h.samPhone))
 	h.samSecret = r.str("secret")
 	if r = s.do("POST", "/api/v1/accounts/totp/enable", map[string]any{
-		"code": codeFor(t, h.samSecret, currentStep())}, bearer(h.samPhone)); r.status != http.StatusOK {
+		"code": codeFor(t, h.samSecret, currentStep()), "password": samPassword},
+		bearer(h.samPhone)); r.status != http.StatusOK {
 		t.Fatalf("two-step on: %v", r)
 	}
 
@@ -256,6 +258,88 @@ func TestAnAccountsAdminSignInReachesOnlyItsAccess(t *testing.T) {
 	s.expectStatus(http.StatusOK, "GET", "/api/v1/admin/profiles", nil, admin)
 }
 
+// The router matches paths ignoring case and trailing slashes, so the gate
+// does too (security review, 2026-11-02: a "manage" sign-in gave itself
+// "full" with PUT …/Admin-Access, and reached the kept sign-ins with
+// GET /Service-Admins).
+func TestTheAccessGateIgnoresHowAPathIsSpelt(t *testing.T) {
+	s := newTestServer(t, withSecretsKey)
+	h := setUpHousehold(t, s)
+	e := enrollDirect(t)
+	admin := bearer(s.signIn(e, true, nil).token) // 1
+	s.expectStatus(http.StatusOK, "PUT", accessPath(h.sam), access("manage"), admin)
+	r := s.samSignsIn(h, samPassword) // 2
+	if r.status != http.StatusCreated || r.str("access") != "manage" {
+		t.Fatalf("sign-in: %v", r)
+	}
+	phone := bearer(r.str("token"))
+	own := r.body["device"].(map[string]any)["id"].(string)
+
+	for _, req := range [][2]string{
+		{"PUT", "/api/v1/admin/profiles/" + h.sam + "/Admin-Access"},
+		{"PUT", "/api/v1/admin/profiles/" + h.sam + "/ADMIN-ACCESS"},
+		{"PUT", accessPath(h.sam) + "//"},
+		{"PUT", accessPath(h.sam) + "/"},
+		{"PUT", "/api/v1/admin/profiles/" + h.dana + "/Admin-access"},
+		{"GET", "/api/v1/admin/Service-Admins"},
+		{"GET", serviceAdminsPath + "//"},
+		{"GET", "/API/V1/ADMIN/SERVICE-ADMINS"},
+		{"GET", "/api/v1/admin/Provision"},
+		{"DELETE", "/api/v1/admin/Admin-Devices"},
+		{"DELETE", "/api/v1/admin/admin-devices//"},
+	} {
+		got := s.do(req[0], req[1], access("full"), phone)
+		if got.status != http.StatusForbidden || got.str("reason") != "access-denied" {
+			t.Errorf("%s %s: %d %v — want 403 access-denied", req[0], req[1], got.status, got.body)
+		}
+	}
+	// Nothing was raised.
+	if l := samsLogin(t, s, admin, h); l["adminAccess"] != "manage" {
+		t.Fatalf("Sam's access is now %v", l["adminAccess"])
+	}
+	// What "manage" may do still works, however it is spelt.
+	s.expectStatus(http.StatusOK, "GET", "/api/v1/admin/Profiles/", nil, phone)
+	s.expectStatus(http.StatusOK, "DELETE", "/api/v1/admin/Admin-Devices/"+own, nil, phone)
+	s.expectRefusal("device-token-invalid", "GET", "/api/v1/admin/profiles", nil, phone)
+}
+
+// The admin lowers an account's access while that account's phone is
+// signing in: its new sign-in must not keep the old access (security
+// review, 2026-11-02 — the lowering signs out the phones signed in then,
+// and this one was not saved yet).
+func TestASignInRacingAnAccessChangeIsUndone(t *testing.T) {
+	s := newTestServer(t, withSecretsKey)
+	h := setUpHousehold(t, s)
+	e := enrollDirect(t)
+	admin := bearer(s.signIn(e, true, nil).token) // 1
+	s.expectStatus(http.StatusOK, "PUT", accessPath(h.sam), access("full"), admin)
+
+	handlers.TestHookAccountSignInSaved = func(profileID string) {
+		if _, err := database.DB.Exec(
+			`UPDATE account_logins SET admin_access = 'manage' WHERE profile_id = ?`, profileID); err != nil {
+			t.Error(err)
+		}
+	}
+	defer func() { handlers.TestHookAccountSignInSaved = nil }()
+	r := s.samSignsIn(h, samPassword) // 2
+	if r.status != http.StatusConflict || r.str("reason") != "access-changed" {
+		t.Fatalf("sign-in during the change: %v", r)
+	}
+	handlers.TestHookAccountSignInSaved = nil
+	// No sign-in of Sam's survived with full access.
+	r = s.expectStatus(http.StatusOK, "GET", "/api/v1/admin/admin-devices", nil, admin)
+	for _, d := range r.body["devices"].([]any) {
+		if m := d.(map[string]any); m["profileId"] == h.sam {
+			t.Fatalf("a sign-in outlived the change: %v", m)
+		}
+	}
+	// Signing in again carries the new access.
+	r = s.samSignsIn(h, samPassword) // 3
+	if r.status != http.StatusCreated || r.str("access") != "manage" {
+		t.Fatalf("sign-in again: %v", r)
+	}
+}
+
 func TestAnAccountsAdminPhoneStepsUpWithItsOwnCode(t *testing.T) {
 	s := newTestServer(t, withSecretsKey)
 	h := setUpHousehold(t, s)
@@ -330,7 +414,7 @@ func TestAccountChangesEndItsAdminSignIns(t *testing.T) {
 	r := s.do("POST", "/api/v1/accounts/totp/setup", nil, bearer(h.samPhone))
 	h.samSecret = r.str("secret")
 	s.expectStatus(http.StatusOK, "POST", "/api/v1/accounts/totp/enable",
-		map[string]string{"code": samCode(t, h)}, bearer(h.samPhone))
+		map[string]string{"code": samCode(t, h), "password": newPassword}, bearer(h.samPhone))
 	s.expectStatus(http.StatusOK, "PUT", accessPath(h.sam), access("serveradmin"), admin)
 	phone = bearer(s.samSignsIn(h, newPassword).str("token")) // 5
 	s.expectStatus(http.StatusOK, "DELETE", "/api/v1/admin/profiles/"+h.sam+"/account", nil, admin)

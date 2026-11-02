@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/stoutsolutions/alexandria-server/internal/middleware"
 	"github.com/stoutsolutions/alexandria-server/internal/provision"
 	"github.com/stoutsolutions/alexandria-server/internal/repository"
 )
@@ -38,7 +39,17 @@ type ProvisionHandler struct {
 	getAccess    func(ctx context.Context, hc *http.Client, serviceType string, admin provision.Admin, username string) (provision.AccessState, error)
 	changeAccess func(ctx context.Context, hc *http.Client, serviceType string, admin provision.Admin, username string, want provision.Access) (provision.AccessState, error)
 	services     func(profileID string) ([]repository.AccountService, error)
+	// stepUp: setting an existing person's password from a phone asks for
+	// a fresh code (UseStepUp).
+	stepUp StepUp
 }
+
+// UseStepUp gives Provision the fresh-code check (AdminAuthHandler.
+// FreshCode): a phone's admin sign-in that resets someone's password on a
+// media server must add a code from its authenticator, as an invite from
+// a phone does — a lost "stay signed in" phone alone must not be able to
+// take over a person's media-server account (security review, 2026-11-02).
+func (h *ProvisionHandler) UseStepUp(s StepUp) { h.stepUp = s }
 
 func NewProvisionHandler(admins *repository.ServiceAdminRepository, profiles *repository.ProfileRepository) *ProvisionHandler {
 	return &ProvisionHandler{admins: admins, profiles: profiles, client: provision.NewHTTPClient(),
@@ -103,6 +114,10 @@ type provisionBody struct {
 	// Libraries: the ids (from Libraries) a NEW account may see; absent or
 	// null is every library. A reset leaves them alone.
 	Libraries []string `json:"libraries"`
+	// A phone's admin sign-in adds a fresh code to a reset (allowReset),
+	// the same fields as an invite's.
+	TOTPCode     string `json:"totpCode"`
+	RecoveryCode string `json:"recoveryCode"`
 }
 
 // Provision makes the person's account on the service, or (with
@@ -128,6 +143,20 @@ func (h *ProvisionHandler) Provision(c *fiber.Ctx) error {
 	}
 	if strings.TrimSpace(in.Username) == "" || in.Password == "" {
 		return refuse(c, fiber.StatusBadRequest, "bad-request", "a username and a password are needed")
+	}
+	if in.AllowReset && middleware.AdminDevice(c) != "" {
+		totp := strings.TrimSpace(in.TOTPCode)
+		recovery := strings.TrimSpace(in.RecoveryCode)
+		if totp == "" && recovery == "" {
+			return refuse(c, fiber.StatusForbidden, "step-up-required",
+				"setting a password from a phone needs a fresh code from your authenticator; update Alexandria if it does not ask for one")
+		}
+		if h.stepUp == nil {
+			return serverError(c, "fresh codes are not available", errors.New("ProvisionHandler.UseStepUp was never called"))
+		}
+		if ok, err := h.stepUp(c, totp, recovery, "media-server password reset"); !ok {
+			return err
+		}
 	}
 	admin, ok, err := h.openAdmin(c, in.Type, name)
 	if !ok {

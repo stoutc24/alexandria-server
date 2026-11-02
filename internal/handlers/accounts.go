@@ -545,12 +545,21 @@ type codeBody struct {
 	Password string `json:"password"`
 }
 
-// TOTPEnable confirms a code from the new secret and switches two-step on.
+// TOTPEnable confirms a code from the new secret and switches two-step on,
+// for the password: two-step guards the password sign-in, so a stolen
+// phone's link alone must not switch it on with someone else's
+// authenticator and lock the person out (security review, 2026-11-02).
+// Turning it off already asked for the password.
 func (h *AccountsHandler) TOTPEnable(c *fiber.Ctx) error {
 	var body codeBody
 	if err := c.BodyParser(&body); err != nil {
 		return refuse(c, fiber.StatusBadRequest, "bad-request", "invalid request body")
 	}
+	if body.Password == "" {
+		return refuse(c, fiber.StatusBadRequest, "password-required",
+			"turning on two-step needs your password; update Alexandria if it does not ask for it")
+	}
+	now := h.now()
 	login, err := h.accounts.LoginByProfile(middleware.ProfileID(c))
 	if err != nil {
 		return refuse(c, fiber.StatusNotFound, "no-login", "this person has no sign-in")
@@ -558,7 +567,11 @@ func (h *AccountsHandler) TOTPEnable(c *fiber.Ctx) error {
 	if login.TOTPSecret == "" {
 		return refuse(c, fiber.StatusConflict, "no-pending-secret", "start two-step setup first")
 	}
-	ok, err := h.checkCode(login, body.Code, h.now(), true)
+	if !adminauth.VerifyPassword(login.PasswordHash, body.Password) {
+		h.fail(login, now)
+		return refuse(c, fiber.StatusUnauthorized, "bad-credentials", "wrong password")
+	}
+	ok, err := h.checkCode(login, body.Code, now, true)
 	if err != nil {
 		return serverError(c, "could not check the code", err)
 	}

@@ -27,7 +27,7 @@ import (
 // migrated.
 func buildApp(cfg *config.Config) *fiber.App {
 	app := fiber.New(fiber.Config{
-		AppName:      "Alexandria Server v0.2.0",
+		AppName:      "Alexandria Server v1.0.0",
 		ErrorHandler: customErrorHandler,
 
 		// Catalogue chunks are the largest thing this accepts. 8 MB is
@@ -57,6 +57,9 @@ func buildApp(cfg *config.Config) *fiber.App {
 	})
 
 	app.Use(recover.New())
+	// No compressed request bodies (middleware.RefuseEncodedBodies): Fiber
+	// would unpack one with no size limit, before any sign-in.
+	app.Use(middleware.RefuseEncodedBodies)
 	app.Use(logger.New(logger.Config{
 		Format: "${time} | ${status} | ${latency} | ${method} ${path}\n",
 		Next:   quietAccessLog,
@@ -107,6 +110,8 @@ func buildApp(cfg *config.Config) *fiber.App {
 	provisionHandler := handlers.NewProvisionHandler(serviceAdminRepo, profileRepo)
 	// Change access works on the account a person's saved login names.
 	provisionHandler.UseAccounts(accountRepo)
+	// A reset from a phone adds a fresh code, as an invite does.
+	provisionHandler.UseStepUp(adminAuthHandler.FreshCode)
 
 	// Unauthenticated on purpose: the app needs to know whether a
 	// companion exists and what it can do before it has been given a
@@ -257,7 +262,10 @@ func buildApp(cfg *config.Config) *fiber.App {
 	admin.Get("/provision/:type/libraries", provisionHandler.Libraries)
 	// "Test accounts": a throwaway account made, signed in as, deleted.
 	admin.Post("/provision/:type/selftest", provisionHandler.SelfTest)
-	admin.Post("/profiles/:id/provision", provisionHandler.Provision)
+	// A reset from a phone asks a fresh code: phones share the sign-in rate
+	// limit here, as with invites.
+	admin.Post("/profiles/:id/provision",
+		middleware.ForAdminDevices(authLimiter), provisionHandler.Provision)
 	// "Change access": the libraries and downloads of the account a saved
 	// login names, read and changed with the same kept sign-in.
 	admin.Get("/profiles/:id/services/:sid/provision", provisionHandler.Access)

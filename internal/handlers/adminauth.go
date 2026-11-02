@@ -727,6 +727,23 @@ func (h *AdminAuthHandler) IssueAccountDeviceToken(c *fiber.Ctx) error {
 	if err != nil {
 		return serverError(c, "could not save the device sign-in", err)
 	}
+	// The admin may have changed this account's access while its password
+	// was being checked: that change signs out or rescopes the phones signed
+	// in THEN, and this one was not saved yet, so it would have kept the
+	// access it was read with (security review, 2026-11-02). Read it again
+	// now that this sign-in exists — a change from here on reaches it.
+	if TestHookAccountSignInSaved != nil {
+		TestHookAccountSignInSaved(login.ProfileID)
+	}
+	if again, err := h.accounts.LoginByProfile(login.ProfileID); err != nil || again.AdminAccess != login.AdminAccess {
+		if _, rerr := h.auth.RevokeDeviceToken(dev.ID); rerr != nil {
+			return serverError(c, "could not undo the device sign-in", rerr)
+		}
+		log.Printf("admin device sign-in with %q's account undone: its access changed meanwhile", login.Username)
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error":  "this account's admin access just changed; sign in again",
+			"reason": "access-changed"})
+	}
 	log.Printf("admin device signed in with %q's account: %q (%s, access=%s, persistent=%v, https=%s)",
 		login.Username, dev.Label, dev.ID, dev.Scope, dev.Persistent,
 		schemeBasisForLog(dev.SchemeBasis))
@@ -737,6 +754,12 @@ func (h *AdminAuthHandler) IssueAccountDeviceToken(c *fiber.Ctx) error {
 		"usedRecoveryCode": false,
 	})
 }
+
+// TestHookAccountSignInSaved runs, when set, just after an account's admin
+// sign-in is saved and before its access is read again: a test changes the
+// access there to stand in for the admin doing it at that moment. Never set
+// outside tests.
+var TestHookAccountSignInSaved func(profileID string)
 
 // callerForLog names the admin device behind a request, for the server
 // log: ` for "Chris · iPhone" (<id>)`, or "" for the browser's cookie.

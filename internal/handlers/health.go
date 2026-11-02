@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"os"
-	"runtime"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -19,12 +18,14 @@ type HealthResponse struct {
 	App string `json:"app"`
 	// Name labels this server in a discovery pick-list ("DESKTOP-PC")
 	// so a household with two companions can tell them apart.
-	Name      string `json:"name,omitempty"`
-	Status    string `json:"status"`
-	Uptime    string `json:"uptime"`
-	Database  string `json:"database"`
-	GoVersion string `json:"goVersion"`
-	Version   string `json:"version"`
+	Name     string `json:"name,omitempty"`
+	Status   string `json:"status"`
+	Uptime   string `json:"uptime"`
+	Database string `json:"database"`
+	Version  string `json:"version"`
+	// No Go version: anyone can read this page, and the exact Go release
+	// tells a stranger which of its published flaws to try (security
+	// review, 2026-11-02). No app ever read it.
 
 	// Capabilities tells the app which companion services this build
 	// actually serves, so a new app against an old server degrades to
@@ -176,13 +177,12 @@ func Health(c *fiber.Ctx) error {
 		caps = append(append([]string{}, capabilities...), "accounts.services")
 	}
 	return c.JSON(HealthResponse{
-		App:       "alexandria-companion",
-		Name:      host,
-		Status:    "healthy",
-		Uptime:    time.Since(startTime).Round(time.Second).String(),
-		Database:  dbStatus,
-		GoVersion: runtime.Version(),
-		Version:   "0.3.0",
+		App:      "alexandria-companion",
+		Name:     host,
+		Status:   "healthy",
+		Uptime:   time.Since(startTime).Round(time.Second).String(),
+		Database: dbStatus,
+		Version:  "1.0.0",
 
 		Capabilities: caps,
 		PublicURL:    configuredPublicURL,

@@ -251,9 +251,31 @@ func picked(all []Library, chosen []string) ([]string, error) {
 }
 
 // NewHTTPClient is the client the handler uses: a bounded wait, TLS
-// checked as usual.
+// checked as usual, and redirects followed only on the same server
+// (sameServerRedirect).
 func NewHTTPClient() *http.Client {
-	return &http.Client{Timeout: 20 * time.Second}
+	return &http.Client{Timeout: 20 * time.Second, CheckRedirect: sameServerRedirect}
+}
+
+// sameServerRedirect follows a redirect only to the server the admin saved:
+// the same host and port, and never from https down to http (plain http up
+// to https is fine). Go re-sends a request's body and most headers on a
+// 307 or 308, and strips only Authorization and Cookie for another host, so
+// a redirect elsewhere would carry the admin's password in a sign-in body,
+// or Navidrome's X-ND-Authorization, to a server nobody saved (security
+// review, 2026-11-02).
+func sameServerRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+		return fmt.Errorf("the server sent the request on to %s; only the saved address is used", req.URL.Host)
+	}
+	prev := via[len(via)-1].URL
+	if strings.EqualFold(prev.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https") {
+		return errors.New("the server sent the request on from https to plain http; refused")
+	}
+	return nil
 }
 
 // Ensure runs the provider after the checks every service shares.

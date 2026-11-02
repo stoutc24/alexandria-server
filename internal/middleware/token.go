@@ -225,7 +225,7 @@ func AdminScopeGate() fiber.Handler {
 			return c.Next()
 		}
 		scope := AdminScope(c)
-		path := strings.TrimSuffix(strings.TrimPrefix(c.Path(), "/api/v1/admin"), "/")
+		path := adminSubPath(c.Path())
 		reading := c.Method() == fiber.MethodGet || c.Method() == fiber.MethodHead
 		allowed := false
 		switch {
@@ -233,7 +233,7 @@ func AdminScopeGate() fiber.Handler {
 			allowed = scope == repository.AdminAccessServerAdmin || scope == repository.AdminAccessFull
 		case path == "/provision" || strings.HasPrefix(path, "/provision/") || strings.HasSuffix(path, "/provision"):
 			allowed = scope == repository.AdminAccessFull
-		case c.Method() == fiber.MethodDelete && path == "/admin-devices/"+AdminDevice(c):
+		case c.Method() == fiber.MethodDelete && path == "/admin-devices/"+strings.ToLower(AdminDevice(c)):
 			allowed = true
 		case (path == "/admin-devices" || strings.HasPrefix(path, "/admin-devices/")) && !reading:
 			allowed = false
@@ -252,6 +252,22 @@ func AdminScopeGate() fiber.Handler {
 		}
 		return c.Next()
 	}
+}
+
+// adminSubPath is the path under /api/v1/admin in the form the router
+// matched it: Fiber matches routes ignoring case and any trailing slashes,
+// so the gate does too, or "/Admin-Access" and "/admin-access//" reach the
+// handler past a check that only knows "/admin-access" (security review,
+// 2026-11-02: a "manage" sign-in gave itself "full" that way). Repeated
+// slashes are folded as well, so no spelling the router accepts is taken
+// for another path.
+func adminSubPath(raw string) string {
+	p := strings.ToLower(raw)
+	for strings.Contains(p, "//") {
+		p = strings.ReplaceAll(p, "//", "/")
+	}
+	p = strings.TrimPrefix(p, "/api/v1/admin")
+	return strings.TrimRight(p, "/")
 }
 
 // ForAdminDevices runs h only for a request a phone's admin sign-in

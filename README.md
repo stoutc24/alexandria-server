@@ -8,7 +8,7 @@ place for the things a household shares.
 
 It is **optional**. Alexandria works fully without it.
 
-**Version 0.3.0** · Docker image for `linux/amd64` and `linux/arm64`
+**Version 1.0.0** · Docker image for `linux/amd64` and `linux/arm64`
 
 ---
 
@@ -469,7 +469,11 @@ every person, device and statistic.** Take a backup first.
   `https://` address. Over plain http it signs in for that session only,
   twelve hours at most.
   - Signing in always takes your password and a fresh code, and so does
-    each backup from a phone and each device a phone approves.
+    each backup from a phone, each device a phone approves, each invite
+    from a phone, and setting someone's media-server password from a
+    phone. Making a new media-server account from a phone needs no code.
+  - A phone given part of the admin access (for example "manage") reaches
+    only that part, however a request's address is written.
   - A phone that stays signed in is signed out after 180 days unused.
   - You can sign out any phone, or all of them, on the admin page.
     Setting the login up again signs out every browser and phone.
@@ -526,6 +530,16 @@ every person, device and statistic.** Take a backup first.
     15 minutes.
 
   Everything else requires a token.
+- **Compressed request bodies are refused** (415). A small compressed
+  request could otherwise unpack to gigabytes. No Alexandria app sends one.
+- **Making or resetting an account on your media servers** follows a
+  redirect only on the same server, never to another address and never
+  from https down to http, so the saved admin password goes nowhere else.
+- **Turning on two-step for an Alexandria account takes its password**, as
+  turning it off always did.
+- **Each build is checked before it is published:** go vet, every test and
+  govulncheck (known Go vulnerabilities the code can reach), with the same
+  Go the image ships.
 - **The container runs as a non-root user** (uid 1000), and its memory use
   is capped (`GOMEMLIMIT=96MiB`).
 

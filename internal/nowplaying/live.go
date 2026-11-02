@@ -91,6 +91,48 @@ func (lb *liveBuf) wakeAll() {
 	lb.wake = make(chan struct{})
 }
 
+const (
+	// liveRunSamples is the longest a run grows by merging (1 s): trim
+	// drops whole runs, so runs this short keep what is held close to
+	// LiveRetainMs.
+	liveRunSamples = 1000 * samplesPerMs
+	// liveGapFill: a gap shorter than this (100 ms) is filled with the
+	// silence it reads as anyway, so the samples after it join the last
+	// run instead of starting one. Longer gaps take that long to make
+	// (a chunk is never ahead of the clock), which bounds the runs in
+	// LiveRetainMs to a few dozen.
+	liveGapFill = 100 * samplesPerMs
+)
+
+// add keeps samples [start, start+len(pcm)/2), start at or past every run:
+// a COPY of just those bytes, joined to the last run when it follows it
+// within liveGapFill. Keeping a slice of the request body instead held the
+// whole body, so a talker resending 64 KiB to add one sample at a time
+// could make the server hold far more than it ever heard (security review,
+// 2026-11-02: 125 MiB for 69 KB of voice). An array outgrown is zeroed.
+func (lb *liveBuf) add(start int64, pcm []byte) {
+	if n := len(lb.runs); n > 0 {
+		last := &lb.runs[n-1]
+		have := int64(len(last.pcm) / 2)
+		gap := start - (last.from + have)
+		if gap >= 0 && gap < liveGapFill && have+gap+int64(len(pcm)/2) <= liveRunSamples {
+			old := last.pcm
+			grown := len(old) + int(gap)*2 + len(pcm)
+			if grown > cap(old) {
+				buf := make([]byte, len(old), min(max(2*cap(old), grown), 2*liveRunSamples))
+				copy(buf, old)
+				clear(old)
+				old = buf
+			}
+			last.pcm = old[:grown]
+			clear(last.pcm[len(old) : grown-len(pcm)])
+			copy(last.pcm[grown-len(pcm):], pcm)
+			return
+		}
+	}
+	lb.runs = append(lb.runs, liveRun{from: start, pcm: append([]byte(nil), pcm...)})
+}
+
 // trim drops whole runs heard more than LiveRetainMs ago, bytes zeroed —
 // never past what has arrived.
 func (lb *liveBuf) trim(nowMs, voiceStartsAtMs int64) {
@@ -293,12 +335,9 @@ func (s *Store) AppendLive(profileID, tokenID, id string, from int64, pcm []byte
 	start = max(start, lb.total)
 	if start < stop {
 		lo, hi := (start-from)*2, (stop-from)*2
-		clear(pcm[:lo])
-		clear(pcm[hi:])
-		lb.runs = append(lb.runs, liveRun{from: start, pcm: pcm[lo:hi]})
-	} else {
-		clear(pcm)
+		lb.add(start, pcm[lo:hi])
 	}
+	clear(pcm)
 	lb.total = max(lb.total, stop)
 	lb.trim(nowMs, ann.voiceStartsAtMs)
 	lb.wakeAll()

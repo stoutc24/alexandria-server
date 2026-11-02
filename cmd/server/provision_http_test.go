@@ -263,6 +263,44 @@ func TestProvisionMakesThenResetsWithTheKeptServerAdminSignIn(t *testing.T) {
 		map[string]any{"type": "abs", "username": "emily", "password": "x"}, admin)
 }
 
+// A reset from an admin PHONE adds a fresh code (security review,
+// 2026-11-02): a lost "stay signed in" phone alone must not set a person's
+// media-server password and sign in as them. A new account needs none; the
+// admin page's sign-in is unchanged.
+func TestAPasswordResetFromAPhoneNeedsAFreshCode(t *testing.T) {
+	s := newTestServer(t, withSecretsKey)
+	abs, srv := newABSStub(t)
+	s.expectStatus(http.StatusOK, "POST", serviceAdminsPath, map[string]string{
+		"type": "abs", "baseUrl": srv.URL, "username": "admin", "password": "admin-pass"}, bearer(testAPIToken))
+	emily := newPerson(t, s, "Emily")
+	path := "/api/v1/admin/profiles/" + emily + "/provision"
+	e := enrollDirect(t)
+	phone := bearer(s.signIn(e, true, nil).token)
+
+	s.expectStatus(http.StatusOK, "POST", path, map[string]any{
+		"type": "abs", "username": "emily", "password": "first-pw"}, phone)
+	reset := func(extra map[string]any) map[string]any {
+		body := map[string]any{"type": "abs", "username": "emily", "password": "second-pw", "allowReset": true}
+		for k, v := range extra {
+			body[k] = v
+		}
+		return body
+	}
+	s.refused(http.StatusForbidden, "step-up-required", "POST", path, reset(nil), phone)
+	s.refused(http.StatusUnauthorized, "step-up-failed", "POST", path,
+		reset(map[string]any{"totpCode": codeFor(t, e.secret, currentStep()-20)}), phone)
+	if abs.password("emily") != "first-pw" {
+		t.Fatal("the password changed without a fresh code")
+	}
+	// A wrong code is not a sign-out.
+	s.expectStatus(http.StatusOK, "GET", "/api/v1/admin/provision", nil, phone)
+	r := s.expectStatus(http.StatusOK, "POST", path,
+		reset(map[string]any{"totpCode": freshCode(t, e.secret)}), phone)
+	if r.str("outcome") != "reset" || abs.password("emily") != "second-pw" {
+		t.Fatalf("reset with a fresh code: %v (stub has %q)", r, abs.password("emily"))
+	}
+}
+
 func TestProvisionSaysWhenTheKeptSignInFailsOrTheServiceIsGone(t *testing.T) {
 	s := newTestServer(t, withSecretsKey)
 	admin := bearer(testAPIToken)

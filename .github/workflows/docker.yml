@@ -28,7 +28,39 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # Nothing is built or published unless the code passes go vet, every
+  # test, and govulncheck (a known flaw the code can reach fails the run).
+  # They run in the Dockerfile's own pinned builder image, read from its
+  # FROM line, so the checked Go is exactly the Go the image ships and the
+  # two can never drift apart.
+  verify:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Vet, test and scan with the image's Go
+        run: |
+          builder="$(sed -n 's/^FROM \(golang:[^ ]*\) AS builder$/\1/p' Dockerfile)"
+          test -n "$builder" || { echo "no builder image in the Dockerfile" >&2; exit 1; }
+          echo "Checking with $builder"
+          docker run --rm -e GOFLAGS=-buildvcs=false -v "$PWD:/src" -w /src "$builder" sh -ec '
+            go version
+            go vet ./...
+            go test -count=1 ./...
+            go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+          '
+
   build:
+    needs: verify
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
