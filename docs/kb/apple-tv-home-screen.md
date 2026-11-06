@@ -9,6 +9,15 @@ above the icons shows Alexandria's own rows while its icon is highlighted:
 
 Select a poster to open it in Alexandria.
 
+## A film in more than one library
+
+Plex can hold the same film in several libraries (say **All Movies** and
+**Comedies**). Alexandria shows it once, on these rows and on its own Home
+(Continue Watching, Recently Added): Continue keeps the copy you watched
+last, and Recently Added the newest. If you hide a library from Home, a
+film that another library still holds stays on Home. (Apple TV builds
+before 198 showed a poster for every copy.)
+
 ## More than one person on the Apple TV
 
 The rows show what the last person to use Alexandria was watching. When the
