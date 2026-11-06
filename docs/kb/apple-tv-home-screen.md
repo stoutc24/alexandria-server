@@ -9,6 +9,16 @@ above the icons shows Alexandria's own rows while its icon is highlighted:
 
 Select a poster to open it in Alexandria.
 
+## More than one person on the Apple TV
+
+The rows show what the last person to use Alexandria was watching. When the
+Apple TV has more than one profile (or a profile with a PIN), selecting a
+poster asks **Who's listening?** first, and the PIN if that profile has one.
+The poster then opens for the person chosen, if their profile has the server
+it came from. If it doesn't, Alexandria opens on their own Home instead.
+(Apple TV builds before 197 opened the poster on top of the question,
+signed in as the last person.)
+
 ## Getting it to show
 
 1. Put Alexandria in the top row. Highlight its icon, hold the clickpad
