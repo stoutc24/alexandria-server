@@ -1024,6 +1024,24 @@ func (s *Server) jfItemsRoot(w http.ResponseWriter, r *http.Request, p []string)
 		notFound(w)
 	case "Similar":
 		ok(w, map[string]any{"Items": []any{}, "TotalRecordCount": 0})
+	case "InstantMix":
+		// /Items/{id}/InstantMix: around an artist, a playlist's artists, an
+		// album's or a song's artist.
+		var seeds []*Artist
+		switch v := s.cat.Get(id).(type) {
+		case *Artist:
+			seeds = []*Artist{v}
+		case *Playlist:
+			seeds = playlistArtists(v)
+		case *Album:
+			seeds = []*Artist{v.Artist}
+		case *Track:
+			seeds = []*Artist{v.Album.Artist}
+		default:
+			notFound(w)
+			return
+		}
+		s.jfInstantMix(w, r, seeds)
 	case "ThemeMedia":
 		ok(w, map[string]any{"ThemeVideosResult": map[string]any{"Items": []any{}}, "ThemeSongsResult": map[string]any{"Items": []any{}}})
 	default:
@@ -1071,6 +1089,10 @@ func (s *Server) jfArtists(w http.ResponseWriter, r *http.Request, p []string) {
 			}
 		}
 		if a, isArtist := s.cat.Get(id).(*Artist); isArtist {
+			if len(p) >= 2 && p[1] == "InstantMix" {
+				s.jfInstantMix(w, r, []*Artist{a})
+				return
+			}
 			if len(p) >= 2 && p[1] == "Similar" {
 				var items []map[string]any
 				for _, o := range s.cat.Artists {
@@ -1130,7 +1152,89 @@ func (s *Server) jfGenres(w http.ResponseWriter, r *http.Request) {
 	ok(w, map[string]any{"Items": items, "TotalRecordCount": len(items), "StartIndex": 0})
 }
 
+// jfInstantMix answers Jellyfin's InstantMix routes. A real server mixes by
+// the seed's GENRES; every showcase artist has a genre of its own, so a
+// faithful genre mix would hold the seed alone. Here the seeds' songs are
+// joined by the songs of the two artists after each seed in catalog order
+// (the neighbours stand in for genre-mates), round-robin by artist, then cut
+// to Limit (default 100). Deterministic, so a probe can count on it.
+func (s *Server) jfInstantMix(w http.ResponseWriter, r *http.Request, seeds []*Artist) {
+	index := map[*Artist]int{}
+	for i, a := range s.cat.Artists {
+		index[a] = i
+	}
+	var artists []*Artist
+	seen := map[*Artist]bool{}
+	add := func(a *Artist) {
+		if a != nil && !seen[a] {
+			seen[a] = true
+			artists = append(artists, a)
+		}
+	}
+	for _, a := range seeds {
+		add(a)
+	}
+	if n := len(s.cat.Artists); n > 0 {
+		for _, a := range seeds {
+			i, held := index[a]
+			if !held {
+				continue
+			}
+			add(s.cat.Artists[(i+1)%n])
+			add(s.cat.Artists[(i+2)%n])
+		}
+	}
+	var lists [][]*Track
+	for _, a := range artists {
+		var tracks []*Track
+		for _, al := range a.Albums {
+			tracks = append(tracks, al.Tracks...)
+		}
+		lists = append(lists, tracks)
+	}
+	limit := qInt(r, "Limit", 100)
+	if limit <= 0 {
+		limit = 100
+	}
+	items := []map[string]any{}
+	for i := 0; len(items) < limit; i++ {
+		took := false
+		for _, l := range lists {
+			if i < len(l) && len(items) < limit {
+				items = append(items, s.jfTrack(l[i], false))
+				took = true
+			}
+		}
+		if !took {
+			break
+		}
+	}
+	ok(w, map[string]any{"Items": items, "TotalRecordCount": len(items), "StartIndex": 0})
+}
+
+// playlistArtists is a playlist's songs' artists, in the order first met.
+func playlistArtists(pl *Playlist) []*Artist {
+	var out []*Artist
+	seen := map[*Artist]bool{}
+	for _, t := range pl.Tracks {
+		if a := t.Album.Artist; !seen[a] {
+			seen[a] = true
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 func (s *Server) jfPlaylists(w http.ResponseWriter, r *http.Request, p []string) {
+	if len(p) >= 2 && p[1] == "InstantMix" {
+		pl, _ := s.cat.Get(s.cat.IDForJF(p[0])).(*Playlist)
+		if pl == nil {
+			notFound(w)
+			return
+		}
+		s.jfInstantMix(w, r, playlistArtists(pl))
+		return
+	}
 	if len(p) >= 2 && p[1] == "Items" {
 		pl, _ := s.cat.Get(s.cat.IDForJF(p[0])).(*Playlist)
 		if pl == nil {
