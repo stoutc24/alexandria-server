@@ -922,7 +922,14 @@ func (s *Server) plexPlaylists(w http.ResponseWriter, r *http.Request, p []strin
 func (s *Server) plexHubs(w http.ResponseWriter, r *http.Request, p []string) {
 	if len(p) >= 1 && p[0] == "search" {
 		q := strings.ToLower(qStr(r, "query"))
-		var movies, shows, albums, artists, tracks []map[string]any
+		var movies, shows, albums, artists, tracks, playlists []map[string]any
+		// Playlists, as a real server lists them in a "playlist" hub (the
+		// stations in search, 2026-11-08).
+		for _, pl := range s.cat.Playlists {
+			if strings.Contains(strings.ToLower(pl.Title), q) {
+				playlists = append(playlists, s.plexPlaylist(pl))
+			}
+		}
 		for _, m := range s.cat.Movies {
 			if strings.Contains(strings.ToLower(m.Title), q) {
 				movies = append(movies, s.plexMovie(m, false))
@@ -960,7 +967,7 @@ func (s *Server) plexHubs(w http.ResponseWriter, r *http.Request, p []string) {
 			}
 			return map[string]any{"title": title, "type": t, "hubIdentifier": id, "size": len(items), "more": false, "Metadata": items}
 		}
-		ok(w, mc(map[string]any{"Hub": []map[string]any{hub("movie", "movie", "Movies", movies), hub("show", "show", "Shows", shows), hub("album", "album", "Albums", albums), hub("artist", "artist", "Artists", artists), hub("track", "track", "Tracks", tracks)}}))
+		ok(w, mc(map[string]any{"Hub": []map[string]any{hub("movie", "movie", "Movies", movies), hub("show", "show", "Shows", shows), hub("album", "album", "Albums", albums), hub("artist", "artist", "Artists", artists), hub("track", "track", "Tracks", tracks), hub("playlist", "playlist", "Playlists", playlists)}}))
 		return
 	}
 	// /hubs, /hubs/home/*, /hubs/sections/* — the TV never calls these; be kind anyway.
