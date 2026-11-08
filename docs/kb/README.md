@@ -34,12 +34,19 @@ installing and running the Alexandria companion server itself, see the
 | [How screens load, and data on cellular](loading-and-data-use.md) | Screens open from a saved copy; shelves that stay put; what downloads on cellular, Data Saver and Low Data Mode; Discover; signing out |
 | [Recently Played and Top Artists in Plex Music](recently-played.md) | Plays from every device on your account; when a song shows up; whose plays; data |
 | [Watching videos on the phone, tablet and computer](videos.md) | The seek bar and its preview pictures (and where they come from), Picture in Picture on iPhone, iPad and Android |
+| [Browsing films and shows](browsing-movies-and-shows.md) | Plex's own shelves on Plex Video Home; a library's Recommended, Library and Collections tabs; filters (genre, decade, rating, quality, watched) and sorts; the Apple TV's library pages |
 
 Contact for questions or problems: stoutservers@gmail.com
 
 ## Check on a real device before publishing
 
 These were proven in tests and simulators, not yet on hardware:
+
+- [ ] Browsing films and shows (phone 1255, Apple TV 199): the Apple TV
+      pages and filters were proven in the simulator against a real Plex
+      server (Genre › Adventure gave the same 779 films Plex counts); the
+      phone pages against a test server only. Check the phone's shelves,
+      tabs and filters on a real Plex library.
 
 - [ ] Party volume and announcements (both pages): written from the agreed
       design and the server alone, ahead of the app builds. Check every
