@@ -101,6 +101,12 @@ trailer is open, whether it is playing, paused or loading. Opening one puts a
 screensaver that is up away at once. It starts only while music or an
 audiobook is really playing. (Apple TV build 194 and later.)
 
+The Apple TV doesn't go to sleep while the music player is open, playing or
+paused. That includes after you start new music over what was playing:
+until build 202, the old player closing could let the Apple TV fall asleep
+in the middle of a song. If it does sleep mid-song, check whether the
+music itself stopped (for example, your server restarted).
+
 ### When Plex can't fetch the lyrics
 
 Plex gets most lyrics from LyricFind each time you open them, and

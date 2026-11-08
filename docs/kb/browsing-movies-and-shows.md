@@ -47,6 +47,10 @@ On the Apple TV the page is laid out like Home:
 - From the sidebar, **Right** goes into a library just as Select does, even
   where nothing on the page sits level with the library's name (a music
   library's banner, for example). (Apple TV build 200 and later.)
+- With several Movies or TV Shows libraries, choose another from the row
+  at the top, and its banner takes focus (Play or Resume). Up goes back to
+  the row. Until build 202 focus could jump back to the sidebar instead.
+  Music, audiobook and Live TV libraries keep focus on the one you chose.
 
 Until your server's shelves arrive, or if it has none, Recommended shows
 the library's Recently Added and its collections.
