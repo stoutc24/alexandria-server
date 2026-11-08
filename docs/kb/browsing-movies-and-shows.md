@@ -40,6 +40,13 @@ On the Apple TV the page is laid out like Home:
 - The banner at the top shows what you are partway through, then what is
   new, with **Resume** (or **Play**) and **More Info** under it.
 - The shelves under it use Home's posters.
+- The banner shrinks to a title strip while you are in the shelves, and
+  stays that size as you move from shelf to shelf. It grows back when you
+  go Up onto it. (Apple TV build 200 and later; in build 199 it grew and
+  shrank again on every move.)
+- From the sidebar, **Right** goes into a library just as Select does, even
+  where nothing on the page sits level with the library's name (a music
+  library's banner, for example). (Apple TV build 200 and later.)
 
 Until your server's shelves arrive, or if it has none, Recommended shows
 the library's Recently Added and its collections.

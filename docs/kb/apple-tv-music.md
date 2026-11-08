@@ -10,7 +10,11 @@ opens as a row along the bottom of the screen:
 - **Left and Right** move through the row. **Select** plays that song now.
 - **Shuffle**, **Repeat** and **Autoplay** sit above the row. Autoplay is the
   same switch as Settings › Keep the music going. Stations always keep going,
-  so they don't show it.
+  so they don't show it. To reach them, go to **Stop** and press Down.
+- **Up** from a song goes back to the player's controls: from a song on the
+  left or in the middle it lands on **Hide Queue** (press Up again for
+  Play/Pause); from a song in the right third of the screen it lands
+  straight on **Play/Pause**. (Apple TV build 200 and later.)
 - **Hold Select** on a song for more:
   - **Play Now**
   - **Play Next**
