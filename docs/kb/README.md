@@ -16,8 +16,8 @@ installing and running the Alexandria companion server itself, see the
 | [The Mac and Windows apps and wide windows](mac-app.md) | Scrolling with a mouse or trackpad, closing the window, menu bar Now Playing, media keys on Windows, the docked player, how pages fit a wide window |
 | [Alexandria in the car](car.md) | CarPlay and Android Auto: the tabs, radio stations, artists, going deeper |
 | [Describe a playlist](playlist-builder.md) | "AJR radio", moods, lengths; when the AI picks the albums; what it costs |
-| [Finding songs, artists and albums](search.md) | Plex music search, searching every library, what a song tap plays |
-| [Radio stations](radio-stations.md) | What artist, genre, decade and AI stations play; Start Station on an artist page; intros and skits skipped |
+| [Finding songs, artists, albums and playlists](search.md) | The Stations row in search, Plex music search, searching every library, what a song tap plays |
+| [Radio stations](radio-stations.md) | What artist, playlist, genre, decade and AI stations play; starting one from search or an artist page; Jellyfin and Navidrome mixes on the TV apps; intros and skits skipped |
 | [Up Next on Now Playing](now-playing-up-next.md) | Where the playing song sits in the queue; tap, swipe and drag; the Artist tab; a party on a big screen |
 | [Adding and removing songs at a party](party-queue.md) | Play Next, Add to Party Queue and ✕ from party devices and the Remote; Plex songs; messages |
 | [Choosing who leads a party](party-leader.md) | Make leader from the leading device or any follower; taking the lead; the old leader's message |
@@ -41,6 +41,16 @@ Contact for questions or problems: stoutservers@gmail.com
 ## Check on a real device before publishing
 
 These were proven in tests and simulators, not yet on hardware:
+
+- [ ] Stations in search (phone 1256, Apple TV 201, Samsung and Fire TV):
+      proven against a test server, where a playlist station played four
+      artists on Plex and three on Jellyfin. Still to check:
+      - an artist station from search on a real library with similar
+        artists (the test server's artists share nothing, so it said "Not
+        enough similar music");
+      - a Navidrome station (no test server; only canned replies), and
+        whether it needs the server's Last.fm connection;
+      - a Jellyfin Instant Mix on a real Jellyfin, on the TV apps.
 
 - [ ] Browsing films and shows (phone 1255, Apple TV 199): the Apple TV
       pages and filters were proven in the simulator against a real Plex

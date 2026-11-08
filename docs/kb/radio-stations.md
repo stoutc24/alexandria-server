@@ -40,6 +40,51 @@ The button isn't shown for an author in an audiobooks library: stations
 play music only. If that artist's station would be nothing but their own
 records, you see "Not enough similar music for …" and nothing changes.
 
+## Start a station from search
+
+Type an artist's or a playlist's name in **Search**. The **Stations** row
+at the top has "<Name> Radio" for each match; select one to start it. See
+[Finding songs, artists, albums and playlists](search.md#stations-at-the-top-of-search).
+
+## Playlist stations
+
+"Road Trip Radio" is built from a playlist (phone, tablet and computer
+build 1256 and later; Apple TV build 201; Samsung TV and Fire TV):
+
+- the playlist's artists, up to twenty, those with the most songs on it
+  first;
+- the artists similar to its five most frequent artists, when you have
+  their music;
+- records from your library by any of them, not only the playlist's own
+  songs.
+
+A record never joins only because it shares a genre. A "Various Artists"
+record is left out. Intros and skits are skipped, and a soundtrack keeps
+only its own artist's songs, as on every station. No artist plays twice in
+a row while others are left.
+
+If the station would hold only one artist, you see "Not enough similar
+music for … Radio." and nothing changes.
+
+## Jellyfin and Navidrome stations on the TV apps
+
+On the phone, tablet and computer apps, a Jellyfin or Navidrome station is
+built the same way as a Plex one, from your library and Last.fm's similar
+artists.
+
+The Apple TV, Samsung TV and Fire TV apps ask the server for its own mix
+instead:
+
+- **Jellyfin:** its Instant Mix of the artist or playlist.
+- **Navidrome:** its similar songs for the artist, or for the playlist's
+  five most frequent artists. Navidrome finds similar artists through its
+  Last.fm connection. If that is turned off on your server, the mix can
+  come back empty, and you see "Not enough similar music".
+
+Either way the app skips songs it has already played in this run, skips
+intros, never plays one artist twice in a row while others are left, and
+asks the server for more before the queue runs out.
+
 ## Genre, decade and AI stations
 
 - **Genre** ("Rap Radio"): every artist with that genre.
