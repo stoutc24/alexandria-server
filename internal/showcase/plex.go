@@ -318,7 +318,7 @@ func (s *Server) plexTrack(t *Track) map[string]any {
 		"ratingKey": k, "key": "/library/metadata/" + k, "parentRatingKey": s.cat.PlexKey(t.Album.ID), "grandparentRatingKey": s.cat.PlexKey(t.Album.Artist.ID),
 		"guid": "plex://track/" + s.cat.JFID(t.ID), "type": "track", "title": t.Title, "titleSort": t.Title, "grandparentKey": "/library/metadata/" + s.cat.PlexKey(t.Album.Artist.ID),
 		"parentKey": "/library/metadata/" + s.cat.PlexKey(t.Album.ID), "grandparentTitle": t.Album.Artist.Name, "parentTitle": t.Album.Title, "originalTitle": t.Album.Artist.Name,
-		"summary": "", "index": t.Index, "parentIndex": 1, "parentYear": t.Album.Year, "thumb": albumThumb, "parentThumb": albumThumb, "grandparentThumb": artistThumb,
+		"summary": "", "index": s.discTrack(t), "parentIndex": s.disc(t), "parentYear": t.Album.Year, "thumb": albumThumb, "parentThumb": albumThumb, "grandparentThumb": artistThumb,
 		"duration": durMs, "addedAt": t.Album.AddedAt.Unix(), "updatedAt": t.Album.AddedAt.Unix(), "ratingCount": 100 + int(t.Seed%900),
 		"librarySectionID": 3, "librarySectionTitle": "Music", "librarySectionKey": "/library/sections/3",
 		"Media": []map[string]any{{

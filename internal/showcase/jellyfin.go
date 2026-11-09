@@ -249,7 +249,7 @@ func (s *Server) jfTrack(t *Track, withSources bool) map[string]any {
 	artistID := s.cat.JFID(t.Album.Artist.ID)
 	item := map[string]any{
 		"Name": t.Title, "ServerId": jfServerID, "Id": id, "Etag": id, "DateCreated": jfDate(t.Album.AddedAt), "CanDelete": false,
-		"SortName": strings.ToLower(t.Title), "ProductionYear": t.Album.Year, "IndexNumber": t.Index, "ParentIndexNumber": 1,
+		"SortName": strings.ToLower(t.Title), "ProductionYear": t.Album.Year, "IndexNumber": s.discTrack(t), "ParentIndexNumber": s.disc(t),
 		"Genres": []string{t.Album.Genre}, "RunTimeTicks": ticks(t.Duration), "IsFolder": false, "Type": "Audio", "MediaType": "Audio",
 		"ParentId": albumID, "AlbumId": albumID, "Album": t.Album.Title, "AlbumPrimaryImageTag": "tag" + albumID[:8],
 		"AlbumArtist": t.Album.Artist.Name, "AlbumArtists": []map[string]any{{"Name": t.Album.Artist.Name, "Id": artistID}},

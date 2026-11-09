@@ -100,6 +100,10 @@ type Server struct {
 	// for the probe of the player's stuck tab row (owner, 2026-11-09).
 	// Zero unless SHOWCASE_PLEX_THUMB_DELAY_MS is set.
 	ThumbDelay time.Duration
+	// TwoDiscs puts every album's tracks 5 and up on disc 2, numbered from
+	// 1 again, for the apps' "Disc N" headers (owner, 2026-11-09). Off
+	// unless SHOWCASE_TWO_DISCS=1 is set.
+	TwoDiscs bool
 	// Every Plex or Jellyfin song-file request this Server answered, newest
 	// last, for a probe to check whether the app asked for a download (which
 	// a real Plex lists as a "Media download" and a real Jellyfin logs as "is
@@ -222,7 +226,8 @@ func New(cat *Catalog, clipsDir string) *Server {
 		RefuseJellyfinDownload: os.Getenv("SHOWCASE_JELLYFIN_REFUSE_DOWNLOAD") == "1",
 		ClipLengthVideo:        os.Getenv("SHOWCASE_CLIP_LENGTH_VIDEO") == "1",
 		AllLeavesDelay:         envMillis("SHOWCASE_PLEX_ALLLEAVES_DELAY_MS"),
-		ThumbDelay:             envMillis("SHOWCASE_PLEX_THUMB_DELAY_MS")}
+		ThumbDelay:             envMillis("SHOWCASE_PLEX_THUMB_DELAY_MS"),
+		TwoDiscs:               os.Getenv("SHOWCASE_TWO_DISCS") == "1"}
 }
 
 // envMillis reads a whole number of milliseconds from the environment; zero
@@ -656,3 +661,19 @@ func readBody(r *http.Request) map[string]any {
 }
 
 func ms(t time.Time) int64 { return t.UnixMilli() }
+
+// disc is a track's disc: 1, or 2 for tracks 5 and up under TwoDiscs.
+func (s *Server) disc(t *Track) int {
+	if s.TwoDiscs && t.Index > 4 {
+		return 2
+	}
+	return 1
+}
+
+// discTrack is a track's number on its disc.
+func (s *Server) discTrack(t *Track) int {
+	if s.disc(t) == 2 {
+		return t.Index - 4
+	}
+	return t.Index
+}
