@@ -48,6 +48,11 @@ music too.
 Shuffle and Repeat belong to the leader. Its choices apply to everyone in the
 party.
 
+MP3 and AAC (.m4a) songs line up between phones, computers and Apple TVs the
+same way FLAC songs do. Phones and computers allow for how each kind of file
+starts (phone app build 1259 and later). Before that, these songs could sound
+a few hundredths of a second apart, like a slight echo between rooms.
+
 If **Share what's playing** is off on your Apple TV (**Settings › Companion
 Server**), it can't take a party over. When the leader leaves, your Apple TV
 leaves the party and keeps playing the music on its own. Choose **Rejoin
