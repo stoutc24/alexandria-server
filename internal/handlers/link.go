@@ -3,10 +3,12 @@ package handlers
 import (
 	"log"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stoutsolutions/alexandria-server/internal/middleware"
 	"github.com/stoutsolutions/alexandria-server/internal/repository"
+	"github.com/stoutsolutions/alexandria-server/internal/vault"
 )
 
 // LinkHandler implements device linking in the Plex style.
@@ -20,23 +22,39 @@ import (
 type LinkHandler struct {
 	links    *repository.LinkRepository
 	profiles *repository.ProfileRepository
+	// keys stores the key a request was made with on the device its claim
+	// mints (Alexandria Link).
+	keys DeviceKeys
 	// stepUp checks the fresh code a phone's admin sign-in must add to
 	// every approval (see ApproveLink).
 	stepUp StepUp
 }
 
-// NewLinkHandler takes the admin login's fresh-code check
-// (AdminAuthHandler.FreshCode) for approvals from a phone.
+// DeviceKeys records a device's public key, once
+// (repository.AccountRepository).
+type DeviceKeys interface {
+	SetDeviceKey(tokenID, publicKey string, now time.Time) error
+}
+
+// NewLinkHandler takes where device keys are kept and the admin login's
+// fresh-code check (AdminAuthHandler.FreshCode) for approvals from a phone.
 func NewLinkHandler(
 	links *repository.LinkRepository,
 	profiles *repository.ProfileRepository,
+	keys DeviceKeys,
 	stepUp StepUp,
 ) *LinkHandler {
-	return &LinkHandler{links: links, profiles: profiles, stepUp: stepUp}
+	return &LinkHandler{links: links, profiles: profiles, keys: keys, stepUp: stepUp}
 }
 
 type LinkRequestBody struct {
 	DeviceLabel string `json:"deviceLabel"`
+	// PublicKey is the device's X25519 key (Alexandria Link, owner
+	// 2026-11-08): the profile's services are sealed to it once the code
+	// is approved. It travels with the request because nothing else is
+	// tied to this device yet — a key set later, by token alone, could be
+	// set first by whoever copied the token off a plain-http network.
+	PublicKey string `json:"publicKey"`
 }
 
 type LinkRequestResponse struct {
@@ -62,7 +80,19 @@ func (h *LinkHandler) RequestLink(c *fiber.Ctx) error {
 		req.DeviceLabel = req.DeviceLabel[:80]
 	}
 
-	code, claimSecret, expiresAt, err := h.links.CreateRequest(req.DeviceLabel)
+	key := ""
+	if strings.TrimSpace(req.PublicKey) != "" {
+		pub, err := vault.ParseDeviceKey(req.PublicKey)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error":  err.Error(),
+				"reason": "bad-device-key",
+			})
+		}
+		key = vault.EncodeDeviceKey(pub)
+	}
+
+	code, claimSecret, expiresAt, err := h.links.CreateRequest(req.DeviceLabel, key)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "failed to create link request",
@@ -96,7 +126,7 @@ func (h *LinkHandler) Claim(c *fiber.Ctx) error {
 		})
 	}
 
-	profileID, label, err := h.links.Claim(body.ClaimSecret)
+	profileID, label, publicKey, err := h.links.Claim(body.ClaimSecret)
 	switch err {
 	case nil:
 	case repository.ErrLinkNotFound:
@@ -149,11 +179,34 @@ func (h *LinkHandler) Claim(c *fiber.Ctx) error {
 		})
 	}
 
+	// The key the request was made with becomes this device's, in the same
+	// step that mints it: there is no moment a token exists without it. A
+	// device that cannot get its key never gets a token either — it would
+	// be a link whose services can never open.
+	hasKey := false
+	if publicKey != "" {
+		caller, err := h.profiles.FindByToken(token)
+		if err == nil {
+			err = h.keys.SetDeviceKey(caller.TokenID, publicKey, time.Now().UTC())
+		}
+		if err != nil {
+			if caller != nil {
+				_ = h.profiles.RevokeToken(caller.TokenID)
+			}
+			log.Printf("link: could not keep the device key: %v", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "failed to issue token",
+			})
+		}
+		hasKey = true
+	}
+
 	return c.JSON(fiber.Map{
 		"status":      "linked",
 		"token":       token,
 		"profileId":   profile.ID,
 		"profileName": profile.Name,
+		"deviceKey":   hasKey,
 	})
 }
 

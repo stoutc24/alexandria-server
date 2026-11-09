@@ -387,6 +387,12 @@ func RunMigrations() error {
 		// admin login's own sign-ins, which keep reaching everything.
 		`ALTER TABLE admin_device_tokens ADD COLUMN profile_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE admin_device_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT ''`,
+		// Alexandria Link (owner, 2026-11-08): the device's public key,
+		// sent WITH its code request, so the key its services are sealed
+		// to is fixed before the admin approves — never by a later call a
+		// copied device token could make first. NULL for a request
+		// without one (an app from before Link).
+		`ALTER TABLE link_requests ADD COLUMN public_key TEXT`,
 	} {
 		if _, err := DB.Exec(alter); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {

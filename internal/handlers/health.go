@@ -132,11 +132,16 @@ var capabilities = []string{
 	"devices.sign-out",
 	// Alexandria Accounts (2026-10-12): POST /accounts/login and
 	// /accounts/invite/{check,accept}, GET /accounts/me and
-	// /accounts/services (sealed to the device), PUT /accounts/device-key,
-	// POST /accounts/password and /accounts/totp/{setup,enable,disable};
-	// for the admin, /admin/profiles/:id/{account,invite,services}.
-	// "accounts.services" is added at run time when a secrets key is set.
+	// /accounts/services (sealed to the device), POST /accounts/password
+	// and /accounts/totp/{setup,enable,disable}; for the admin,
+	// /admin/profiles/:id/{account,invite,services}. "accounts.services"
+	// is added at run time when a secrets key is set.
 	"accounts",
+	// Alexandria Link (2026-11-08): POST /link/request takes the device's
+	// publicKey, and the claim answers deviceKey: true once that key is
+	// the minted device's — a code link gets its profile's services. No
+	// route sets a key by token alone any more.
+	"link.device-key",
 }
 
 // accountsServicesOn is whether Alexandria Accounts can keep service

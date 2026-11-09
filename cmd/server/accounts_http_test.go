@@ -18,7 +18,6 @@ import (
 	"github.com/stoutsolutions/alexandria-server/internal/adminauth"
 	"github.com/stoutsolutions/alexandria-server/internal/config"
 	"github.com/stoutsolutions/alexandria-server/internal/database"
-	"github.com/stoutsolutions/alexandria-server/internal/repository"
 	"github.com/stoutsolutions/alexandria-server/internal/vault"
 )
 
@@ -364,31 +363,102 @@ func TestAccountsHealthAdvertisesServicesWithAKey(t *testing.T) {
 	}
 }
 
-func TestAccountsALinkedDeviceGetsOneKey(t *testing.T) {
+// linkByCode runs a link the way the app does: a request (with the
+// device's key when d is non-nil), the admin's approval into profileID,
+// and the claim. Returns the claim's answer.
+func linkByCode(t *testing.T, s *testServer, profileID string, d *testDevice) response {
+	t.Helper()
+	body := map[string]any{"deviceLabel": "Kate's TV"}
+	if d != nil {
+		body["publicKey"] = d.body("")["publicKey"]
+	}
+	req := s.do("POST", "/api/v1/link/request", body, nil)
+	if req.status != 200 {
+		t.Fatalf("request: %d %s", req.status, req)
+	}
+	r := s.do("POST", "/api/v1/admin/links/approve",
+		map[string]any{"code": req.str("code"), "profileId": profileID}, bearer(testAPIToken))
+	if r.status != 200 {
+		t.Fatalf("approve: %d %s", r.status, r)
+	}
+	r = s.do("POST", "/api/v1/link/claim", map[string]any{"claimSecret": req.str("claimSecret")}, nil)
+	if r.status != 200 || r.str("status") != "linked" {
+		t.Fatalf("claim: %d %s", r.status, r)
+	}
+	return r
+}
+
+// Alexandria Link (owner, 2026-11-08): the key travels with the code
+// request and is the minted device's at the claim, so a code link opens
+// its profile's services with no step a copied token could take first.
+func TestLinkByCodeCarriesItsKey(t *testing.T) {
 	s := newTestServer(t, withSecretsKey)
 	profileID, _ := setUpSam(t, s)
-	// A device linked the old way, by code.
-	token, err := repository.NewProfileRepository().MintToken(profileID, "old phone")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := s.do("GET", "/api/v1/accounts/services", nil, bearer(token))
-	if r.status != 409 || r.str("reason") != "device-key-required" {
-		t.Fatalf("no key yet: %d %s", r.status, r)
-	}
+
 	d := newTestDevice(t)
-	r = s.do("PUT", "/api/v1/accounts/device-key", map[string]any{"publicKey": d.body("")["publicKey"]}, bearer(token))
-	if r.status != 200 {
-		t.Fatalf("set key: %d %s", r.status, r)
+	claim := linkByCode(t, s, profileID, &d)
+	if claim.body["deviceKey"] != true {
+		t.Fatalf("claim without its key: %s", claim)
 	}
+	token := claim.str("token")
+	r := s.do("GET", "/api/v1/accounts/services", nil, bearer(token))
+	if got := openServices(t, d, r); len(got.Services) != 2 {
+		t.Fatalf("services %+v", got)
+	}
+	r = s.do("GET", "/api/v1/accounts/me", nil, bearer(token))
+	if r.body["deviceKey"] != true {
+		t.Fatalf("me: %s", r)
+	}
+
+	// No route lets the token swap in a key of its own afterwards.
 	other := newTestDevice(t)
-	r = s.do("PUT", "/api/v1/accounts/device-key", map[string]any{"publicKey": other.body("")["publicKey"]}, bearer(token))
-	if r.status != 409 || r.str("reason") != "device-key-exists" {
-		t.Fatalf("swapped key: %d %s", r.status, r)
+	r = s.do("PUT", "/api/v1/accounts/device-key",
+		map[string]any{"publicKey": other.body("")["publicKey"]}, bearer(token))
+	if r.status == 200 {
+		t.Fatalf("a key set by token alone: %d %s", r.status, r)
 	}
 	r = s.do("GET", "/api/v1/accounts/services", nil, bearer(token))
 	if got := openServices(t, d, r); len(got.Services) != 2 {
-		t.Fatalf("services %+v", got)
+		t.Fatalf("services after the attempt %+v", got)
+	}
+}
+
+// A request from an app before Link carries no key: the device links as
+// it always did (stats, Party Play) and its token can never be given one.
+func TestLinkByCodeWithoutAKeyGetsNoServices(t *testing.T) {
+	s := newTestServer(t, withSecretsKey)
+	profileID, _ := setUpSam(t, s)
+
+	claim := linkByCode(t, s, profileID, nil)
+	if claim.body["deviceKey"] != false {
+		t.Fatalf("claim: %s", claim)
+	}
+	token := claim.str("token")
+	r := s.do("GET", "/api/v1/accounts/services", nil, bearer(token))
+	if r.status != 409 || r.str("reason") != "device-key-required" {
+		t.Fatalf("no key: %d %s", r.status, r)
+	}
+	d := newTestDevice(t)
+	r = s.do("PUT", "/api/v1/accounts/device-key",
+		map[string]any{"publicKey": d.body("")["publicKey"]}, bearer(token))
+	if r.status == 200 {
+		t.Fatalf("a key set by token alone: %d %s", r.status, r)
+	}
+	r = s.do("GET", "/api/v1/accounts/services", nil, bearer(token))
+	if r.status != 409 {
+		t.Fatalf("still no key: %d %s", r.status, r)
+	}
+}
+
+// A key that is not a 32-byte X25519 key is refused at the request, before
+// a code exists to read out.
+func TestLinkRequestRefusesABadKey(t *testing.T) {
+	s := newTestServer(t, withSecretsKey)
+	for _, bad := range []string{"not base64!", "AAAA", base64.StdEncoding.EncodeToString(make([]byte, 31))} {
+		r := s.do("POST", "/api/v1/link/request", map[string]any{"publicKey": bad}, nil)
+		if r.status != 400 || r.str("reason") != "bad-device-key" || r.str("code") != "" {
+			t.Fatalf("%q: %d %s", bad, r.status, r)
+		}
 	}
 }
 

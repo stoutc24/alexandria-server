@@ -19,7 +19,7 @@ func TestCodesAreReadableAloud(t *testing.T) {
 
 	seen := map[string]bool{}
 	for i := 0; i < 200; i++ {
-		code, _, _, err := links.CreateRequest("phone")
+		code, _, _, err := links.CreateRequest("phone", "")
 		if err != nil {
 			t.Fatalf("create: %v", err)
 		}
@@ -42,18 +42,18 @@ func TestTheCodeAloneGrantsNothing(t *testing.T) {
 	links, profiles := newLinkDB(t)
 	sarah, _ := mkProfile(t, profiles, "Sarah")
 
-	code, claim, _, err := links.CreateRequest("Sarah's phone")
+	code, claim, _, err := links.CreateRequest("Sarah's phone", "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
 	// Someone who overhears the code cannot claim with it.
-	if _, _, err := links.Claim(code); err != ErrLinkNotFound {
+	if _, _, _, err := links.Claim(code); err != ErrLinkNotFound {
 		t.Fatal("the spoken code worked as a claim secret")
 	}
 
 	// And before approval, even the real claim secret yields nothing.
-	profileID, _, err := links.Claim(claim)
+	profileID, _, _, err := links.Claim(claim)
 	if err != nil {
 		t.Fatalf("claim while pending: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestTheCodeAloneGrantsNothing(t *testing.T) {
 	if err := links.Approve(code, sarah.ID); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	profileID, _, err = links.Claim(claim)
+	profileID, _, _, err = links.Claim(claim)
 	if err != nil {
 		t.Fatalf("claim after approve: %v", err)
 	}
@@ -74,18 +74,45 @@ func TestTheCodeAloneGrantsNothing(t *testing.T) {
 	}
 }
 
+// Alexandria Link: the key a request was made with comes back at its
+// claim, and only there; a request without one gives back "".
+func TestTheRequestsKeyComesBackAtTheClaim(t *testing.T) {
+	links, profiles := newLinkDB(t)
+	sarah, _ := mkProfile(t, profiles, "Sarah")
+
+	code, claim, _, err := links.CreateRequest("Sarah's TV", "a2V5LWJ5dGVz")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, _, key, _ := links.Claim(claim); key != "" {
+		t.Fatalf("a pending claim handed out the key %q", key)
+	}
+	if err := links.Approve(code, sarah.ID); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if _, _, key, err := links.Claim(claim); err != nil || key != "a2V5LWJ5dGVz" {
+		t.Fatalf("claim: key %q, err %v", key, err)
+	}
+
+	code, claim, _, _ = links.CreateRequest("old app", "")
+	_ = links.Approve(code, sarah.ID)
+	if _, _, key, err := links.Claim(claim); err != nil || key != "" {
+		t.Fatalf("keyless claim: key %q, err %v", key, err)
+	}
+}
+
 func TestClaimIsSingleUse(t *testing.T) {
 	links, profiles := newLinkDB(t)
 	sarah, _ := mkProfile(t, profiles, "Sarah")
 
-	code, claim, _, _ := links.CreateRequest("phone")
+	code, claim, _, _ := links.CreateRequest("phone", "")
 	if err := links.Approve(code, sarah.ID); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if _, _, err := links.Claim(claim); err != nil {
+	if _, _, _, err := links.Claim(claim); err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
-	if _, _, err := links.Claim(claim); err != ErrLinkUsed {
+	if _, _, _, err := links.Claim(claim); err != ErrLinkUsed {
 		t.Fatalf("a replayed claim secret was accepted: %v", err)
 	}
 }
@@ -95,7 +122,7 @@ func TestApprovingTwiceIsRejected(t *testing.T) {
 	sarah, _ := mkProfile(t, profiles, "Sarah")
 	chris, _ := mkProfile(t, profiles, "Chris")
 
-	code, _, _, _ := links.CreateRequest("phone")
+	code, _, _, _ := links.CreateRequest("phone", "")
 	if err := links.Approve(code, sarah.ID); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
@@ -109,7 +136,7 @@ func TestExpiredCodesAreRefused(t *testing.T) {
 	links, profiles := newLinkDB(t)
 	sarah, _ := mkProfile(t, profiles, "Sarah")
 
-	code, claim, _, _ := links.CreateRequest("phone")
+	code, claim, _, _ := links.CreateRequest("phone", "")
 
 	// Age the request past its TTL.
 	if _, err := database.DB.Exec(
@@ -122,7 +149,7 @@ func TestExpiredCodesAreRefused(t *testing.T) {
 	if err := links.Approve(code, sarah.ID); err != ErrLinkExpired {
 		t.Errorf("expired approve: got %v", err)
 	}
-	if _, _, err := links.Claim(claim); err != ErrLinkExpired {
+	if _, _, _, err := links.Claim(claim); err != ErrLinkExpired {
 		t.Errorf("expired claim: got %v", err)
 	}
 }
@@ -131,9 +158,9 @@ func TestPendingListShowsOnlyLiveRequests(t *testing.T) {
 	links, profiles := newLinkDB(t)
 	sarah, _ := mkProfile(t, profiles, "Sarah")
 
-	liveCode, _, _, _ := links.CreateRequest("living room TV")
-	approvedCode, _, _, _ := links.CreateRequest("already done")
-	expiredCode, _, _, _ := links.CreateRequest("too slow")
+	liveCode, _, _, _ := links.CreateRequest("living room TV", "")
+	approvedCode, _, _, _ := links.CreateRequest("already done", "")
+	expiredCode, _, _, _ := links.CreateRequest("too slow", "")
 
 	if err := links.Approve(approvedCode, sarah.ID); err != nil {
 		t.Fatalf("approve: %v", err)
@@ -176,7 +203,7 @@ func TestCheckPendingRefusesWhatApproveWouldRefuse(t *testing.T) {
 		t.Errorf("unknown code: got %v", err)
 	}
 
-	code, _, _, _ := links.CreateRequest("phone")
+	code, _, _, _ := links.CreateRequest("phone", "")
 	if err := links.CheckPending(code); err != nil {
 		t.Errorf("a live code should pass: %v", err)
 	}
@@ -188,7 +215,7 @@ func TestCheckPendingRefusesWhatApproveWouldRefuse(t *testing.T) {
 		t.Errorf("used code: got %v", err)
 	}
 
-	expired, _, _, _ := links.CreateRequest("slow device")
+	expired, _, _, _ := links.CreateRequest("slow device", "")
 	if _, err := database.DB.Exec(
 		`UPDATE link_requests SET expires_at = ? WHERE code = ?`,
 		time.Now().UTC().Add(-time.Minute), expired,

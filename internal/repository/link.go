@@ -76,8 +76,10 @@ func randomClaimSecret() (string, error) {
 
 // CreateRequest starts a link. It returns the human-readable code and
 // the claim secret, which the app keeps private and uses to poll.
+// publicKey is the device's key (stored form), or "" for none: the claim
+// gives it to the device it mints.
 func (r *LinkRepository) CreateRequest(
-	deviceLabel string,
+	deviceLabel, publicKey string,
 ) (code, claimSecret string, expiresAt time.Time, err error) {
 	claimSecret, err = randomClaimSecret()
 	if err != nil {
@@ -95,12 +97,16 @@ func (r *LinkRepository) CreateRequest(
 			return "", "", time.Time{}, err
 		}
 
+		var key any
+		if publicKey != "" {
+			key = publicKey
+		}
 		_, err = database.DB.Exec(`
 			INSERT INTO link_requests
-				(id, code, claim_hash, device_label, created_at, expires_at)
-			VALUES (?, ?, ?, ?, ?, ?)
+				(id, code, claim_hash, device_label, created_at, expires_at, public_key)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
 		`, uuid.New().String(), code, HashToken(claimSecret),
-			strings.TrimSpace(deviceLabel), now, expiresAt)
+			strings.TrimSpace(deviceLabel), now, expiresAt, key)
 
 		if err == nil {
 			return code, claimSecret, expiresAt, nil
@@ -211,35 +217,37 @@ func (r *LinkRepository) Approve(code, profileID string) error {
 
 // Claim is the app collecting its token.
 //
-// Returns the bound profile once approved. Single use: a claimed request
-// is consumed, so a replayed claim secret gets nothing.
-func (r *LinkRepository) Claim(claimSecret string) (profileID, deviceLabel string, err error) {
+// Returns the bound profile once approved, and the key the request was
+// made with ("" for none). Single use: a claimed request is consumed, so
+// a replayed claim secret gets nothing.
+func (r *LinkRepository) Claim(claimSecret string) (profileID, deviceLabel, publicKey string, err error) {
 	var id string
 	var expires time.Time
 	var profile sql.NullString
 	var claimed sql.NullTime
 	var label sql.NullString
+	var key sql.NullString
 
 	err = database.DB.QueryRow(`
-		SELECT id, expires_at, profile_id, claimed_at, device_label
+		SELECT id, expires_at, profile_id, claimed_at, device_label, public_key
 		FROM link_requests WHERE claim_hash = ?
-	`, HashToken(claimSecret)).Scan(&id, &expires, &profile, &claimed, &label)
+	`, HashToken(claimSecret)).Scan(&id, &expires, &profile, &claimed, &label, &key)
 
 	if err == sql.ErrNoRows {
-		return "", "", ErrLinkNotFound
+		return "", "", "", ErrLinkNotFound
 	}
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if claimed.Valid {
-		return "", "", ErrLinkUsed
+		return "", "", "", ErrLinkUsed
 	}
 	if time.Now().UTC().After(expires) {
-		return "", "", ErrLinkExpired
+		return "", "", "", ErrLinkExpired
 	}
 	if !profile.Valid || profile.String == "" {
 		// Approved yet? Not an error — the app is still polling.
-		return "", "", nil
+		return "", "", "", nil
 	}
 
 	// Single use has to hold under CONCURRENCY, which a SELECT-then-
@@ -251,12 +259,12 @@ func (r *LinkRepository) Claim(claimSecret string) (profileID, deviceLabel strin
 		time.Now().UTC(), id,
 	)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return "", "", ErrLinkUsed
+		return "", "", "", ErrLinkUsed
 	}
-	return profile.String, label.String, nil
+	return profile.String, label.String, key.String, nil
 }
 
 // PurgeExpired clears out stale requests so the table does not grow

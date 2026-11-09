@@ -275,7 +275,6 @@ var wantRoutes = []string{
 	"POST /api/v1/nowplaying/live/:id/end",
 	"POST /api/v1/nowplaying/volume",
 	"POST /api/v1/stats/events",
-	"PUT /api/v1/accounts/device-key",
 	"PUT /api/v1/admin/profiles/:id/admin-access",
 	"PUT /api/v1/admin/profiles/:id/services/:sid/provision",
 	"PUT /api/v1/admin/profiles/:id/services/order",

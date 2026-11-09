@@ -81,7 +81,6 @@ func buildApp(cfg *config.Config) *fiber.App {
 	adminHandler := handlers.NewAdminHandler(profileRepo, cfg.DBPath)
 	statsHandler := handlers.NewStatsHandler(statsRepo)
 	adminAuthHandler := handlers.NewAdminAuthHandler(adminAuthRepo, cfg.PublicURL)
-	linkHandler := handlers.NewLinkHandler(linkRepo, profileRepo, adminAuthHandler.FreshCode)
 	adminDevicesHandler := handlers.NewAdminDevicesHandler(adminAuthRepo)
 
 	// Alexandria Accounts. The vault exists only when a secrets key is set
@@ -97,6 +96,8 @@ func buildApp(cfg *config.Config) *fiber.App {
 	}
 	accountRepo := repository.NewAccountRepository(secrets)
 	accountsHandler := handlers.NewAccountsHandler(accountRepo, profileRepo, adminAuthHandler.FreshCode)
+	// A link by code keeps the key its request carried (Alexandria Link).
+	linkHandler := handlers.NewLinkHandler(linkRepo, profileRepo, accountRepo, adminAuthHandler.FreshCode)
 	// Admin access through a person's own account: the sign-in reads their
 	// login; a change to their access reaches their phones' sign-ins.
 	adminAuthHandler.UseAccounts(accountRepo)
@@ -328,7 +329,8 @@ func buildApp(cfg *config.Config) *fiber.App {
 	accounts.Post("/invite/accept", accountLimiter, accountsHandler.AcceptInvite)
 	accounts.Get("/me", requireProfile, accountsHandler.Me)
 	accounts.Get("/services", requireProfile, accountsHandler.Services)
-	accounts.Put("/device-key", requireProfile, accountsHandler.SetDeviceKey)
+	// No route sets a device key by token alone (removed 2026-11-08): a
+	// key arrives with the sign-in or with the link request, never after.
 	accounts.Post("/password", requireProfile, accountLimiter, accountsHandler.ChangePassword)
 	accounts.Post("/totp/setup", requireProfile, accountsHandler.TOTPSetup)
 	accounts.Post("/totp/enable", requireProfile, accountLimiter, accountsHandler.TOTPEnable)

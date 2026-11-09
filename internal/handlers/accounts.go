@@ -391,7 +391,7 @@ func (h *AccountsHandler) Services(c *fiber.Ctx) error {
 	key, err := h.accounts.DeviceKey(deviceID(c))
 	if errors.Is(err, repository.ErrNoDeviceKey) {
 		return refuse(c, fiber.StatusConflict, "device-key-required",
-			"this device has no key yet; send one to PUT /api/v1/accounts/device-key")
+			"this device has no key; link it again with a new code (or sign in) to get its services")
 	}
 	if err != nil {
 		return serverError(c, "could not read the device key", err)
@@ -448,30 +448,10 @@ func (h *AccountsHandler) Services(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"revision": revision, "box": box})
 }
 
-type deviceKeyBody struct {
-	PublicKey string `json:"publicKey"`
-}
-
-// SetDeviceKey gives a device linked the old way (a link code) a key, once,
-// so its services can be sealed to it too.
-func (h *AccountsHandler) SetDeviceKey(c *fiber.Ctx) error {
-	var body deviceKeyBody
-	if err := c.BodyParser(&body); err != nil {
-		return refuse(c, fiber.StatusBadRequest, "bad-request", "invalid request body")
-	}
-	pub, err := vault.ParseDeviceKey(body.PublicKey)
-	if err != nil {
-		return refuse(c, fiber.StatusBadRequest, "bad-device-key", err.Error())
-	}
-	switch err := h.accounts.SetDeviceKey(deviceID(c), vault.EncodeDeviceKey(pub), h.now()); {
-	case errors.Is(err, repository.ErrDeviceKeyExists):
-		return refuse(c, fiber.StatusConflict, "device-key-exists",
-			"this device already has a key; sign in again to replace it")
-	case err != nil:
-		return serverError(c, "could not store the device key", err)
-	}
-	return c.JSON(fiber.Map{"deviceKey": true})
-}
+// A device's key arrives with its sign-in or with its link request, never
+// by token alone afterwards (2026-11-08): that route let whoever copied a
+// device token off a plain-http network set the first key and have the
+// person's services sealed to them.
 
 type passwordBody struct {
 	CurrentPassword string `json:"currentPassword"`

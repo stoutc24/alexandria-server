@@ -178,7 +178,6 @@ Limits: 10 a minute per client, a shared allowance across every visitor
 |---|---|
 | `GET /accounts/me` | `{profile, hasLogin, username?, totpEnabled?, adminAccess?, deviceKey?, servicesAvailable}` |
 | `GET /accounts/services?since=<revision>` | `{revision, unchanged: true}` when nothing changed. Otherwise `{revision, box}`: the list, sealed to this device (below). `503 secrets-key-missing`, `409 device-key-required` |
-| `PUT /accounts/device-key` `{publicKey}` | A device linked by **code** gets a key, once (`409 device-key-exists` after) |
 | `POST /accounts/password` `{currentPassword, newPassword}` | Other devices stay signed in |
 | `POST /accounts/totp/setup` | `{secret, uri}` for an authenticator app. It is on only after… |
 | `POST /accounts/totp/enable` `{code, password}` | …a code from it is confirmed, with the account's password (from 1.0.0: a stolen device token alone cannot switch it on). `400 password-required`, `401 bad-credentials` (counts toward the lockout), `401 bad-code`. A code is never accepted twice |
@@ -381,12 +380,42 @@ another person's service.
 
 ---
 
+## Alexandria Link (2026-11-08)
+
+Owner: "a user can send me the link code, I can auth them in and select
+their profile and they just auth from there, with that profile."
+
+A device linked by **code** gets its profile's services too, with no
+username or password:
+
+1. The app makes its X25519 key and sends the public half WITH the request:
+   `POST /link/request {deviceLabel, publicKey}` (`400 bad-device-key`).
+2. The admin approves the code with a profile, as before.
+3. `POST /link/claim` mints the device's token and, in the same step, makes
+   the request's key that device's: the answer carries `deviceKey: true`.
+   A request without a key (an app from before Link) links as it always did
+   — `deviceKey: false`, stats and Party Play only.
+4. The device reads `GET /accounts/services` like a signed-in account's.
+
+There is no route that sets a key by token alone. Until 2026-11-08
+`PUT /accounts/device-key` did, once, for any token without one; on a
+plain-http network a copied token could set its own key first and have the
+person's services sealed to it. A device linked by code before Link gets its
+services by linking again with a new code. `/health` lists
+`link.device-key` on servers that do this.
+
+Clients: phone, Mac, Windows, Apple TV, Samsung / Fire TV. On a TV the
+services go into the TV profile that showed the code.
+
+---
+
 ## Not built yet
 
 - Signing in with SSO/OIDC (Alexandria's own, or per service).
 - People adding their own services from the app. The owner said yes; it is
   not built.
-- Clients other than the phone (TV, Samsung, Fire TV).
+- TV and Samsung / Fire TV sign-in by username and password (they link by
+  code; see Alexandria Link).
 - Server Premium: an admin buying Premium for the household through a relay
   of ours, never from this server.
 - A QR code on the admin page.
