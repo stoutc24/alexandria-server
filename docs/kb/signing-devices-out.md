@@ -33,8 +33,12 @@ It keeps:
 - server logins the person added on the device themselves;
 - everything it downloaded.
 
-A device that was only linked with a code (no account) loses its link to
-your server. Its server logins and downloads stay.
+A device linked with a code through [Alexandria Link](alexandria-link.md)
+loses the same: the link, and every server login the link gave it. It keeps
+the logins the person added themselves, and its downloads.
+
+A device linked with a code before Alexandria Link (no servers came with
+it) loses its link to your server. Its server logins and downloads stay.
 
 **Sign out all devices** also signs the person out of **Manage server** on
 their phones, if you gave them admin access.

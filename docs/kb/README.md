@@ -26,6 +26,7 @@ installing and running the Alexandria companion server itself, see the
 | [Announcements at a party](party-announcements.md) | Message or Live; who hears it; the leading device's switch; stopping one; limits; your voice stays private |
 | [The party Remote](party-remote.md) | Shuffle and Repeat for the whole party; + Add songs; messages under the controls |
 | [Following a party on the Apple TV](apple-tv-party.md) | Join from Home or from the music player; joining at a song's end; when the leading Apple TV changes music, stops or goes away |
+| [Alexandria Link: set someone up with a code](alexandria-link.md) | Their device shows a code, you approve it as them, it signs in to their servers; TV profiles; devices linked before; keeping it safe |
 | [Signing a device out](signing-devices-out.md) | Sign out one device or all of a person's, on the web or in the app; what the device loses and keeps; when it notices |
 | [Alexandria on the Apple TV Home screen](apple-tv-home-screen.md) | The Top Shelf: Continue and Recently Added above the icons, and how to get it showing |
 | [Music on the Apple TV](apple-tv-music.md) | The Queue (browse, play, move, remove, Shuffle/Repeat/Autoplay; at a party); leaving the app while music plays (Control Center); lyrics, and when Plex can't fetch them; the screensaver's song lines |
@@ -41,6 +42,13 @@ Contact for questions or problems: stoutservers@gmail.com
 ## Check on a real device before publishing
 
 These were proven in tests and simulators, not yet on hardware:
+
+- [ ] Alexandria Link (phone, Apple TV, Samsung and Fire TV; server from
+      8 November 2026): proven against a test server on loopback (a code
+      approved as a person brought that person's services; a code without a
+      key brought none). Still to check on real devices: a phone and an
+      Apple TV linked to the real server, Plex as a picked person on a real
+      Plex, and a sign-out from the server removing what the link added.
 
 - [ ] Stations in search (phone 1256, Apple TV 201, Samsung and Fire TV):
       proven against a test server, where a playlist station played four
