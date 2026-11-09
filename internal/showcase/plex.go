@@ -866,6 +866,12 @@ func (s *Server) plexParts(w http.ResponseWriter, r *http.Request, p []string) {
 			return
 		}
 		s.recordPart(partRequest{Server: "plex", Part: partID, Download: download, Status: http.StatusOK})
+		if s.MusicFile != "" {
+			// Every song is this real file (ranges included): the phone's
+			// Party Play gapless check plays an iTunes AAC through libmpv.
+			http.ServeFile(w, r, s.MusicFile)
+			return
+		}
 		serveWAV(w, r, v.Seed, v.Duration)
 	case *Movie:
 		s.serveClipFile(w, r, v.Clip, "clip.mp4")

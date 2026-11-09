@@ -39,6 +39,11 @@ type Server struct {
 	// they never start there; labelled lossy they go to AVPlayer, which
 	// plays the same WAV. Off unless SHOWCASE_LOSSY_MUSIC=1 is set.
 	LossyMusic bool
+	// MusicFile, when set (SHOWCASE_MUSIC_FILE), is served for every Plex
+	// song's part instead of the synthetic WAV — a real AAC or MP3, so
+	// the phone's per-song gapless shift (mpv_gapless_shift.dart) can be
+	// checked on libmpv. The labels stay as they are.
+	MusicFile string
 	// Lyrics gives every Plex music track a timed lyric stream (streamType
 	// 4, LRC at /library/streams/:id): made-up lines, a few of them very
 	// long, every four seconds — for the lyrics panels. Off unless
@@ -203,6 +208,7 @@ func (s *Server) plexTrackCodec() string {
 func New(cat *Catalog, clipsDir string) *Server {
 	return &Server{cat: cat, clipsDir: clipsDir, Token: "showcase-token", progress: map[string]float64{},
 		log: log.New(os.Stdout, "", log.Ltime), LossyMusic: os.Getenv("SHOWCASE_LOSSY_MUSIC") == "1",
+		MusicFile:              os.Getenv("SHOWCASE_MUSIC_FILE"),
 		Lyrics:                 os.Getenv("SHOWCASE_LYRICS") == "1",
 		LyricsDown:             os.Getenv("SHOWCASE_LYRICS_DOWN") == "1",
 		LRCLib:                 os.Getenv("SHOWCASE_LRCLIB") == "1",
