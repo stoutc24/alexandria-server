@@ -95,6 +95,11 @@ type Server struct {
 	// has started — for the TV's probe of the player's tab row (owner,
 	// 2026-10-29). Zero unless SHOWCASE_PLEX_ALLLEAVES_DELAY_MS is set.
 	AllLeavesDelay time.Duration
+	// ThumbDelay holds back full-size artwork (no width), as a real Plex
+	// does, so the TV player's artwork lands after playback has started —
+	// for the probe of the player's stuck tab row (owner, 2026-11-09).
+	// Zero unless SHOWCASE_PLEX_THUMB_DELAY_MS is set.
+	ThumbDelay time.Duration
 	// Every Plex or Jellyfin song-file request this Server answered, newest
 	// last, for a probe to check whether the app asked for a download (which
 	// a real Plex lists as a "Media download" and a real Jellyfin logs as "is
@@ -216,7 +221,8 @@ func New(cat *Catalog, clipsDir string) *Server {
 		RefusePlainParts:       os.Getenv("SHOWCASE_PLEX_REFUSE_PLAIN") == "1",
 		RefuseJellyfinDownload: os.Getenv("SHOWCASE_JELLYFIN_REFUSE_DOWNLOAD") == "1",
 		ClipLengthVideo:        os.Getenv("SHOWCASE_CLIP_LENGTH_VIDEO") == "1",
-		AllLeavesDelay:         envMillis("SHOWCASE_PLEX_ALLLEAVES_DELAY_MS")}
+		AllLeavesDelay:         envMillis("SHOWCASE_PLEX_ALLLEAVES_DELAY_MS"),
+		ThumbDelay:             envMillis("SHOWCASE_PLEX_THUMB_DELAY_MS")}
 }
 
 // envMillis reads a whole number of milliseconds from the environment; zero

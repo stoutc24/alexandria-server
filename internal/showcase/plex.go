@@ -754,6 +754,9 @@ func (s *Server) plexMetadata(w http.ResponseWriter, r *http.Request, p []string
 	}
 	switch p[1] {
 	case "thumb", "art", "composite", "poster", "banner":
+		if s.ThumbDelay > 0 && r.URL.Query().Get("width") == "" {
+			time.Sleep(s.ThumbDelay)
+		}
 		kind := artPoster
 		if p[1] == "art" {
 			// Backdrops carry no type: the apps set the title over them.
