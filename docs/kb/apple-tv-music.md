@@ -1,5 +1,14 @@
 # Music on the Apple TV
 
+## Albums on more than one disc
+
+An album on two or more discs lists its songs disc by disc, with a
+**Disc 1**, **Disc 2** … heading above each disc. Play All and Shuffle use
+the same order. This works for Plex, Jellyfin and Navidrome albums, in every
+Alexandria app: iPhone, iPad, Android, Mac, Windows, Apple TV, Samsung and
+Fire TV (phone app build 1260 and Apple TV build 204 and later). Albums on
+one disc look the same as before.
+
 ## The Queue
 
 While music plays, choose **Queue** under the player's controls. The queue
