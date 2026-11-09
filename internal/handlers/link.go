@@ -192,6 +192,8 @@ func (h *LinkHandler) Claim(c *fiber.Ctx) error {
 		if err != nil {
 			if caller != nil {
 				_ = h.profiles.RevokeToken(caller.TokenID)
+			} else {
+				_ = h.profiles.RevokeMinted(token)
 			}
 			log.Printf("link: could not keep the device key: %v", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{

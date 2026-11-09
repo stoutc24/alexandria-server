@@ -235,6 +235,15 @@ func (r *ProfileRepository) ListTokens(profileID string) ([]DeviceToken, error) 
 	return out, rows.Err()
 }
 
+// RevokeMinted takes back a token minted moments ago whose row could not
+// be read back — a link claim that could not finish. It never reached
+// anyone, and no key was kept for it.
+func (r *ProfileRepository) RevokeMinted(token string) error {
+	_, err := database.DB.Exec(
+		`DELETE FROM profile_tokens WHERE token_hash = ?`, HashToken(token))
+	return err
+}
+
 // RevokeToken unlinks ONE device — a lost phone, without disturbing the
 // watch or the TV.
 func (r *ProfileRepository) RevokeToken(tokenID string) error {
