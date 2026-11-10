@@ -11,7 +11,8 @@ It is **optional**. Alexandria works fully without it.
 **Version 1.1.0** · Docker image for `linux/amd64` and `linux/arm64`
 
 New to it? Start at [Install](#install). How each feature works in the
-apps is in the [help articles](docs/kb/README.md).
+apps is in the [help articles](docs/kb/README.md); what changed in each
+version is in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
