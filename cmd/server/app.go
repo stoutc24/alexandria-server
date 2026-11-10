@@ -28,7 +28,7 @@ import (
 // migrated.
 func buildApp(cfg *config.Config) *fiber.App {
 	app := fiber.New(fiber.Config{
-		AppName:      "Alexandria Server v1.0.0",
+		AppName:      "Alexandria Server v1.1.0",
 		ErrorHandler: customErrorHandler,
 
 		// IPv4 unless ALEXANDRIA_LISTEN_ADDR names an IPv6 address.

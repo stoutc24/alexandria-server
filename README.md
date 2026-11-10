@@ -8,7 +8,10 @@ place for the things a household shares.
 
 It is **optional**. Alexandria works fully without it.
 
-**Version 1.0.0** · Docker image for `linux/amd64` and `linux/arm64`
+**Version 1.1.0** · Docker image for `linux/amd64` and `linux/arm64`
+
+New to it? Start at [Install](#install). How each feature works in the
+apps is in the [help articles](docs/kb/README.md).
 
 ---
 
@@ -87,12 +90,17 @@ server**.
   any PC. It idles at around 20 MB of memory.
 - **Port 4000** on that machine, reachable from your network. The apps
   look for the server on port 4000 when they search your network.
-- **Alexandria 3.1 or later** on iPhone, iPad or Android, and Alexandria
-  on Apple TV.
+- **A current Alexandria app**: iPhone, iPad, Android, Mac, Windows or
+  Apple TV. Signing a device in to someone's services by code
+  ([Alexandria Link](docs/kb/alexandria-link.md)) needs Alexandria 3.2.1
+  or later.
 
 ---
 
 ## Install
+
+On **Windows**, use [Option 2](#option-2-docker-compose) with Docker
+Desktop; [Windows](#windows) below has the two commands that differ.
 
 ### Option 1: the installer (Linux and macOS)
 
@@ -111,8 +119,10 @@ The installer:
 5. pulls the image and starts it.
 
 It prints the admin token and the secrets key once. Both are also kept in
-that folder's `.env`. Copy the secrets key somewhere safe, apart from your
-backups: without it, the service logins accounts keep cannot be opened.
+that folder's `.env`, which only your user can read. Copy the secrets key
+somewhere safe, apart from your backups: without it, the service logins
+accounts keep cannot be opened. It then waits for the server to answer and
+prints the address of its admin page.
 
 ### Option 2: Docker Compose
 
@@ -161,6 +171,32 @@ Then:
 ```bash
 docker compose up -d
 ```
+
+#### Windows
+
+Install [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/),
+make a folder with the two files above, and run `docker compose up -d`
+there in PowerShell. Windows has no `openssl`, so make the two values in
+PowerShell instead. Run this once for the token:
+
+```powershell
+$b = New-Object byte[] 32
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+($b | ForEach-Object { $_.ToString('x2') }) -join ''
+```
+
+and this once for the secrets key (a different value):
+
+```powershell
+$b = New-Object byte[] 32
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+[Convert]::ToBase64String($b)
+```
+
+Paste each into `.env` after its `=`, with no quotes. Save `.env` as plain
+text (Notepad: **Save as type › All files**, so it is not named
+`.env.txt`). Allow Docker Desktop through Windows Firewall on private
+networks when Windows asks, or the apps cannot reach port 4000.
 
 ### Option 3: a single `docker run`
 
@@ -216,6 +252,7 @@ All settings are environment variables, set in `.env` or with `-e`.
 | `ALEXANDRIA_PUBLIC_URL` | empty | The `https://` address the server is reached at through a reverse proxy. See [Reaching it from outside your home](#reaching-it-from-outside-your-home). |
 | `ALEXANDRIA_TRUSTED_PROXIES` | empty | The address your reverse proxy connects from, if you use one (one address or range, or several, comma-separated). The sign-in and linking limits then count each visitor separately instead of everyone as the proxy. See [Reaching it from outside your home](#reaching-it-from-outside-your-home). |
 | `ALEXANDRIA_SECRETS_KEY` | empty | Lets [Alexandria accounts](docs/ACCOUNTS.md) store each person's service logins, sealed, so their devices sign in by themselves. Make one with `openssl rand -base64 32` and keep it out of your backups. Without it, people can still sign in and link devices. `ALEXANDRIA_SECRETS_KEY_FILE` reads it from a file instead. |
+| `ALEXANDRIA_LISTEN_ADDR` | empty | **Leave unset in Docker**, where the `ports:` line decides what reaches the server. Running the server program directly, this is the one address it listens on: `127.0.0.1` keeps it to this machine (behind a reverse proxy on the same machine), `192.168.1.50` to one network. Empty listens on every address. Anything but one IP address stops the server from starting. |
 | `TZ` | `UTC` | Timezone for the logs. |
 | `PORT` | `4000` | In the installer's `.env`, the port on this machine. Keep 4000: the apps search your network on it. |
 | `DB_PATH` | `/data/alexandria.db` | Where the database lives inside the container. Leave it unless you know why. |
@@ -229,7 +266,7 @@ All data lives in the `/data` volume: one SQLite file.
 Nobody types a long token into a phone. Each device asks for a code, and
 you approve it.
 
-**iPhone, iPad and Android**
+**iPhone, iPad, Android, Mac and Windows**
 
 1. Open **Settings › Companion Server**.
 2. Tap **Find my server on this network**, or type its address
@@ -240,14 +277,23 @@ you approve it.
    - on the admin page, where the device is waiting: type who it is and
      click **Approve**; or
    - from a phone that is already linked, under **Manage server** on its
-     Companion Server screen. Each approval from a phone asks for a fresh
-     code from your authenticator.
+     Companion Server screen: the device is under **Waiting to connect**.
+     Each approval from a phone asks for a fresh code from your
+     authenticator.
 
 The device connects on its own within a couple of seconds.
 
-**Apple TV**: open **Settings › Companion Server › Link Companion Server**.
-Press **Find My Server** (or enter the address), then approve the code the
-same way.
+**Apple TV**: open **Settings › Companion Server › Link Companion Server**
+(or **Link with a Code** on a new TV's first screen). Press **Find My
+Server** (or enter the address), then approve the code the same way. From
+a phone you can also start from the person: **Manage server ›** the
+person **› Link a TV**, and pick or type the code the TV shows.
+
+**A TV takes no invite.** An invite (a person's **Invite to sign in**) is
+for a phone, tablet or computer, where the person chooses a password. A
+TV always shows a code of its own, and approving that code for a person
+signs the TV in to the services you set up for them. More in
+[Alexandria Link](docs/kb/alexandria-link.md).
 
 **Apple Watch and Wear OS**: no code. A linked phone links its watch on
 its own, and the phone's Companion Server screen shows the watch's status.
@@ -394,10 +440,21 @@ query or fragment. Anything else is ignored with a warning in the log
 
 ## Backups
 
-The whole server is one SQLite file. Either:
+The whole server is one SQLite database. Either:
 
-- click **Download backup** on the admin page; or
-- run `docker cp alexandria-server:/data/alexandria.db ./backup.db`.
+- click **Download backup** on the admin page (a complete copy, taken
+  safely while the server runs); or
+- stop the server and copy its data folder:
+
+  ```bash
+  docker stop alexandria-server
+  docker cp alexandria-server:/data ./alexandria-data-backup
+  docker start alexandria-server
+  ```
+
+Do not copy `alexandria.db` out of a **running** server: the newest
+changes sit in a second file beside it until the server tidies up, so
+the copy can be missing them.
 
 A backup taken from a phone (**Manage server › Back up**) asks for a fresh
 authenticator code and leaves the admin login out of the file, and the
@@ -406,6 +463,25 @@ again with your admin token, and saving those sign-ins again.
 
 The library index rebuilds itself from the app. What is really worth
 backing up is people, their devices and their stats.
+
+### Restoring a backup
+
+With the server stopped, put the backup file in place of the database
+and start it again. The second command also clears the two side files a
+stopped server can leave, which belong to the old database:
+
+```bash
+docker stop alexandria-server
+docker run --rm --volumes-from alexandria-server -v "$PWD":/backup alpine sh -c \
+  'rm -f /data/alexandria.db-wal /data/alexandria.db-shm && cp /backup/backup.db /data/alexandria.db && chown 1000:1000 /data/alexandria.db'
+docker start alexandria-server
+```
+
+Run it in the folder that holds `backup.db` (the file **Download backup**
+gave you, renamed). To move to another machine, install the server there
+with the **same** `ALEXANDRIA_SECRETS_KEY`, then restore the backup the
+same way. Linked devices keep working if the new machine answers at the
+old address; otherwise link them again.
 
 **The secrets key is not in any backup**, on purpose: a backup alone
 cannot open the service logins Alexandria accounts keep. Keep the key
@@ -485,12 +561,28 @@ every person, device and statistic.** Take a backup first.
   - Each visitor gets 10 sign-in attempts a minute.
   - All visitors together get at most 20 wrong passwords or codes a
     minute, after a first 60. More addresses buy no more guesses.
-  - One visitor alone can never use that up. If several keep it used up
-    at once, your own sign-in waits too until they stop or the server
-    restarts. Browsers and phones already signed in keep working.
+  - One visitor alone can never use that up. A visitor is one IPv4
+    address, or one IPv6 /64 (the block a home or a rented server is
+    given), so a block of addresses is still one visitor. If several keep
+    it used up at once, your own sign-in waits too until they stop or the
+    server restarts. Browsers and phones already signed in keep working.
   - Each signed-in phone has its own allowance for the codes its backups
     and approvals carry: 10 wrong, then one a minute. Nobody else can use
-    it up, and a stolen phone cannot grind codes.
+    it up. Ten wrong codes in a row sign that phone out of Manage server,
+    so a stolen phone cannot keep guessing; signing in again takes the
+    password.
+- **The browser's admin sign-in works only from the admin page itself.**
+  A page on another address, another port of the same machine or a
+  sibling subdomain cannot use it, even though the browser sends the
+  cookie along. (Browsers say which page a request came from; the server
+  checks.)
+- **Large requests need a credential.** A request with no token or admin
+  sign-in the server knows may send 16 KB at most; the 8 MB limit the
+  library index needs is for linked devices and signed-in admins. Room
+  for a request is decided before any of it is read.
+- **Password checks run two at a time.** Each takes about 19 MB while it
+  runs, so a burst of sign-ins waits in line instead of using up the
+  machine's memory.
 - **Device tokens, admin sessions and phones' admin sign-ins are stored
   only as hashes.** None of them can be replayed from a stolen database.
 - **The admin login is different.** Its authenticator secret is stored as
@@ -530,13 +622,28 @@ every person, device and statistic.** Take a backup first.
     15 minutes.
 
   Everything else requires a token.
-- **Compressed request bodies are refused** (415). A small compressed
-  request could otherwise unpack to gigabytes. No Alexandria app sends one.
+- **Compressed request bodies are refused** (415), however the request
+  labels them. A small compressed request could otherwise unpack to
+  gigabytes. No Alexandria app sends one.
 - **Making or resetting an account on your media servers** follows a
   redirect only on the same server, never to another address and never
   from https down to http, so the saved admin password goes nowhere else.
 - **Turning on two-step for an Alexandria account takes its password**, as
-  turning it off always did.
+  turning it off always did. Both, and changing the password, count wrong
+  tries exactly as the sign-in does: ten in a row pause that person's
+  sign-in for 15 minutes.
+- **A username that does not exist answers like one that does**, pause
+  included, so trying names does not reveal who has a sign-in.
+- **An invite's short code is stored under a key made from the admin
+  token**, which is not in the database: a copy of the database alone
+  does not give a waiting invite away, and a backup taken from a phone
+  carries no waiting invite at all. Changing the admin token therefore
+  ends the typed codes of invites still waiting (their links keep
+  working); make a new invite.
+- **Signing a device out ends everything it had.** Revoking a person's
+  device also ends the Manage server sign-in made on it, and **Sign out
+  all devices** also cancels a link you approved that the device had not
+  collected yet.
 - **Each build is checked before it is published:** go vet, every test and
   govulncheck (known Go vulnerabilities the code can reach), with the same
   Go the image ships.
@@ -564,6 +671,27 @@ You can always type the address instead. The fastest check is
 
 **A link code says it expired.** Codes last ten minutes. Ask for a new
 one.
+
+**There is nowhere on the TV to type an invite code.** There is not meant
+to be: an invite is for a phone, tablet or computer. On the TV, open
+**Link Companion Server**; it shows a code of its own. Approve that code
+on the admin page, or on a phone under **Manage server › Waiting to
+connect** (or the person's **Link a TV**).
+
+**Authenticator codes are always wrong.** The codes depend on the time.
+Check the clock on the machine that runs the server (and on your phone):
+more than about a minute out, and every code is refused. On a NAS or a
+Raspberry Pi, turn on automatic time (NTP).
+
+**The admin page signs in, then says "this request did not come from the
+admin page".** Your reverse proxy changes the address the server sees
+and your browser is an older one. Set `ALEXANDRIA_PUBLIC_URL` to the
+`https://` address you open, or make the proxy pass the `Host` header on
+(the nginx example above does).
+
+**A phone was signed out of Manage server.** Ten wrong authenticator
+codes in a row sign that phone out. Sign in again with your password and
+a fresh code.
 
 **Signing in says "too many wrong passwords or codes on this server".**
 More wrong guesses have come in lately, from several addresses together,
@@ -601,6 +729,7 @@ diagnostics** shows how far each start landed from the party clock.
 
 ## Support and feedback
 
+- **How things work in the apps:** the [help articles](docs/kb/README.md).
 - **Bugs and feature requests:** [open an issue](../../issues/new/choose).
 - **Questions and setup help:**
   [r/AlexandriaMediaLib2](https://www.reddit.com/r/AlexandriaMediaLib2/).

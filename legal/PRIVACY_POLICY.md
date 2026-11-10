@@ -1,6 +1,6 @@
 # Privacy Policy — Alexandria Companion Server
 
-**Last updated:** October 2026
+**Last updated:** November 2026
 
 ## The short version
 
@@ -54,6 +54,15 @@ device. Without accounts, none of this exists.
 is playing (title, author, position and the queue) and which devices are
 in it. This is never written to the database, and it is gone when the
 party ends or the server restarts.
+
+**Party Play announcements, in memory only.** When someone in a party
+makes an announcement, their voice — a recorded clip of up to a minute, or
+live speech of up to two minutes — passes through the server to the
+devices in that same party. It is held in memory only, never in the
+database, on disk or in the logs; it is readable only by that person's own
+party; and it is erased within about half a minute after it has played,
+or at once when the party ends. A device's microphone is used only while its talk button is
+held.
 
 ## What it never stores
 

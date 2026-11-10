@@ -24,14 +24,9 @@ NC='\033[0m' # No Color
 # Default installation directory
 INSTALL_DIR="${INSTALL_DIR:-$HOME/alexandria-server}"
 
-echo -e "${BLUE}"
-echo "  ___   _                           _      _       "
-echo " / _ \ | | _____  ____ _ _ __   __| |_ __(_) __ _ "
-echo "| | | || |/ _ \ \/ / _\` | '_ \ / _\` | '__| |/ _\` |"
-echo "| |_| ||  __/>  < (_| | | | | (_| | |  | | (_| |"
-echo " \___(_)___/_/\_\__,_|_| |_|\__,_|_|  |_|\__,_|"
-echo -e "${NC}"
-echo "Alexandria Server - Self-Hosted Family Media Backend"
+echo ""
+echo -e "${BLUE}Alexandria Companion Server${NC}"
+echo "A small helper for the Alexandria app, run on your own machine."
 echo "======================================================"
 echo ""
 
@@ -94,6 +89,7 @@ ensure_secrets_key() {
     local key
     key=$(generate_secrets_key)
     cp .env .env.backup
+    chmod 600 .env.backup
     if grep -Eq '^ALEXANDRIA_SECRETS_KEY=$' .env; then
         awk -v k="$key" '{ if ($0 ~ /^ALEXANDRIA_SECRETS_KEY=$/) print "ALEXANDRIA_SECRETS_KEY=" k; else print }' \
             .env > .env.tmp && mv .env.tmp .env
@@ -113,8 +109,34 @@ ensure_secrets_key() {
     echo -e "    ${key}"
 }
 
+# This machine's address on the home network, for the admin page's link.
+# Best effort: empty when it cannot be told.
+lan_address() {
+    if command -v hostname &> /dev/null && hostname -I &> /dev/null; then
+        hostname -I | awk '{print $1}'
+    elif command -v ipconfig &> /dev/null; then
+        ipconfig getifaddr en0 2> /dev/null || ipconfig getifaddr en1 2> /dev/null || true
+    fi
+}
+
+# Waits up to 30 seconds for the server to answer on this machine.
+wait_until_healthy() {
+    local port="$1" i
+    for i in $(seq 1 30); do
+        if curl -fsS -m 2 "http://localhost:${port}/health" &> /dev/null; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 # Main installation
 main() {
+    # The .env holds the admin token and the secrets key: no file made here
+    # is readable by another user of this machine, from its first byte.
+    umask 077
+
     echo -e "${YELLOW}Checking requirements...${NC}"
     check_docker
     check_docker_compose
@@ -196,13 +218,29 @@ EOF
     echo -e "${YELLOW}Starting Alexandria Server...${NC}"
     $COMPOSE_CMD up -d --no-build
 
+    # The port on this machine (PORT in .env; 4000 unless changed).
+    local port address
+    port=$(grep -E '^PORT=[0-9]+$' .env | tail -1 | cut -d= -f2)
+    port="${port:-4000}"
+    address=$(lan_address)
+    if [ -z "$address" ]; then
+        address="<this machine's address>"
+    fi
+
     echo ""
-    echo -e "${GREEN}======================================================"
-    echo "  Alexandria Server is now running!"
-    echo "======================================================${NC}"
+    if wait_until_healthy "$port"; then
+        echo -e "${GREEN}======================================================${NC}"
+        echo -e "${GREEN}  Alexandria Server is running.${NC}"
+        echo -e "${GREEN}======================================================${NC}"
+    else
+        echo -e "${YELLOW}======================================================${NC}"
+        echo -e "${YELLOW}  The server was started but has not answered yet.${NC}"
+        echo -e "${YELLOW}  See why with:  cd $INSTALL_DIR && $COMPOSE_CMD logs${NC}"
+        echo -e "${YELLOW}======================================================${NC}"
+    fi
     echo ""
-    echo "  Health:      http://localhost:4000/health"
-    echo "  Admin page:  http://<this machine's address>:4000/admin"
+    echo "  Health:      http://localhost:${port}/health"
+    echo "  Admin page:  http://${address}:${port}/admin"
     echo ""
     echo "  Next:"
     echo "  1. Open the admin page and sign in with the admin token above."
@@ -210,7 +248,7 @@ EOF
     echo "     authenticator app; keep the recovery codes it shows."
     echo "  2. In Alexandria: Settings > Companion Server > Find my server"
     echo "     on this network > Get a link code. Approve the code on the"
-    echo "     admin page."
+    echo "     admin page. A TV shows its code the same way: approve it there."
     echo "  3. Optional: give someone one sign-in for every phone. On the"
     echo "     admin page, open a person's Sign-in & services, add their"
     echo "     servers, then Invite to sign in."

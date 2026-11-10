@@ -2040,7 +2040,7 @@ func TestHealthAdvertisesPhoneAdminAndThePublicURL(t *testing.T) {
 	if r.str("publicUrl") != "https://alexandria.example.com" {
 		t.Fatalf("publicUrl %v", r)
 	}
-	if r.str("version") != "1.0.0" {
+	if r.str("version") != "1.1.0" {
 		t.Fatalf("version changed: %v", r)
 	}
 	// What the apps read is still there; the Go release is not (anyone can

@@ -1,6 +1,6 @@
 # Alexandria Terms of Service
 
-**Last Updated: December 17, 2024**
+**Last Updated: November 10, 2026**
 
 Welcome to Alexandria. These Terms of Service ("Terms") govern your use of the Alexandria mobile application ("App") and Alexandria Server software ("Server"), collectively referred to as the "Service," provided by Stout Solutions ("we," "us," or "our").
 
@@ -20,14 +20,20 @@ Alexandria is a unified client application that connects to self-hosted media se
 - BookLore
 
 Alexandria Companion Server is optional software you run on your own
-hardware. It keeps one merged, deduplicated index of the libraries you
-already own, and stores per-person listening statistics for the people
-in your household.
+hardware. It keeps a profile for each person in your household and the
+devices linked to them, per-person listening statistics, one merged,
+deduplicated index of the libraries you already own, and the shared
+state of Party Play while a party runs.
 
-It does not manage accounts, hold credentials for your media servers, or
-determine what features you have access to in the Alexandria app. It is
-a performance helper, not a gatekeeper — the app works fully without
-it.
+If you choose to use Alexandria accounts on it, it also keeps a sign-in
+for each person you invite and the media-server logins you set up for
+them, encrypted with a key that you hold. Without accounts it holds no
+credentials for your media servers.
+
+It runs entirely on your hardware: we operate no part of it and receive
+nothing from it. It does not determine what features you have access to
+in the Alexandria app. It is a helper, not a gatekeeper — the app works
+fully without it.
 
 **Important:** Alexandria does not host, store, or provide any media content. The Service only provides tools to access content on servers you own or have authorized access to.
 
@@ -131,7 +137,10 @@ Your use of third-party services is governed by their respective terms and polic
 
 Your privacy is important to us. Please review our Privacy Policy, which explains how we collect, use, and protect your information. Key points:
 - We do not collect or transmit your personal data
-- All credentials are stored locally on your device with encryption
+- Credentials are stored on your device with encryption. If you use
+  Alexandria accounts on a Companion Server, the media-server logins you
+  set up there are stored encrypted on that server, which you run; we
+  never receive them
 - We do not track your usage or reading habits
 - We have no access to your media servers or content
 

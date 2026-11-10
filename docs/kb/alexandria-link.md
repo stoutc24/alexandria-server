@@ -38,10 +38,34 @@ only the device that showed it can collect the result.
 - **In the web server manager:** open **Waiting to connect**, find the code,
   and choose who it is.
 - **In the app:** go to **You › Settings › Companion Server › Manage
-  server**. Under the devices waiting, choose **Approve**, check the code
-  matches, then pick **Someone already here** or **Someone new**.
+  server**. Under **Waiting to connect**, choose **Approve**, check the
+  code matches, then pick **Someone already here** or **Someone new**.
+- **In the app, starting from the person:** open the person in **Manage
+  server** and choose **Link a TV** (beside **Invite to sign in**, and on
+  the **Devices** heading). Devices showing a code right now are listed:
+  tap the one their screen shows, or type the code. It works for any
+  device that shows a link code, not only TVs.
+
+Approving from a phone asks for a fresh code from your authenticator
+each time. The keypad puts itself away when the sixth digit is in.
 
 Only approve a code their screen is showing.
+
+## An invite or a code?
+
+They are two different things, and a TV only takes one of them.
+
+- **An invite** (**Invite to sign in** on a person) is for a **phone,
+  tablet or computer**. The person opens the link, or types the invite
+  code under **I have an invite**, and chooses a password. Every device
+  they sign in on after that needs no approval from you.
+- **A link code** is what a device shows on **its own** screen, and you
+  approve it. A **TV always works this way**: there is nowhere on a TV to
+  type an invite, and there is not meant to be.
+
+So to set up a TV for someone: on the TV open **Link with a Code** (or
+**Settings › Companion Server**), then approve the code the TV shows, as
+that person.
 
 ## What happens next
 
@@ -97,6 +121,7 @@ A new code appears. Approve it as the same person.
   network while a code is being used, not just watch it, could step in.
 
 This needs the companion server from 8 November 2026 or later, and an app
-from the same update.
+from the same update. **Link a TV** on a person's page is in the apps from
+10 November 2026.
 
 Contact for questions or problems: stoutservers@gmail.com

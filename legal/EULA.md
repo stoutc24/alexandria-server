@@ -1,10 +1,10 @@
 # Alexandria End User License Agreement (EULA)
 
-**Last Updated: December 17, 2024**
+**Last Updated: November 10, 2026**
 
 This End User License Agreement ("Agreement") is a legal agreement between you ("User" or "you") and Stout Solutions ("Licensor," "we," "us," or "our") for the use of:
 
-- **Alexandria** mobile application for iOS and Android ("App")
+- **Alexandria** application for iPhone, iPad, Mac, Android, Windows, Apple TV and the other platforms it is published for ("App")
 - **Alexandria Server** self-hosted software ("Server")
 
 Collectively referred to as the "Software."
@@ -85,7 +85,7 @@ The Software may include open source components governed by their respective lic
 The Software is designed to connect to third-party media servers. Your use of such servers is governed by their terms, not this Agreement.
 
 ### 4.3 App Stores
-The App is distributed through Apple App Store and Google Play Store. Your use is also subject to their terms of service.
+The App is distributed through the Apple App Store, Google Play and the Microsoft Store. Your use is also subject to their terms of service.
 
 ---
 
@@ -95,7 +95,7 @@ The App is distributed through Apple App Store and Google Play Store. Your use i
 The Software stores data locally on your device. We do not collect, transmit, or have access to this data.
 
 ### 5.2 Self-Hosted Server
-If you run Alexandria Server, you are the data controller for all information stored on your server.
+If you run Alexandria Server, you are the data controller for all information stored on your server, including, if you use Alexandria accounts, the sign-ins and media-server logins you set up there for the people you invite.
 
 ### 5.3 Privacy Policy
 Our collection and use of information is further described in our Privacy Policy, which is incorporated into this Agreement by reference.

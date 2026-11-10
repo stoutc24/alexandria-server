@@ -187,7 +187,7 @@ func Health(c *fiber.Ctx) error {
 		Status:   "healthy",
 		Uptime:   time.Since(startTime).Round(time.Second).String(),
 		Database: dbStatus,
-		Version:  "1.0.0",
+		Version:  "1.1.0",
 
 		Capabilities: caps,
 		PublicURL:    configuredPublicURL,

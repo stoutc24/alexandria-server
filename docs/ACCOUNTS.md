@@ -166,11 +166,18 @@ Limits: 10 a minute per client, a shared allowance across every visitor
   time.
 - `code-required`: the password was right and the two-step code is next.
 - `bad-code`.
-- `locked` (429, with `retryAfterSeconds`).
+- `locked` (429, with `retryAfterSeconds`): ten wrong answers in a row
+  pause a sign-in for 15 minutes. From 1.1.0 a username nobody has pauses
+  by the same rule, with the same answer, so the pause does not say who
+  exists.
 - `busy`, `rate-limited`.
 - `invite-invalid`, `username-taken`, `bad-username`.
   Usernames: `^[a-z0-9][a-z0-9._-]{2,31}$`, case-insensitive.
 - `password-too-short`, `bad-device-key`.
+
+From 1.1.0 a request with no credential the server knows may carry 16 KiB
+at most (a larger one is refused with 413 before it is read), and a
+compressed body is refused (415 `encoded-body`).
 
 ### A signed-in device (`Authorization: Bearer alxp_…`)
 
@@ -178,10 +185,10 @@ Limits: 10 a minute per client, a shared allowance across every visitor
 |---|---|
 | `GET /accounts/me` | `{profile, hasLogin, username?, totpEnabled?, adminAccess?, deviceKey?, servicesAvailable}` |
 | `GET /accounts/services?since=<revision>` | `{revision, unchanged: true}` when nothing changed. Otherwise `{revision, box}`: the list, sealed to this device (below). `503 secrets-key-missing`, `409 device-key-required` |
-| `POST /accounts/password` `{currentPassword, newPassword}` | Other devices stay signed in |
+| `POST /accounts/password` `{currentPassword, newPassword}` | Other devices stay signed in. The password is checked as the sign-in checks it: `429 locked` while the sign-in is paused, `429 busy`, and a wrong one (`401 bad-credentials`) counts toward the pause |
 | `POST /accounts/totp/setup` | `{secret, uri}` for an authenticator app. It is on only after… |
-| `POST /accounts/totp/enable` `{code, password}` | …a code from it is confirmed, with the account's password (from 1.0.0: a stolen device token alone cannot switch it on). `400 password-required`, `401 bad-credentials` (counts toward the lockout), `401 bad-code`. A code is never accepted twice |
-| `POST /accounts/totp/disable` `{password}` | Also takes away any admin access, and signs out its Manage server sign-ins |
+| `POST /accounts/totp/enable` `{code, password}` | …a code from it is confirmed, with the account's password (from 1.0.0: a stolen device token alone cannot switch it on). `400 password-required`, `401 bad-credentials` (counts toward the lockout), `401 bad-code`. A code is never accepted twice. From 1.1.0 also `429 locked` and `429 busy`, as the sign-in |
+| `POST /accounts/totp/disable` `{password}` | Also takes away any admin access, and signs out its Manage server sign-ins. `401 bad-credentials` counts toward the lockout; from 1.1.0 `429 locked` while the sign-in is paused (the password is not looked at) and `429 busy` |
 | `POST /accounts/admin-sign-in` `{password, code, deviceLabel, persistent}` | Manage server with this account's **admin access** (below): `201 {token: "alxa_…", device, access}`, the admin device token `/admin/auth/device-token` gives, held to the access. `403 no-admin-access`, `403 two-step-required`, `409 not-enrolled`, `429 locked`, `401 code-required`, `401 bad-credentials` (counts as a wrong sign-in). Shares the admin sign-in's rate limit |
 
 **Admin access** (owner, 2026-10-13). The admin login can give a person's
@@ -369,7 +376,13 @@ another person's service.
 ## What each party can see
 
 - **The database or a backup, alone:** names, usernames, addresses, hashes;
-  no service login opens without the secrets key.
+  no service login opens without the secrets key. A waiting invite's link
+  token is 256 random bits, stored as its hash; its short code (about 40
+  bits) is stored, from 1.1.0, under a key made from `ALEXANDRIA_API_TOKEN`,
+  which the database does not hold, so a copy alone cannot be searched for
+  the code. A backup taken from a phone carries no waiting invite. (An
+  invite made before 1.1.0 keeps working by its link; its typed code does
+  not, so make a new one.)
 - **The running server (its operator):** everything it stores. That is the
   trade the household chose ("1A"): fully automatic, at the price of trusting
   whoever runs the server. A zero-knowledge design was the alternative and

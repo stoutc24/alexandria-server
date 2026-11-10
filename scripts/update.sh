@@ -18,6 +18,10 @@ echo ""
 
 cd "$INSTALL_DIR" || { echo -e "${RED}Error: Installation directory not found at $INSTALL_DIR${NC}"; exit 1; }
 
+# The .env and its copies hold the admin token and the secrets key: no file
+# made here is readable by another user of this machine.
+umask 077
+
 # Detect compose command
 if docker compose version &> /dev/null; then
     COMPOSE_CMD="docker compose"
@@ -46,6 +50,7 @@ ensure_secrets_key() {
     local key
     key=$(generate_secrets_key)
     cp .env .env.backup
+    chmod 600 .env.backup
     if grep -Eq '^ALEXANDRIA_SECRETS_KEY=$' .env; then
         awk -v k="$key" '{ if ($0 ~ /^ALEXANDRIA_SECRETS_KEY=$/) print "ALEXANDRIA_SECRETS_KEY=" k; else print }' \
             .env > .env.tmp && mv .env.tmp .env
@@ -65,14 +70,24 @@ ensure_secrets_key() {
     echo -e "    ${key}"
 }
 ensure_secrets_key
+# A copy left by an earlier update, made before copies were kept private.
+[ -f .env.backup ] && chmod 600 .env.backup
 
-# Backup current compose file
-cp docker-compose.yml docker-compose.yml.backup
-
-# Download latest compose file
+# The latest compose file. Yours is kept, and you are told, if it differs:
+# an edit of your own (another port, a bind mount) is in the kept copy.
 echo -e "${YELLOW}Downloading latest configuration...${NC}"
-curl -fsSL "https://raw.githubusercontent.com/stoutc24/alexandria-server/main/docker-compose.yml" -o docker-compose.yml
-echo -e "${GREEN}✓${NC} Configuration updated"
+curl -fsSL "https://raw.githubusercontent.com/stoutc24/alexandria-server/main/docker-compose.yml" -o docker-compose.yml.new
+if [ -f docker-compose.yml ] && ! cmp -s docker-compose.yml docker-compose.yml.new; then
+    cp docker-compose.yml docker-compose.yml.backup
+    mv docker-compose.yml.new docker-compose.yml
+    echo -e "${GREEN}✓${NC} Configuration updated"
+    echo -e "${YELLOW}!${NC} docker-compose.yml changed. Your previous one is kept as"
+    echo "    docker-compose.yml.backup: if you had edited it, copy your changes across"
+    echo "    and run '$COMPOSE_CMD up -d' again."
+else
+    mv docker-compose.yml.new docker-compose.yml
+    echo -e "${GREEN}✓${NC} Configuration is current"
+fi
 
 # Pull latest image and restart
 echo -e "${YELLOW}Pulling latest image...${NC}"

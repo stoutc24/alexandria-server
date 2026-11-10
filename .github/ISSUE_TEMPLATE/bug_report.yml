@@ -27,7 +27,7 @@ body:
     attributes:
       label: Server version
       description: The `version` from `curl http://<server address>:4000/health`.
-      placeholder: 1.0.0
+      placeholder: 1.1.0
     validations:
       required: true
   - type: dropdown

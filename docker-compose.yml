@@ -1,22 +1,21 @@
-version: '3.8'
-
 # =============================================================================
 # Alexandria Server - Docker Compose Configuration
 # =============================================================================
 #
 # Quick Start:
 #   1. Copy .env.example to .env and configure
-#   2. Run: docker-compose up -d
+#   2. Run: docker compose up -d
 #   3. Access: http://localhost:4000/health
+#
+# This file runs the published image. To build from the source instead, add
+# docker-compose.build.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #
 # =============================================================================
 
 services:
   alexandria-server:
     image: ghcr.io/stoutc24/alexandria-server:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: alexandria-server
     restart: unless-stopped
 

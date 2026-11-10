@@ -1,0 +1,11 @@
+# Builds the image from this checkout instead of pulling the published one:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# Only useful with the source next to it. The installer and the README's
+# Compose option never use this file.
+services:
+  alexandria-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
