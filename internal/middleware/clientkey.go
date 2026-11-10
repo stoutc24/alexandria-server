@@ -28,6 +28,13 @@ import (
 // client manages, the admin login caps wrong guesses from every address
 // together (adminauth.GuessLimit), and linking caps new requests the
 // same way.
+//
+// An IPv6 client is counted by its /64, not its full address (security
+// review, 2026-11-10): a home or a rented server is handed a /64 at the
+// least, which is 2^64 addresses to one visitor. Counted one by one, that
+// visitor had a fresh limit for every request, and alone could spend the
+// allowance of wrong guesses every sign-in shares — locking the owner out
+// of their own admin page. An IPv4 address is counted as itself.
 func ClientKey(trusted []netip.Prefix) func(*fiber.Ctx) string {
 	isTrusted := func(a netip.Addr) bool {
 		for _, p := range trusted {
@@ -45,7 +52,7 @@ func ClientKey(trusted []netip.Prefix) func(*fiber.Ctx) string {
 			if len(forwarded) > 0 {
 				noteUntrustedProxy(peer)
 			}
-			return peer.String()
+			return limitKey(peer)
 		}
 		// Every X-Forwarded-For line, in the order received, read as one
 		// list: a proxy that adds a line of its own instead of appending
@@ -61,12 +68,23 @@ func ClientKey(trusted []netip.Prefix) func(*fiber.Ctx) string {
 				break
 			}
 			if !isTrusted(addr) {
-				return addr.String()
+				return limitKey(addr)
 			}
 		}
 		// Only trusted proxies, or nothing usable: the proxy itself.
-		return peer.String()
+		return limitKey(peer)
 	}
+}
+
+// limitKey is what a limit counts an address as: an IPv4 address itself,
+// an IPv6 address's /64 (see ClientKey).
+func limitKey(a netip.Addr) string {
+	if a.Is6() && !a.Is4In6() {
+		if p, err := a.Prefix(64); err == nil {
+			return p.String()
+		}
+	}
+	return a.String()
 }
 
 // forwardedAddr reads one X-Forwarded-For entry: an address, with or

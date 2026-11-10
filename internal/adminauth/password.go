@@ -30,6 +30,31 @@ const (
 	argonSaltLen = 16
 )
 
+// argonGate lets two password hashes run at a time; the rest wait their
+// turn (security review, 2026-11-10). Each hash holds 19 MiB while it
+// runs, and nothing bounded how many ran at once: twenty sign-ins sent
+// together took the process past 400 MB, on a container capped at 256.
+// The limits in front of the sign-ins count requests per minute, not
+// requests in flight. Waiting is short (a hash takes a fraction of a
+// second) and bounded by those same limits.
+const argonConcurrency = 2
+
+var argonGate = make(chan struct{}, argonConcurrency)
+
+// argonKey is argon2.IDKey behind argonGate.
+func argonKey(password, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+	argonGate <- struct{}{}
+	defer func() { <-argonGate }()
+	if TestHookArgonRunning != nil {
+		TestHookArgonRunning()
+	}
+	return argon2.IDKey(password, salt, time, memory, threads, keyLen)
+}
+
+// TestHookArgonRunning, when set, is called by each hash once it holds its
+// place in argonGate. Tests only.
+var TestHookArgonRunning func()
+
 // MinPasswordLength is deliberately the only password rule.
 //
 // Composition rules (a digit, a symbol, a capital) push people toward
@@ -66,7 +91,7 @@ func hashPassword(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	key := argon2.IDKey([]byte(password), salt,
+	key := argonKey([]byte(password), salt,
 		argonTime, argonMemory, argonThreads, argonKeyLen)
 
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
@@ -105,7 +130,7 @@ func VerifyPassword(encoded, password string) bool {
 		return false
 	}
 
-	got := argon2.IDKey([]byte(password), salt,
+	got := argonKey([]byte(password), salt,
 		time, memory, threads, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1
 }

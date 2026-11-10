@@ -253,6 +253,13 @@ func (r *ProfileRepository) RevokeToken(tokenID string) error {
 		`DELETE FROM account_device_keys WHERE token_id = ?`, tokenID); err != nil {
 		return err
 	}
+	// And the Manage server sign-in this device made with its person's
+	// account, if it made one: a phone signed out here must not go on
+	// managing the server (security review, 2026-11-10).
+	if _, err := database.DB.Exec(
+		`DELETE FROM admin_device_tokens WHERE via_token = ? AND via_token != ''`, tokenID); err != nil {
+		return err
+	}
 	res, err := database.DB.Exec(
 		`DELETE FROM profile_tokens WHERE id = ?`, tokenID)
 	if err != nil {
@@ -285,6 +292,12 @@ func (r *ProfileRepository) RevokeAllTokens(profileID string) (int, error) {
 	}
 	if _, err := tx.Exec(`DELETE FROM admin_device_tokens
 		WHERE profile_id = ? AND profile_id != ''`, profileID); err != nil {
+		return 0, err
+	}
+	// A link approved for this person but not yet collected by its device
+	// is a sign-in about to happen: it goes too, or that device walks in a
+	// moment after "sign out all devices" (security review, 2026-11-10).
+	if _, err := tx.Exec(`DELETE FROM link_requests WHERE profile_id = ?`, profileID); err != nil {
 		return 0, err
 	}
 	res, err := tx.Exec(`DELETE FROM profile_tokens WHERE profile_id = ?`, profileID)

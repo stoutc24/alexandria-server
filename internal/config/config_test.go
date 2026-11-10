@@ -138,3 +138,18 @@ func TestLoadReadsThePublicURL(t *testing.T) {
 		t.Fatalf("PublicURL = %q, want the deceptive value ignored", got)
 	}
 }
+
+// ALEXANDRIA_LISTEN_ADDR is one IP address, or unset: anything else is
+// refused at start rather than quietly listening everywhere.
+func TestListenAddrIsOneIPAddressOrUnset(t *testing.T) {
+	for _, ok := range []string{"", "127.0.0.1", "192.168.1.9", "::1", "fd00::9"} {
+		if problem := listenAddrProblem(ok); problem != "" {
+			t.Errorf("listenAddrProblem(%q) = %q, want none", ok, problem)
+		}
+	}
+	for _, bad := range []string{"localhost", "127.0.0.1:4000", "0.0.0.0/0", "[::1]", "all"} {
+		if problem := listenAddrProblem(bad); problem == "" {
+			t.Errorf("listenAddrProblem(%q) found no problem", bad)
+		}
+	}
+}

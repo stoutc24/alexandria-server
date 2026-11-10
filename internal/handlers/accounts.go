@@ -50,7 +50,11 @@ type AccountsHandler struct {
 	// takes as long as "wrong password" and names cannot be probed by
 	// timing.
 	decoy string
-	now   func() time.Time
+	// ghosts pauses a username that does not exist exactly as a real one
+	// is paused, so the pause cannot be used to tell them apart (see
+	// ghostLogins).
+	ghosts *ghostLogins
+	now    func() time.Time
 	// adminDevices is the phones' Manage server sign-ins, so a change to a
 	// person's admin access reaches the phones signed in with it at once
 	// (SetAdminAccess). Set by UseAdminDevices.
@@ -77,6 +81,7 @@ func NewAccountsHandler(
 		stepUp:   stepUp,
 		guesses:  adminauth.NewGuessLimit(adminauth.SignInGuessBurst, adminauth.SignInGuessRefill),
 		decoy:    decoy,
+		ghosts:   newGhostLogins(),
 		now:      time.Now,
 	}
 }
@@ -280,18 +285,22 @@ func (h *AccountsHandler) Login(c *fiber.Ctx) error {
 	now := h.now()
 	login, err := h.accounts.LoginByUsername(body.Username)
 	if errors.Is(err, repository.ErrNoLogin) {
+		// A name nobody has answers as a real one does, pause included: a
+		// real sign-in pauses after LoginFailuresBeforeLock wrong answers,
+		// and a name that never paused was therefore known not to exist
+		// (security review, 2026-11-10).
+		if until := h.ghosts.lockedUntil(body.Username, now); until > 0 {
+			return lockedReply(c, until-now.Unix())
+		}
 		adminauth.VerifyPassword(h.decoy, body.Password)
+		h.ghosts.fail(body.Username, now)
 		return refuse(c, fiber.StatusUnauthorized, "bad-credentials", "wrong username or password")
 	}
 	if err != nil {
 		return serverError(c, "could not read the sign-in", err)
 	}
 	if login.LockedUntil > now.Unix() {
-		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-			"error":             "too many wrong attempts; this sign-in is paused",
-			"reason":            "locked",
-			"retryAfterSeconds": login.LockedUntil - now.Unix(),
-		})
+		return lockedReply(c, login.LockedUntil-now.Unix())
 	}
 	if !adminauth.VerifyPassword(login.PasswordHash, body.Password) {
 		h.fail(login, now)
@@ -322,6 +331,43 @@ func (h *AccountsHandler) fail(login *repository.AccountLogin, now time.Time) {
 		log.Printf("account sign-in %q paused until %s after repeated wrong answers",
 			login.Username, time.Unix(until, 0).Format(time.RFC3339))
 	}
+}
+
+// lockedReply is the answer of a paused sign-in: 429 locked, with how long
+// until it lifts.
+func lockedReply(c *fiber.Ctx, seconds int64) error {
+	return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+		"error":             "too many wrong attempts; this sign-in is paused",
+		"reason":            "locked",
+		"retryAfterSeconds": seconds,
+	})
+}
+
+// ownPassword checks the signed-in person's password for a change to
+// their own sign-in: a new password, two-step on or off. It is the
+// sign-in's check, with the sign-in's defences (security review,
+// 2026-11-10): a paused sign-in is refused before the password is looked
+// at, each try draws on the allowance every visitor shares, and a wrong
+// one counts toward the pause. Two-step's switches skipped the first two,
+// so a copied device token could guess the password there without end —
+// and the right guess turned two-step off.
+//
+// ok false means the reply is written and the caller returns err.
+func (h *AccountsHandler) ownPassword(
+	c *fiber.Ctx, login *repository.AccountLogin, password string, now time.Time, wrong string,
+) (ok bool, err error) {
+	if login.LockedUntil > now.Unix() {
+		return false, lockedReply(c, login.LockedUntil-now.Unix())
+	}
+	if !h.spendGuess(c) {
+		return false, nil
+	}
+	if !adminauth.VerifyPassword(login.PasswordHash, password) {
+		h.fail(login, now)
+		return false, refuse(c, fiber.StatusUnauthorized, "bad-credentials", wrong)
+	}
+	h.guesses.Refund("accounts")
+	return true, nil
 }
 
 // checkCode verifies a two-step code and spends its time step, so the same
@@ -473,12 +519,8 @@ func (h *AccountsHandler) ChangePassword(c *fiber.Ctx) error {
 	if err != nil {
 		return serverError(c, "could not read the sign-in", err)
 	}
-	if login.LockedUntil > now.Unix() {
-		return refuse(c, fiber.StatusTooManyRequests, "locked", "too many wrong attempts; try again later")
-	}
-	if !adminauth.VerifyPassword(login.PasswordHash, body.CurrentPassword) {
-		h.fail(login, now)
-		return refuse(c, fiber.StatusUnauthorized, "bad-credentials", "the current password is wrong")
+	if ok, err := h.ownPassword(c, login, body.CurrentPassword, now, "the current password is wrong"); !ok {
+		return err
 	}
 	hash, err := adminauth.HashPasswordAtLeast(body.NewPassword, repository.MinAccountPasswordLength)
 	if err != nil {
@@ -547,9 +589,8 @@ func (h *AccountsHandler) TOTPEnable(c *fiber.Ctx) error {
 	if login.TOTPSecret == "" {
 		return refuse(c, fiber.StatusConflict, "no-pending-secret", "start two-step setup first")
 	}
-	if !adminauth.VerifyPassword(login.PasswordHash, body.Password) {
-		h.fail(login, now)
-		return refuse(c, fiber.StatusUnauthorized, "bad-credentials", "wrong password")
+	if ok, err := h.ownPassword(c, login, body.Password, now, "wrong password"); !ok {
+		return err
 	}
 	ok, err := h.checkCode(login, body.Code, now, true)
 	if err != nil {
@@ -572,9 +613,8 @@ func (h *AccountsHandler) TOTPDisable(c *fiber.Ctx) error {
 	if err != nil {
 		return refuse(c, fiber.StatusNotFound, "no-login", "this person has no sign-in")
 	}
-	if !adminauth.VerifyPassword(login.PasswordHash, body.Password) {
-		h.fail(login, now)
-		return refuse(c, fiber.StatusUnauthorized, "bad-credentials", "wrong password")
+	if ok, err := h.ownPassword(c, login, body.Password, now, "wrong password"); !ok {
+		return err
 	}
 	if err := h.accounts.DisableTOTP(login.ProfileID, now); err != nil {
 		return serverError(c, "could not switch two-step off", err)

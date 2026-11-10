@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -79,10 +80,15 @@ func main() {
 		}
 	}()
 
-	log.Printf("Alexandria Server starting on port %s", cfg.Port)
+	listen := net.JoinHostPort(cfg.ListenAddr, cfg.Port)
+	if cfg.ListenAddr == "" {
+		log.Printf("Alexandria Server starting on port %s", cfg.Port)
+	} else {
+		log.Printf("Alexandria Server starting on %s only (ALEXANDRIA_LISTEN_ADDR)", listen)
+	}
 	log.Printf("API available at http://localhost:%s/api/v1", cfg.Port)
 
-	if err := app.Listen(":" + cfg.Port); err != nil {
+	if err := app.Listen(listen); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

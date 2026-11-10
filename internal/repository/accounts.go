@@ -17,6 +17,7 @@ package repository
 //     RevenueCat (docs/COMPANION_DESIGN.md).
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -426,6 +427,43 @@ func hashSecret(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// inviteCodeKey keys the stored form of an invite's short code
+// (hashInviteCode). Set once at start by SetInviteCodeKey; until then a
+// key made for this process alone, so nothing is ever stored unkeyed.
+var inviteCodeKey = func() []byte {
+	k := make([]byte, 32)
+	if _, err := rand.Read(k); err != nil {
+		panic("accounts: no randomness for the invite code key: " + err.Error())
+	}
+	return k
+}()
+
+// SetInviteCodeKey derives the key invite codes are stored under from a
+// secret the DATABASE DOES NOT HOLD: the server's admin token, from its
+// environment (security review, 2026-11-10).
+//
+// The short code is 8 characters from 31, about 40 bits: plenty behind
+// single use and the sign-in limits, and nothing at all against someone
+// holding a copy of the database, who could try every code against a
+// plain SHA-256 in under two hours and become the invited person. Keyed,
+// a copy of the database alone says nothing about the code. (The long
+// token in an invite link is 256 random bits and needs no key.)
+//
+// Changing the admin token therefore ends the typed codes of invites
+// still waiting; their links keep working, and a new invite is one tap.
+func SetInviteCodeKey(secret string) {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("alexandria-server invite codes v1"))
+	inviteCodeKey = mac.Sum(nil)
+}
+
+// hashInviteCode is the storage form of an invite's short code.
+func hashInviteCode(code string) string {
+	mac := hmac.New(sha256.New, inviteCodeKey)
+	mac.Write([]byte(code))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 // NormalizeInviteCode makes typing forgiving: case, spaces and dashes are
 // presentation.
 func NormalizeInviteCode(code string) string {
@@ -495,7 +533,7 @@ func (r *AccountRepository) CreateInvite(
 	if _, err := tx.Exec(`
 		INSERT INTO account_invites (id, profile_id, token_hash, code_hash, purpose, created_at, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		inv.ID, profileID, hashSecret(token), hashSecret(code), purpose,
+		inv.ID, profileID, hashSecret(token), hashInviteCode(code), purpose,
 		inv.CreatedAt, inv.ExpiresAt); err != nil {
 		return "", "", nil, err
 	}
@@ -511,17 +549,19 @@ func (r *AccountRepository) FindInvite(tokenOrCode string, now time.Time) (*Invi
 	if s == "" {
 		return nil, ErrInviteInvalid
 	}
-	hash := hashSecret(s)
+	// A token is looked up by its hash, a typed code by its keyed hash:
+	// each against its own column, so neither can stand in for the other.
+	column, hash := "token_hash", hashSecret(s)
 	if !strings.HasPrefix(s, InviteTokenPrefix) {
-		hash = hashSecret(NormalizeInviteCode(s))
+		column, hash = "code_hash", hashInviteCode(NormalizeInviteCode(s))
 	}
 	inv := &Invite{}
 	err := database.DB.QueryRow(`
 		SELECT i.id, i.profile_id, p.name, i.purpose, i.created_at, i.expires_at
 		FROM account_invites i JOIN profiles p ON p.id = i.profile_id
-		WHERE (i.token_hash = ? OR i.code_hash = ?)
+		WHERE i.`+column+` = ?
 		  AND i.used_at IS NULL AND i.expires_at > ?`,
-		hash, hash, now.Unix()).Scan(&inv.ID, &inv.ProfileID, &inv.ProfileName,
+		hash, now.Unix()).Scan(&inv.ID, &inv.ProfileID, &inv.ProfileName,
 		&inv.Purpose, &inv.CreatedAt, &inv.ExpiresAt)
 	if err == sql.ErrNoRows {
 		return nil, ErrInviteInvalid

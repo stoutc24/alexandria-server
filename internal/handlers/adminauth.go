@@ -6,6 +6,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -35,6 +36,64 @@ type AdminAuthHandler struct {
 	// Manage server with a person's account (IssueAccountDeviceToken) and
 	// for that phone's step-up codes (FreshCode). Set by UseAccounts.
 	accounts *repository.AccountRepository
+	// strikes counts each signed-in phone's wrong step-up codes in a row
+	// (stepUpStrike).
+	strikesMu sync.Mutex
+	strikes   map[string]int
+}
+
+// StepUpWrongBeforeSignOut is how many wrong step-up codes in a row end a
+// phone's Manage server sign-in (security review, 2026-11-10). The
+// allowance alone (ten, then one a minute) only slowed a stolen phone's
+// token down: a guess a minute, for as long as the token lived, finds a
+// six-digit code about one month in eight. Nobody who has their
+// authenticator gets ten wrong in a row; after that the phone signs in
+// again, with the password.
+const StepUpWrongBeforeSignOut = 10
+
+// stepUpStrike counts a wrong step-up code from a signed-in phone and, at
+// StepUpWrongBeforeSignOut in a row, ends that phone's sign-in. true
+// means it did, and the reply is written. The browser's session has no
+// step-ups to count.
+func (h *AdminAuthHandler) stepUpStrike(c *fiber.Ctx, action string) (bool, error) {
+	id := middleware.AdminDevice(c)
+	if id == "" {
+		return false, nil
+	}
+	h.strikesMu.Lock()
+	if h.strikes == nil {
+		h.strikes = make(map[string]int)
+	}
+	h.strikes[id]++
+	out := h.strikes[id] >= StepUpWrongBeforeSignOut
+	if out {
+		delete(h.strikes, id)
+	}
+	h.strikesMu.Unlock()
+	if !out {
+		return false, nil
+	}
+	if _, err := h.auth.RevokeDeviceToken(id); err != nil &&
+		!errors.Is(err, repository.ErrAdminDeviceNotFound) {
+		return true, serverError(c, "could not end the device sign-in", err)
+	}
+	log.Printf("%s: %d wrong codes in a row%s — signed that phone out of "+
+		"Manage server", action, StepUpWrongBeforeSignOut, callerForLog(c))
+	return true, c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+		"error":  "too many wrong codes; this phone was signed out of Manage server",
+		"reason": "device-token-invalid",
+	})
+}
+
+// stepUpCleared forgets a phone's wrong codes once it sends a right one.
+func (h *AdminAuthHandler) stepUpCleared(c *fiber.Ctx) {
+	id := middleware.AdminDevice(c)
+	if id == "" {
+		return
+	}
+	h.strikesMu.Lock()
+	delete(h.strikes, id)
+	h.strikesMu.Unlock()
 }
 
 // UseAccounts gives the handler people's sign-ins, for admin access
@@ -543,10 +602,14 @@ func (h *AdminAuthHandler) FreshCode(
 	}
 	if !ok {
 		log.Printf("%s step-up refused%s: %s", action, callerForLog(c), refusal)
+		if out, err := h.stepUpStrike(c, action); out {
+			return false, err
+		}
 		return false, c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "wrong code", "reason": "step-up-failed"})
 	}
 	h.stepUps.Refund(stepUpKey(c))
+	h.stepUpCleared(c)
 	return true, nil
 }
 
@@ -569,6 +632,9 @@ func (h *AdminAuthHandler) accountFreshCode(
 	}
 	refused := func(why string) (bool, error) {
 		log.Printf("%s step-up refused%s: %s", action, callerForLog(c), why)
+		if out, err := h.stepUpStrike(c, action); out {
+			return false, err
+		}
 		return false, c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "wrong code", "reason": "step-up-failed"})
 	}
@@ -593,6 +659,7 @@ func (h *AdminAuthHandler) accountFreshCode(
 		return refused("the account's two-step code was wrong or spent")
 	}
 	h.stepUps.Refund(stepUpKey(c))
+	h.stepUpCleared(c)
 	return true, nil
 }
 
@@ -715,6 +782,9 @@ func (h *AdminAuthHandler) IssueAccountDeviceToken(c *fiber.Ctx) error {
 	if err != nil {
 		return serverError(c, "could not create a device sign-in", err)
 	}
+	// The device asking is the one this sign-in lives on: signing that
+	// device out ends it (ProfileRepository.RevokeToken).
+	viaToken, _ := middleware.Device(c)
 	dev, err := h.auth.CreateDeviceToken(adminauth.HashToken(token),
 		repository.NewAdminDevice{
 			Label:       sanitizeDeviceLabel(req.DeviceLabel),
@@ -723,6 +793,7 @@ func (h *AdminAuthHandler) IssueAccountDeviceToken(c *fiber.Ctx) error {
 			SchemeBasis: schemeBasis(c, h.httpsDeclared, req.Persistent),
 			ProfileID:   login.ProfileID,
 			Scope:       login.AdminAccess,
+			ViaToken:    viaToken,
 		}, now)
 	if err != nil {
 		return serverError(c, "could not save the device sign-in", err)

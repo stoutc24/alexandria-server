@@ -80,6 +80,7 @@ func RequireAdmin(
 	cfg *config.Config,
 	auth *repository.AdminAuthRepository,
 ) fiber.Handler {
+	publicHost := publicHostOf(cfg.PublicURL)
 	return func(c *fiber.Ctx) error {
 		enrolled, err := auth.Enrolled()
 		if err != nil {
@@ -91,6 +92,11 @@ func RequireAdmin(
 			if raw := c.Cookies(AdminSessionCookie); raw != "" {
 				ok, err := auth.SessionValid(adminauth.HashToken(raw))
 				if err == nil && ok {
+					// The cookie counts only for the admin page's own
+					// requests (sameOriginGuard).
+					if !sameOriginGuard(c, publicHost) {
+						return refuseCrossOrigin(c)
+					}
 					return c.Next()
 				}
 			}
@@ -374,17 +380,23 @@ func Device(c *fiber.Ctx) (id, label string) {
 // header — which is exactly what it did.
 //
 // Safe to accept here because the session cookie is SameSite=Strict, so
-// it is not sent on cross-site requests at all; a foreign page cannot
-// borrow it to read the index or to POST a sync.
+// it is not sent on cross-site requests at all, and because the cookie
+// counts only for the admin page's own requests (sameOriginGuard): a
+// page on another port of the same machine cannot borrow it to POST a
+// sync either.
 func RequireAnyToken(
 	cfg *config.Config,
 	profiles *repository.ProfileRepository,
 	auth *repository.AdminAuthRepository,
 ) fiber.Handler {
+	publicHost := publicHostOf(cfg.PublicURL)
 	return func(c *fiber.Ctx) error {
 		if raw := c.Cookies(AdminSessionCookie); raw != "" {
 			ok, err := auth.SessionValid(adminauth.HashToken(raw))
 			if err == nil && ok {
+				if !sameOriginGuard(c, publicHost) {
+					return refuseCrossOrigin(c)
+				}
 				return c.Next()
 			}
 		}

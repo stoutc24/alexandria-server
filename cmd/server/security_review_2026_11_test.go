@@ -9,6 +9,8 @@ import (
 	"compress/gzip"
 	"net/http"
 	"testing"
+
+	"github.com/stoutsolutions/alexandria-server/internal/middleware"
 )
 
 // A compressed body is refused before anything reads it: Fiber would
@@ -17,10 +19,15 @@ import (
 func TestCompressedRequestBodiesAreRefused(t *testing.T) {
 	s := newTestServer(t)
 	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	// 16 MiB of zeros once unpacked (twice the body limit), a few KB sent.
+	zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 12 MiB of zeros once unpacked (half as much again as the body limit),
+	// about 12 KB sent: small enough for a caller with no credential
+	// (middleware.SmallBodyLimit), so it is the encoding that refuses it.
 	chunk := make([]byte, 1<<20)
-	for i := 0; i < 16; i++ {
+	for i := 0; i < 12; i++ {
 		if _, err := zw.Write(chunk); err != nil {
 			t.Fatal(err)
 		}
@@ -28,7 +35,7 @@ func TestCompressedRequestBodiesAreRefused(t *testing.T) {
 	if err := zw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if buf.Len() > 64<<10 {
+	if buf.Len() > middleware.SmallBodyLimit {
 		t.Fatalf("the bomb is %d bytes: not a small request", buf.Len())
 	}
 	for _, enc := range []string{"gzip", "deflate", "br", "GZIP", "gzip, gzip", "identity, gzip"} {

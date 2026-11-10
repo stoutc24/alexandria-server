@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -29,6 +30,9 @@ func buildApp(cfg *config.Config) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:      "Alexandria Server v1.0.0",
 		ErrorHandler: customErrorHandler,
+
+		// IPv4 unless ALEXANDRIA_LISTEN_ADDR names an IPv6 address.
+		Network: listenNetwork(cfg.ListenAddr),
 
 		// Catalogue chunks are the largest thing this accepts. 8 MB is
 		// double what a full chunk needs, so a slightly chatty client
@@ -76,6 +80,11 @@ func buildApp(cfg *config.Config) *fiber.App {
 	linkRepo := repository.NewLinkRepository()
 	adminAuthRepo := repository.NewAdminAuthRepository()
 
+	// Room for a large body only for a caller who has shown a credential
+	// (middleware.BodyCap): decided when the headers arrive, before the
+	// body limit's 8 MiB is set aside for anyone who merely declares it.
+	app.Server().HeaderReceived = middleware.BodyCap(cfg, profileRepo, adminAuthRepo)
+
 	catalogHandler := handlers.NewCatalogHandler(catalogRepo)
 	nowPlayingHandler := handlers.NewNowPlayingHandler(nowplaying.NewStore())
 	adminHandler := handlers.NewAdminHandler(profileRepo, cfg.DBPath)
@@ -94,6 +103,9 @@ func buildApp(cfg *config.Config) *fiber.App {
 		}
 		secrets = v
 	}
+	// Invite codes are stored under a key from the environment, not the
+	// database (repository.SetInviteCodeKey).
+	repository.SetInviteCodeKey(cfg.APIToken)
 	accountRepo := repository.NewAccountRepository(secrets)
 	accountsHandler := handlers.NewAccountsHandler(accountRepo, profileRepo, adminAuthHandler.FreshCode)
 	// A link by code keeps the key its request carried (Alexandria Link).
@@ -413,6 +425,15 @@ func buildApp(cfg *config.Config) *fiber.App {
 	stats.Delete("/", statsHandler.DeleteOwnStats)
 
 	return app
+}
+
+// listenNetwork is the kind of socket the configured listen address needs:
+// IPv6 for an IPv6 address, IPv4 (as before) for anything else.
+func listenNetwork(addr string) string {
+	if a, err := netip.ParseAddr(addr); err == nil && a.Is6() && !a.Is4In6() {
+		return fiber.NetworkTCP6
+	}
+	return fiber.NetworkTCP4
 }
 
 // quietPaths are the requests the access log skips: every path that

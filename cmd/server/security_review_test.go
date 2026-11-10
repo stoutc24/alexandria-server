@@ -20,6 +20,7 @@ import (
 
 	"github.com/stoutsolutions/alexandria-server/internal/adminauth"
 	"github.com/stoutsolutions/alexandria-server/internal/config"
+	"github.com/stoutsolutions/alexandria-server/internal/handlers"
 	"github.com/stoutsolutions/alexandria-server/internal/nowplaying"
 )
 
@@ -178,15 +179,17 @@ func TestStrangersCannotBlockASignedInPhonesStepUps(t *testing.T) {
 	}
 }
 
-// #1. A phone's wrong step-up codes spend its own allowance only: from
-// as many addresses as it likes, a stolen phone token gets ten, and the
-// owner's other phone and sign-in are untouched.
-func TestAPhonesWrongStepUpsSpendOnlyItsOwnAllowance(t *testing.T) {
+// #1. A phone's wrong step-up codes are its own: from as many addresses
+// as it likes, a stolen phone token gets nine refusals, the tenth wrong
+// code in a row signs that phone out (security review, 2026-11-10:
+// handlers.StepUpWrongBeforeSignOut), and the owner's other phone and
+// sign-in are untouched.
+func TestAPhonesWrongStepUpsAreItsOwnAndTenInARowSignItOut(t *testing.T) {
 	s := newTestServer(t, behindTrustedProxy)
 	e := enrollDirect(t)
 	stolen := s.signIn(e, true, nil)
 	other := s.signIn(e, true, nil)
-	for i := 0; i < adminauth.StepUpGuessBurst; i++ {
+	for i := 0; i < handlers.StepUpWrongBeforeSignOut-1; i++ {
 		hdr := bearer(stolen.token)
 		hdr["X-Forwarded-For"] = fmt.Sprintf("203.0.113.%d", i+1)
 		s.expectRefusal("step-up-failed", "POST", "/api/v1/admin/backup",
@@ -194,9 +197,17 @@ func TestAPhonesWrongStepUpsSpendOnlyItsOwnAllowance(t *testing.T) {
 	}
 	hdr := bearer(stolen.token)
 	hdr["X-Forwarded-For"] = "203.0.113.200"
-	r := s.do("POST", "/api/v1/admin/backup", map[string]string{"code": freshCode(t, e.secret)}, hdr)
-	if r.status != http.StatusTooManyRequests || r.str("reason") != "guess-limit" {
-		t.Fatalf("the stolen token's next step-up, right code and all: %d %v, want 429 guess-limit", r.status, r)
+	r := s.do("POST", "/api/v1/admin/backup", map[string]string{"code": wrongCode(t, e.secret)}, hdr)
+	if r.status != http.StatusUnauthorized || r.str("reason") != "device-token-invalid" {
+		t.Fatalf("the tenth wrong code in a row: %d %v, want 401 device-token-invalid (signed out)", r.status, r)
+	}
+	// Signed out for good: the right code is no use to that token now.
+	r = s.do("POST", "/api/v1/admin/backup", map[string]string{"code": freshCode(t, e.secret)}, hdr)
+	if r.status != http.StatusUnauthorized || r.str("reason") != "device-token-invalid" {
+		t.Fatalf("the stolen token's next step-up, right code and all: %d %v, want 401 device-token-invalid", r.status, r)
+	}
+	if deviceRowExists(t, stolen.id()) {
+		t.Fatal("the phone's sign-in is still stored after ten wrong codes in a row")
 	}
 
 	if r := s.do("POST", "/api/v1/admin/backup",
@@ -297,7 +308,7 @@ func TestClaimCapsTheDeviceLabel(t *testing.T) {
 	s.expectStatus(http.StatusOK, "POST", approvePath,
 		map[string]string{"code": code, "name": "Chris"}, bearer(testAPIToken))
 	claimed := s.expectStatus(http.StatusOK, "POST", "/api/v1/link/claim", map[string]string{
-		"claimSecret": claimSecret, "deviceLabel": strings.Repeat("x", 100_000)}, nil)
+		"claimSecret": claimSecret, "deviceLabel": strings.Repeat("x", 10_000)}, nil)
 	me := s.expectStatus(http.StatusOK, "GET", "/api/v1/devices/me", nil, bearer(claimed.str("token")))
 	if n := len(me.str("label")); n != 80 {
 		t.Fatalf("the claimed label is %d bytes, want 80", n)

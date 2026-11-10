@@ -393,6 +393,13 @@ func RunMigrations() error {
 		// copied device token could make first. NULL for a request
 		// without one (an app from before Link).
 		`ALTER TABLE link_requests ADD COLUMN public_key TEXT`,
+		// Which of a person's devices made a Manage server sign-in with
+		// their account (its profile_tokens id), so signing that ONE
+		// device out ends the sign-in it made (security review,
+		// 2026-11-10: the phone's link went and its admin sign-in stayed).
+		// "" for the admin login's own sign-ins, and for an account's made
+		// before this column: those still go with "sign out all devices".
+		`ALTER TABLE admin_device_tokens ADD COLUMN via_token TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := DB.Exec(alter); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {

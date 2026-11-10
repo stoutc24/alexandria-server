@@ -20,6 +20,14 @@ type Config struct {
 	DBPath   string
 	APIToken string
 
+	// ListenAddr is the one address this server listens on, from
+	// ALEXANDRIA_LISTEN_ADDR ("127.0.0.1", "192.168.1.9", "::1"). Empty,
+	// the default, is every address the machine has — what a container
+	// needs, since Docker decides what reaches it. Outside a container it
+	// keeps the server to this machine alone (behind a reverse proxy on
+	// the same box) or to one network.
+	ListenAddr string
+
 	// ServerName labels this server in LAN discovery pick-lists. It
 	// defaults to the machine's hostname, which is WRONG in Docker:
 	// there the hostname is the container id, so the server appears to
@@ -65,6 +73,7 @@ const defaultToken = "change-me"
 func Load() *Config {
 	cfg := &Config{
 		Port:       getEnv("PORT", "4000"),
+		ListenAddr: strings.TrimSpace(os.Getenv("ALEXANDRIA_LISTEN_ADDR")),
 		DBPath:     getEnv("DB_PATH", "./alexandria.db"),
 		APIToken:   os.Getenv("ALEXANDRIA_API_TOKEN"),
 		ServerName: os.Getenv("ALEXANDRIA_SERVER_NAME"),
@@ -84,6 +93,11 @@ func Load() *Config {
 	if len(cfg.APIToken) < 16 {
 		log.Fatal("ALEXANDRIA_API_TOKEN is too short; use at least 16 " +
 			"characters (openssl rand -hex 32).")
+	}
+	if problem := listenAddrProblem(cfg.ListenAddr); problem != "" {
+		// Set but unusable is refused: quietly listening everywhere would
+		// be the opposite of what was asked for.
+		log.Fatal(problem)
 	}
 
 	key, problem := secretsKey(
@@ -105,6 +119,20 @@ func Load() *Config {
 	cfg.SecretsKey = key
 
 	return cfg
+}
+
+// listenAddrProblem says why ALEXANDRIA_LISTEN_ADDR cannot be used, "" when
+// it is unset or a plain IP address.
+func listenAddrProblem(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	if _, err := netip.ParseAddr(addr); err != nil {
+		return "ALEXANDRIA_LISTEN_ADDR must be one IP address of this " +
+			"machine (127.0.0.1, 192.168.1.9, ::1), without a port; got " +
+			strconv.Quote(addr)
+	}
+	return ""
 }
 
 // secretsKey reads the accounts' secrets key from the variable, or from

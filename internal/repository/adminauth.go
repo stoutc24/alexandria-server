@@ -271,6 +271,9 @@ type NewAdminDevice struct {
 	SchemeBasis string
 	ProfileID   string
 	Scope       string
+	// ViaToken is the person's own device (its profile_tokens id) that
+	// made this sign-in with their account; "" for the admin login's.
+	ViaToken string
 }
 
 // DeviceTokenState is the verdict of LookupDeviceToken.
@@ -371,10 +374,10 @@ func (r *AdminAuthRepository) CreateDeviceToken(
 	_, err := database.DB.Exec(`
 		INSERT INTO admin_device_tokens
 			(id, token_hash, label, persistent, created_via, scheme_basis,
-			 created_at, last_used_at, expires_at, profile_id, scope)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 created_at, last_used_at, expires_at, profile_id, scope, via_token)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ID, tokenHash, d.Label, persistent, d.CreatedVia, d.SchemeBasis,
-		t.Unix(), t.Unix(), d.ExpiresAt.Unix(), d.ProfileID, d.Scope)
+		t.Unix(), t.Unix(), d.ExpiresAt.Unix(), d.ProfileID, d.Scope, in.ViaToken)
 	if err != nil {
 		return nil, err
 	}

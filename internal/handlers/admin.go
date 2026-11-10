@@ -275,6 +275,10 @@ func scrubSignInSecrets(path string) error {
 	for _, t := range signInTables {
 		stmts = append(stmts, `DELETE FROM `+t)
 	}
+	// And no invite still waiting: each is a way into someone's profile,
+	// and a copy on a phone has no use for one (security review,
+	// 2026-11-10). Used invites are history and stay.
+	stmts = append(stmts, `DELETE FROM account_invites WHERE used_at IS NULL`)
 	stmts = append(stmts, `VACUUM`)
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {
