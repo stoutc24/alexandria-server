@@ -48,6 +48,17 @@ func (s *Server) jellyfin(w http.ResponseWriter, r *http.Request) {
 		ok(w, map[string]any{"parts": s.recordedParts(r.Method != http.MethodGet), "refuseDownload": s.refusesDownload()})
 		return
 	}
+	// Mark Watched / Mark Unwatched (watched.go), in every mode: the
+	// readout, and POST / DELETE /UserPlayedItems/{id} for a film, an
+	// episode, a season or a series. Anything else on that route is
+	// answered below as it always was.
+	if len(p) == 2 && p[0] == "__showcase" && p[1] == "watched" {
+		s.watchedControl(w, r)
+		return
+	}
+	if s.jfWatchedRoute(w, r, p) {
+		return
+	}
 	// Tolerate a path prefix (the demo uses /stable): drop leading segments
 	// until a known root appears.
 	roots := map[string]bool{"System": true, "Users": true, "QuickConnect": true, "Items": true, "Artists": true, "Genres": true,
@@ -197,6 +208,10 @@ func (s *Server) jfUsers(w http.ResponseWriter, r *http.Request, p []string) {
 	case "Images":
 		serveJPEG(w, s.art("user", artSquare, 300))
 	case "PlayedItems", "FavoriteItems":
+		// The legacy played route, for a video: the mark is kept (watched.go).
+		if p[1] == "PlayedItems" && len(p) >= 3 && s.jfWatchedWrite(w, r, p[2], false) {
+			return
+		}
 		ok(w, map[string]any{"PlaybackPositionTicks": 0, "PlayCount": 1, "Played": true})
 	case "PlayingItems":
 		w.WriteHeader(http.StatusNoContent)
@@ -483,7 +498,7 @@ func (s *Server) jfVideoSource(id string, clip string, durationSec float64, uhd 
 func (s *Server) jfMovie(m *Movie, full bool) map[string]any {
 	id := s.cat.JFID(m.ID)
 	dur := float64(m.Minutes) * 60
-	prog := s.progressOf(m.ID, m.Progress)
+	prog := s.movieProgress(m)
 	item := map[string]any{
 		"Name": m.Title, "OriginalTitle": m.Title, "ServerId": jfServerID, "Id": id, "Etag": id, "DateCreated": jfDate(m.AddedAt), "CanDelete": false,
 		"SortName": strings.ToLower(strings.TrimPrefix(m.Title, "The ")), "PremiereDate": jfDate(time.Date(m.Year, 5, 10, 0, 0, 0, 0, time.UTC)),
@@ -517,7 +532,7 @@ func genreItems(s *Server, genres []string) []map[string]any {
 
 func (s *Server) jfShow(sh *Show, full bool) map[string]any {
 	id := s.cat.JFID(sh.ID)
-	watched, total := sh.Counts()
+	watched, total := s.showCounts(sh)
 	item := map[string]any{
 		"Name": sh.Title, "ServerId": jfServerID, "Id": id, "Etag": id, "DateCreated": jfDate(sh.AddedAt), "CanDelete": false,
 		"SortName": strings.ToLower(strings.TrimPrefix(sh.Title, "The ")), "PremiereDate": jfDate(time.Date(sh.Year, 9, 12, 0, 0, 0, 0, time.UTC)),
@@ -537,12 +552,7 @@ func (s *Server) jfShow(sh *Show, full bool) map[string]any {
 func (s *Server) jfSeason(se *Season) map[string]any {
 	id := s.cat.JFID(se.ID)
 	showID := s.cat.JFID(se.Show.ID)
-	watched := 0
-	for _, e := range se.Episodes {
-		if e.Watched {
-			watched++
-		}
-	}
+	watched := s.seasonWatched(se)
 	return map[string]any{
 		"Name": fmt.Sprintf("Season %d", se.Index), "ServerId": jfServerID, "Id": id, "Etag": id, "DateCreated": jfDate(se.Show.AddedAt),
 		"SortName": fmt.Sprintf("%04d", se.Index), "IndexNumber": se.Index, "ProductionYear": se.Show.Year, "IsFolder": true, "Type": "Season",
@@ -557,7 +567,8 @@ func (s *Server) jfEpisode(e *Episode, full bool) map[string]any {
 	showID := s.cat.JFID(e.Show.ID)
 	seasonID := s.cat.JFID(e.Season.ID)
 	dur := float64(e.Minutes) * 60
-	prog := s.progressOf(e.ID, e.Progress)
+	prog := s.episodeProgress(e)
+	seen := s.episodeWatched(e)
 	item := map[string]any{
 		"Name": e.Title, "ServerId": jfServerID, "Id": id, "Etag": id, "DateCreated": jfDate(e.Aired), "CanDelete": false,
 		"SortName": fmt.Sprintf("%04d-%04d", e.Season.Index, e.Index), "PremiereDate": jfDate(e.Aired), "ProductionYear": e.Aired.Year(),
@@ -566,10 +577,10 @@ func (s *Server) jfEpisode(e *Episode, full bool) map[string]any {
 		"SeriesId": showID, "SeriesName": e.Show.Title, "SeriesPrimaryImageTag": "tag" + showID[:8], "SeasonId": seasonID, "SeasonName": fmt.Sprintf("Season %d", e.Season.Index),
 		"ParentBackdropItemId": showID, "ParentBackdropImageTags": []string{"bd" + showID[:8]}, "ParentLogoItemId": nil,
 		"LocationType": "FileSystem", "Container": "mp4", "ImageTags": map[string]any{"Primary": "tag" + id[:8]}, "BackdropImageTags": []any{},
-		"UserData": s.jfUserData(e.ID, prog, dur, map[bool]int{true: 1, false: 0}[e.Watched], e.lastPlay(s.cat)),
+		"UserData": s.jfUserData(e.ID, prog, dur, map[bool]int{true: 1, false: 0}[seen], e.lastPlay(s.cat)),
 		"Width":    1280, "Height": 720, "Path": "/video/" + e.Clip + "/clip.mp4",
 	}
-	if e.Watched {
+	if seen {
 		item["UserData"].(map[string]any)["Played"] = true
 	}
 	if full {
@@ -938,7 +949,7 @@ func (s *Server) jfResume(r *http.Request) map[string]any {
 	}
 	video := qStr(r, "MediaTypes") == "Video" || strings.Contains(types, "Movie") || strings.Contains(types, "Episode")
 	if video || types == "" {
-		movies, episodes := s.cat.ContinueWatching()
+		movies, episodes := s.continueWatching()
 		for _, m := range movies {
 			items = append(items, s.jfMovie(m, strings.Contains(qStr(r, "Fields"), "MediaSources")))
 		}
@@ -1264,14 +1275,14 @@ func (s *Server) jfShows(w http.ResponseWriter, r *http.Request, p []string) {
 		var items []map[string]any
 		seriesFilter := s.cat.IDForJF(qStr(r, "SeriesId"))
 		full := strings.Contains(qStr(r, "Fields"), "MediaSources")
-		for _, e := range s.cat.NextUp() {
+		for _, e := range s.nextUp() {
 			if seriesFilter != "" && e.Show.ID != seriesFilter {
 				continue
 			}
 			items = append(items, s.jfEpisode(e, full))
 		}
 		if strings.EqualFold(qStr(r, "EnableResumable"), "true") {
-			_, eps := s.cat.ContinueWatching()
+			_, eps := s.continueWatching()
 			for _, e := range eps {
 				items = append(items, s.jfEpisode(e, full))
 			}

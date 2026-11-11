@@ -51,8 +51,13 @@ func (s *Server) plex(w http.ResponseWriter, r *http.Request) {
 		// GET /__showcase/lyrics → whether lyrics are down and how many
 		// lyric requests came; POST ?down=1|0 switches LyricsDown.
 		// /__showcase/scan → the library-scan stand-in (plex_scan.go).
+		// /__showcase/watched → the watched marks (watched.go).
 		if len(p) == 2 && p[1] == "scan" {
 			s.plexScanControl(w, r)
+			return
+		}
+		if len(p) == 2 && p[1] == "watched" {
+			s.watchedControl(w, r)
 			return
 		}
 		if len(p) == 2 && p[1] == "lyrics" {
@@ -114,6 +119,11 @@ func (s *Server) plex(w http.ResponseWriter, r *http.Request) {
 		// (plex_scan.go; everyone is the owner unless a probe says not).
 		if len(p) == 2 && p[1] == "prefs" && !s.plexIsOwner() {
 			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		// Mark Watched / Mark Unwatched: the mark is kept (watched.go).
+		if len(p) == 2 && (p[1] == "scrobble" || p[1] == "unscrobble") {
+			s.plexWatchedWrite(w, r, p[1] == "scrobble")
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -191,7 +201,7 @@ func (s *Server) plexMovie(m *Movie, full bool) map[string]any {
 	k := s.cat.PlexKey(m.ID)
 	thumb, art := s.plexArt(m.ID)
 	durMs := int64(m.Minutes) * 60000
-	prog := s.progressOf(m.ID, m.Progress)
+	prog := s.movieProgress(m)
 	item := map[string]any{
 		"ratingKey": k, "key": "/library/metadata/" + k, "guid": "plex://movie/" + s.cat.JFID(m.ID), "studio": "Showcase Pictures", "type": "movie",
 		"title": m.Title, "titleSort": strings.TrimPrefix(m.Title, "The "), "librarySectionTitle": "Movies", "librarySectionID": 1, "librarySectionKey": "/library/sections/1",
@@ -224,7 +234,7 @@ func (s *Server) plexMovie(m *Movie, full bool) map[string]any {
 func (s *Server) plexShow(sh *Show) map[string]any {
 	k := s.cat.PlexKey(sh.ID)
 	thumb, art := s.plexArt(sh.ID)
-	watched, total := sh.Counts()
+	watched, total := s.showCounts(sh)
 	item := map[string]any{
 		"ratingKey": k, "key": "/library/metadata/" + k + "/children", "guid": "plex://show/" + s.cat.JFID(sh.ID), "studio": "Showcase Television", "type": "show",
 		"title": sh.Title, "titleSort": strings.TrimPrefix(sh.Title, "The "), "librarySectionTitle": "TV Shows", "librarySectionID": 2, "librarySectionKey": "/library/sections/2",
@@ -241,12 +251,7 @@ func (s *Server) plexShow(sh *Show) map[string]any {
 func (s *Server) plexSeason(se *Season) map[string]any {
 	k := s.cat.PlexKey(se.ID)
 	thumb, art := s.plexArt(se.ID)
-	watched := 0
-	for _, e := range se.Episodes {
-		if e.Watched {
-			watched++
-		}
-	}
+	watched := s.seasonWatched(se)
 	return map[string]any{
 		"ratingKey": k, "key": "/library/metadata/" + k + "/children", "parentRatingKey": s.cat.PlexKey(se.Show.ID), "guid": "plex://season/" + s.cat.JFID(se.ID), "type": "season",
 		"title": fmt.Sprintf("Season %d", se.Index), "parentKey": "/library/metadata/" + s.cat.PlexKey(se.Show.ID), "parentTitle": se.Show.Title, "summary": "", "index": se.Index,
@@ -262,7 +267,7 @@ func (s *Server) plexEpisode(e *Episode, full bool) map[string]any {
 	showThumb, showArt := s.plexArt(e.Show.ID)
 	seasonThumb, _ := s.plexArt(e.Season.ID)
 	durMs := int64(e.Minutes) * 60000
-	prog := s.progressOf(e.ID, e.Progress)
+	prog := s.episodeProgress(e)
 	item := map[string]any{
 		"ratingKey": k, "key": "/library/metadata/" + k, "parentRatingKey": s.cat.PlexKey(e.Season.ID), "grandparentRatingKey": s.cat.PlexKey(e.Show.ID),
 		"guid": "plex://episode/" + s.cat.JFID(e.ID), "type": "episode", "title": e.Title, "grandparentKey": "/library/metadata/" + s.cat.PlexKey(e.Show.ID),
@@ -275,7 +280,7 @@ func (s *Server) plexEpisode(e *Episode, full bool) map[string]any {
 	if prog > 0 && prog < 1 {
 		item["viewOffset"] = int64(prog * float64(durMs))
 		item["lastViewedAt"] = e.lastPlay(s.cat).Unix()
-	} else if e.Watched {
+	} else if s.episodeWatched(e) {
 		item["viewCount"] = 1
 		item["lastViewedAt"] = e.lastPlay(s.cat).Unix()
 	}
@@ -689,7 +694,7 @@ func plexViewGroup(typ int) string {
 
 func (s *Server) plexOnDeck(section string) []map[string]any {
 	var items []map[string]any
-	movies, episodes := s.cat.ContinueWatching()
+	movies, episodes := s.continueWatching()
 	if section == "" || section == plexMovies {
 		for _, m := range movies {
 			items = append(items, s.plexMovie(m, false))
@@ -699,7 +704,7 @@ func (s *Server) plexOnDeck(section string) []map[string]any {
 		for _, e := range episodes {
 			items = append(items, s.plexEpisode(e, false))
 		}
-		for _, e := range s.cat.NextUp() {
+		for _, e := range s.nextUp() {
 			items = append(items, s.plexEpisode(e, false))
 		}
 	}

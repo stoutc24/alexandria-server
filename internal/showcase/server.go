@@ -113,6 +113,9 @@ type Server struct {
 	// Plex "Scan Library Files" (plex_scan.go): the scans asked for, and
 	// the owner switch. Empty until a scan is asked for.
 	scan plexScanState
+	// Mark Watched / Mark Unwatched (watched.go): the marks the apps made on
+	// films and episodes, and the requests. Empty until one is made.
+	watched watchedState
 }
 
 // partRequest is one recorded song-file request: a Plex part, or a
