@@ -35,14 +35,25 @@ installing and running the Alexandria companion server itself, see the
 | [TV shows on the Apple TV](apple-tv-shows.md) | Which season a show opens on, Play All (Specials left out), Play Season and Auto-play |
 | [How screens load, and data on cellular](loading-and-data-use.md) | Screens open from a saved copy; shelves that stay put; what downloads on cellular, Data Saver and Low Data Mode; Discover; signing out |
 | [Recently Played and Top Artists in Plex Music](recently-played.md) | Plays from every device on your account; when a song shows up; whose plays; data |
-| [Watching videos on the phone, tablet and computer](videos.md) | The seek bar and its preview pictures (and where they come from), Picture in Picture on iPhone, iPad and Android |
+| [Watching videos on the phone, tablet and computer](videos.md) | The seek bar and its preview pictures (and where they come from); the volume speaker, mute, keys and mouse wheel; subtitles Off; Picture in Picture on iPhone, iPad and Android |
 | [Browsing films and shows](browsing-movies-and-shows.md) | Plex's own shelves on Plex Video Home; a library's Recommended, Library and Collections tabs; filters (genre, decade, rating, quality, watched) and sorts; the Apple TV's library pages |
+| [Scanning a Plex library, and refreshing what a TV shows](scan-and-refresh-libraries.md) | Scan library files for the server's owner, on each library and for all of them; the messages; Refresh on the TV apps for one library or a whole Plex server |
 
 Contact for questions or problems: stoutservers@gmail.com
 
 ## Check on a real device before publishing
 
 These were proven in tests and simulators, not yet on hardware:
+
+- [ ] Video volume, subtitles Off, scanning and refreshing (phone 1262 and
+      1263, Apple TV 206, Samsung and Fire TV): proven in tests, on the
+      simulators and against a test server; one real scan of one Plex
+      library was measured. Still to check on real devices: the speaker,
+      slider, keys and wheel on a Mac and a Windows PC; the speaker's
+      slider on an iPhone and an Android phone; subtitles staying off
+      through a whole episode; the ⋮ scan on a phone signed in as the
+      server's owner and as a shared user (who must not see it); the hold
+      menus and Server Admin on a real TV.
 
 - [ ] Alexandria Link (phone, Apple TV, Samsung and Fire TV; server from
       8 November 2026): proven against a test server on loopback (a code

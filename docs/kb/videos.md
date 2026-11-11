@@ -44,6 +44,50 @@ The pictures come from, in this order:
 
 Live TV has no preview pictures.
 
+## Volume
+
+The speaker at the bottom left of the player is the volume. It is on Plex
+and Jellyfin videos and on Live TV. Tap the video first if the controls
+are hidden. (Build 1262 and later.)
+
+### Mac and Windows
+
+- **Drag the slider** beside the speaker. This is Alexandria's own volume,
+  the same one as the slider on the music's Now Playing, and the app
+  remembers it. Your computer's volume is not changed.
+- **Click the speaker** to mute the video. Click it again to hear it. The
+  mute lasts for this viewing only.
+- **Up and Down arrow keys**, or the **mouse wheel** over the picture, turn
+  the volume up and down. A small badge at the top shows the new level for
+  a moment. Turning it up also takes the mute off.
+
+Before build 1262 a video always played at full volume on a computer,
+whatever the slider on Now Playing said.
+
+### iPhone, iPad and Android
+
+Tap the speaker. A small slider opens above it: this is the device's own
+volume, the same as the buttons on its side. There is no mute button; use
+the device's buttons.
+
+More about the two kinds of volume: [Volume on Now Playing](volume.md).
+
+## Subtitles
+
+Pick a language in the player's subtitles menu, or **Off**.
+
+- **Off** clears the line that is on screen straight away. (Build 1262 and
+  later. Before that, the line showing at that moment stayed on screen.)
+- **Off stays off** for the rest of the video, including when the app has
+  to open the stream again (a change of quality or audio, for example).
+  (Build 1263 and later. Before that, a video with a "default" subtitle
+  track could switch subtitles back on by itself.)
+
+One thing the app does not do: it does not save "Off" back to your Plex
+server. If Plex is set to show subtitles automatically, the next episode
+can start with them on again. That choice is made in Plex's own audio and
+subtitle settings for your account.
+
 ## Picture in Picture
 
 ### iPhone and iPad
