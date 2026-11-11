@@ -32,11 +32,13 @@ type Look struct {
 	TextSize   string `json:"textSize,omitempty"`
 }
 
-// lookColors are the profile colors. The accent takes the same twelve, or
-// "default".
+// lookColors are the profile colors, in the order the apps show them
+// (owner, 2026-11-11: twenty bold colors in place of the first twelve, all
+// twelve kept). The accent takes the same twenty, or "default".
 var lookColors = []string{
-	"red", "orange", "amber", "gold", "green", "teal",
-	"cyan", "blue", "indigo", "purple", "pink", "slate",
+	"red", "orange", "amber", "yellow", "lime", "green", "mint",
+	"teal", "cyan", "sky", "blue", "indigo", "violet", "purple",
+	"magenta", "pink", "brown", "gold", "slate", "gray",
 }
 
 // lookFields is every field of a look, in the order the API documents

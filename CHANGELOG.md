@@ -23,7 +23,9 @@ first. To update, see [Updating](README.md#updating); your data is kept.
   page background, Now Playing background, font and text size are kept
   on the server, so every device linked to them looks the same. A device
   can change only its own person's look, and only to the choices the
-  apps offer. The people list the admin page and Manage server read now
+  apps offer: twenty profile and accent colors (red, orange, amber,
+  yellow, lime, green, mint, teal, cyan, sky, blue, indigo, violet,
+  purple, magenta, pink, brown, gold, slate, gray). The people list the admin page and Manage server read now
   includes each person's look, read-only (nothing on the admin page shows
   it yet). Needs app versions that support it.
 - `ALEXANDRIA_LISTEN_ADDR`: when the server program runs outside Docker,

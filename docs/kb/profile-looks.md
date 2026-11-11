@@ -17,8 +17,8 @@ Every choice shows at once, so you can try them.
 
 | Setting | Choices |
 | --- | --- |
-| Profile color | 12 colors. Your circle on "Who's listening?", in the corner of the TV apps and on the You tab. |
-| Accent color | The app's own color, or one of 12. Buttons, icons and highlighted lines. |
+| Profile color | 20 colors. Your circle on "Who's listening?", in the corner of the TV apps and on the You tab. |
+| Accent color | The app's own color, or one of 20. Buttons, icons and highlighted lines. |
 | Background | Midnight (the usual), Black, Charcoal, Forest, Plum or Ocean. On a phone it applies in dark mode. |
 | Now Playing background | On the TV apps: the TV's own setting, None, Cover Colors, Fireplace, Rain, Snowfall, Library or Starfield. |
 | Font | Default, Rounded or Serif. |

@@ -398,7 +398,7 @@ func TestAStoredLookIsReadBackOnlyThroughTheLists(t *testing.T) {
 		}
 	}
 
-	set(`{"color":"mint","font":"serif","layout":"grid","accent":"<b>x</b>"}`)
+	set(`{"color":"mauve","font":"serif","layout":"grid","accent":"<b>x</b>"}`)
 	look, at := s.meLook(kate)
 	wantLook(t, "values off the lists", look, map[string]string{"font": "serif"})
 	if at != 5 {

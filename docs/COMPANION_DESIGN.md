@@ -305,8 +305,8 @@ own default.
 
 | field | values |
 |---|---|
-| `color` (the profile's own color: the avatar circle) | `red`, `orange`, `amber`, `gold`, `green`, `teal`, `cyan`, `blue`, `indigo`, `purple`, `pink`, `slate` |
-| `accent` (buttons, the focus highlight) | the same twelve, or `default` |
+| `color` (the profile's own color: the avatar circle) | `red`, `orange`, `amber`, `yellow`, `lime`, `green`, `mint`, `teal`, `cyan`, `sky`, `blue`, `indigo`, `violet`, `purple`, `magenta`, `pink`, `brown`, `gold`, `slate`, `gray` |
+| `accent` (buttons, the focus highlight) | the same twenty, or `default` |
 | `background` (the page background) | `midnight`, `black`, `charcoal`, `forest`, `plum`, `ocean` |
 | `ambiance` (behind Now Playing) | `none`, `coverColors`, `fireplace`, `rain`, `snowfall`, `library`, `starfield` |
 | `font` | `default`, `rounded`, `serif` |

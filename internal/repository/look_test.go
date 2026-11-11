@@ -58,7 +58,9 @@ func TestLookTimeOnlyMovesForward(t *testing.T) {
 
 // Every list is what the API documents.
 func TestLookListsAreTheDocumentedOnes(t *testing.T) {
-	colors := []string{"red", "orange", "amber", "gold", "green", "teal", "cyan", "blue", "indigo", "purple", "pink", "slate"}
+	colors := []string{"red", "orange", "amber", "yellow", "lime", "green", "mint",
+		"teal", "cyan", "sky", "blue", "indigo", "violet", "purple",
+		"magenta", "pink", "brown", "gold", "slate", "gray"}
 	want := map[string][]string{
 		"color":      colors,
 		"accent":     append(append([]string{}, colors...), "default"),
