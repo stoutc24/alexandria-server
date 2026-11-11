@@ -13,9 +13,12 @@ other devices.
 
 ## What the button says
 
-- **Mark watched** shows on something you have not watched, or have only
-  partly watched.
+- **Mark watched** shows on something you have not started.
 - **Mark unwatched** shows on something you have watched.
+- **Both** show on something partly watched: a film or an episode you
+  stopped part-way through, or a show or a season with some of its
+  episodes watched. Mark unwatched there also takes it off **Continue
+  Watching**.
 
 (The TV apps capitalise it: **Mark Watched**, **Mark Unwatched**.)
 
