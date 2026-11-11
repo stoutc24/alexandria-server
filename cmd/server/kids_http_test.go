@@ -6,7 +6,37 @@ package main
 import (
 	"net/http"
 	"testing"
+
+	"github.com/stoutsolutions/alexandria-server/internal/database"
 )
+
+// A read of the person that fails is not an answer: the apps keep Kids
+// mode on until the server ITSELF says off, so the server must not say
+// "kids": false when it could not look (review, 2026-11-10: it answered
+// 200 with false).
+func TestDevicesMeDoesNotSayKidsOffWhenItCouldNotRead(t *testing.T) {
+	s := newTestServer(t)
+	kidsTV := s.linkedDevice("Stout Kids", "Playroom TV")
+	if me := s.expectStatus(http.StatusOK, "GET", "/api/v1/devices/me", nil, kidsTV); me.body["kids"] != false {
+		t.Fatalf("before: kids = %v", me.body["kids"])
+	}
+
+	// The token check still passes; only the read of the person breaks.
+	if _, err := database.DB.Exec(`ALTER TABLE profiles RENAME COLUMN kids TO kids_gone`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = database.DB.Exec(`ALTER TABLE profiles RENAME COLUMN kids_gone TO kids`)
+	})
+
+	r := s.do("GET", "/api/v1/devices/me", nil, kidsTV)
+	if r.status != http.StatusServiceUnavailable {
+		t.Fatalf("a failed read answered %d %v, want 503", r.status, r.body)
+	}
+	if _, said := r.body["kids"]; said {
+		t.Fatalf("a failed read still said kids = %v", r.body["kids"])
+	}
+}
 
 func TestKidsModeIsSwitchedPerPersonAndReadByTheirDevices(t *testing.T) {
 	s := newTestServer(t)

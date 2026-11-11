@@ -432,16 +432,23 @@ func (h *LinkHandler) Self(c *fiber.Ctx) error {
 	}
 	// Kids mode, read fresh: the admin can switch it at any time, and a
 	// device asks here about once a minute while it is open.
-	kids := false
-	if profile, err := h.profiles.GetByID(profileID); err == nil {
-		kids = profile.Kids
+	//
+	// A read that fails is NOT an answer. Every app keeps Kids mode on
+	// until this server itself says otherwise, so "kids": false must never
+	// stand in for "could not read" (review, 2026-11-10: it did, with a
+	// 200, and the apps took it as the word to switch Kids mode off).
+	profile, err := h.profiles.GetByID(profileID)
+	if err != nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "try again in a moment",
+		})
 	}
 	return c.JSON(fiber.Map{
 		"deviceKey":   deviceID,
 		"label":       label,
 		"profileId":   profileID,
 		"profileName": middleware.ProfileName(c),
-		"kids":        kids,
+		"kids":        profile.Kids,
 	})
 }
 

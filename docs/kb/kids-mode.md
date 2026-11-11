@@ -1,19 +1,25 @@
 # Kids mode: simple screens for a child
 
 Kids mode swaps the app's normal screens for a simple Home made of big
-pictures. A child sees "Hello, (name)!", one large tile for each kind of
-thing they have (Movies, Shows, Music, Audiobooks), and a row to keep
-watching or listening. Search, Settings, downloads, Party Play, queues,
-stations and the server screens are gone until a grown-up turns Kids mode
-off.
+pictures. A child sees "Hello!" (with their name when the app knows it),
+one large tile for each kind of thing they have (Movies, Shows, Music,
+Audiobooks), and a row to keep watching or listening. Search, Settings,
+downloads, Party Play, stations and the server screens are gone until a
+grown-up turns Kids mode off.
 
-It works on the iPhone, iPad, Android, Mac and Windows apps, the Apple TV,
+It is in the iPhone, iPad, Android, Mac and Windows apps, the Apple TV,
 and the Samsung, LG and Fire TV apps.
+
+Kids mode makes the app simple for a child. It is not a lock: see
+[What it does not do](#what-it-does-not-do) and
+[On a TV](#on-a-tv-profiles-matter).
 
 ## What it does not do
 
-**Kids mode changes the screens only. It does not filter titles.** A child
-in Kids mode can still open anything their own media-server user can see.
+**Kids mode changes the screens only. It does not filter titles.** What a
+child can open is still decided by their own media-server user, never by
+Kids mode. (On the phone, tablet and computer apps Kids mode shows less
+than that: no ebooks or comics, and no Jellyfin movies or shows yet.)
 
 To limit *what* a child can watch, use the media server's own tools and
 give the child their own user there:
@@ -41,8 +47,9 @@ server and their devices are linked to it.
 
 Every device linked to that person shows Kids mode within about a minute,
 or the next time the app is opened. It can only be turned off the same way,
-by an admin. Nothing on the child's device turns it off, with or without a
-PIN.
+by an admin: no PIN on the child's device turns it off. (A TV with other
+profiles on it is a different matter: see
+[On a TV](#on-a-tv-profiles-matter).)
 
 If a device cannot reach the server, it keeps the last answer it got. Only
 the server saying "off" turns Kids mode off; being offline never does.
@@ -58,19 +65,30 @@ Best for a shared tablet or TV, or when you do not run a companion server.
   PIN (you type it twice).
 - **Apple TV:** on **Who's listening?**, hold Select on the profile and
   choose Kids mode, or go to **Settings › Profile**. Choose the PIN.
-- **Samsung, LG or Fire TV:** **Settings › Profile › Kids mode**, or the
-  hold menu on the profile at the first screen. Choose the PIN.
+- **Samsung, LG or Fire TV:** **Settings › Profile › Kids mode**. Choose
+  the PIN.
 
 To turn it off, choose **Grown-ups** on the Kids Home and type the PIN.
 Five wrong tries in a row make the pad wait a minute.
 
-The device keeps only a scrambled form of the PIN, never the PIN itself,
-so nobody can look it up. Keep it somewhere you will find it. If it is
-lost on a phone, tablet or TV, deleting the app and installing it again
-turns that device's Kids mode off (its downloads and sign-ins go with it).
+The device keeps only a scrambled form of the PIN, never the PIN itself.
+Keep it somewhere you will find it. If it is lost on a phone, tablet or
+TV, deleting the app and installing it again turns that device's Kids mode
+off (its downloads and sign-ins go with it). On a computer, write to
+support.
 
-On a TV, Kids mode belongs to one profile. Give the grown-up profiles a
-PIN of their own, or a child can simply switch to a grown-up's profile.
+### On a TV, profiles matter
+
+On a TV, Kids mode belongs to one profile, and **Switch Profile** is on the
+Kids Home. A child who can pick another profile is out of Kids mode. So:
+
+- Give every grown-up profile on that TV a PIN of its own.
+- Know that the first screen ("Who's listening?") also lets anyone add a
+  profile. A child who knows a login of their own could add a profile and
+  sign in there. A fix that asks for a grown-up PIN before a profile can be
+  added, removed or changed while a kid's profile is on the TV is being
+  built; until your TV app has it, treat Kids mode on a TV as a helper for
+  small children, not a barrier for older ones.
 
 ## What a child sees
 
@@ -80,9 +98,9 @@ PIN of their own, or a child can simply switch to a grown-up's profile.
 - **Now Playing** appears while something is playing.
 - **Grown-ups** (and **Switch Profile** on a TV) in the corner.
 
-Hidden in Kids mode: Search, Settings, downloads, Party Play, the queue and
-playlist actions, stations, video versions, the hold and "more" menus, and
-everything under Manage server.
+Hidden in Kids mode: Search, Settings, downloads, Party Play, the "play
+next", "add to queue" and playlist actions, stations, video versions, and
+everything under Manage server. Most hold and "more" menus are off too.
 
 ## Good to know
 
