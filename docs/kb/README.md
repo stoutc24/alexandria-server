@@ -39,12 +39,21 @@ installing and running the Alexandria companion server itself, see the
 | [Browsing films and shows](browsing-movies-and-shows.md) | Plex's own shelves on Plex Video Home; a library's Recommended, Library and Collections tabs; filters (genre, decade, rating, quality, watched) and sorts; the Apple TV's library pages |
 | [Scanning a Plex library, and refreshing what a TV shows](scan-and-refresh-libraries.md) | Scan library files for the server's owner, on each library and for all of them; the messages; Refresh on the TV apps for one library or a whole Plex server |
 | [Marking films and shows watched or unwatched](marking-watched.md) | Mark watched / Mark unwatched for a Plex or Jellyfin film, episode, season or whole show: the buttons, the hold and long-press menus, the question a show or season asks, what changes next, Kids mode |
+| [Your look: colors, background, font and text size](profile-looks.md) | Profile color, accent, background, Now Playing background, font and text size; where to change them; kept on the server for a linked person, else on the device; Kids' My Color; Apple TV text size on tvOS 26 |
 
 Contact for questions or problems: stoutservers@gmail.com
 
 ## Check on a real device before publishing
 
 These were proven in tests and simulators, not yet on hardware:
+
+- [ ] Profile looks (Apple TV after 208, Samsung and Fire TV, phone after
+      1265; server 1.1.0+): proven in tests, on the Apple TV simulator
+      (tvOS 26.5 and 27.2) and in a desktop browser against a stand-in
+      server. Still to check: a look following a person from a TV to a
+      phone and back through the real server; text size and fonts on real
+      TVs; readability of white button labels on light accent colors on
+      the phone.
 
 - [ ] Marking watched and unwatched (phone after 1263, Apple TV after 206,
       Samsung and Fire TV): proven in tests, on the Apple TV simulator and
