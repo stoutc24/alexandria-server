@@ -95,6 +95,11 @@ Kids Home. A child who can pick another profile is out of Kids mode. So:
 - **Hello, (name)!** and one big tile for each kind of thing there is.
 - **Keep watching / Keep listening**, to carry on where they stopped.
 - A tile opens an A-to-Z wall of large covers. Choosing one opens it.
+  A film, show or album that sits in several of your libraries (Kids &
+  Family and Musicals, say), or on more than one server (Plex and
+  Jellyfin), appears once. Films and shows are matched by name and year,
+  albums by name, artist and year, so two different films with one name
+  both still appear.
 - **Now Playing** appears while something is playing.
 - **Grown-ups** (and **Switch Profile** on a TV) in the corner.
 
