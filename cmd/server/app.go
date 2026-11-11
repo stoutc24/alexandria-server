@@ -393,6 +393,10 @@ func buildApp(cfg *config.Config) *fiber.App {
 	// answers whether or not anything is playing, which the party line's
 	// yourDeviceKey does not. A link token only, like everything here.
 	v1.Get("/devices/me", requireProfile, linkHandler.Self)
+	// A device changing its own person's look: their colors, backgrounds,
+	// font and text size, on every device linked to them. No person in the
+	// path — the token says whose — so no device reaches anyone else's.
+	v1.Put("/devices/me/look", requireProfile, linkHandler.SetLook)
 
 	// The party line: a profile's own devices report and read what is
 	// playing RIGHT NOW, so a TV can join mid-stream. Behind

@@ -401,6 +401,15 @@ func RunMigrations() error {
 		// simple Kids screens. Switched on the admin page or in Manage
 		// server, read by each device on GET /devices/me.
 		`ALTER TABLE profiles ADD COLUMN kids INTEGER NOT NULL DEFAULT 0`,
+		// A person's look (owner, 2026-11-11): their profile color, accent,
+		// page background, Now Playing background, font and text size, as
+		// a JSON object of allowlisted strings (repository.Look), and when
+		// it last changed, in unix milliseconds (0: never). Set by their
+		// own devices on PUT /devices/me/look, read by each of them on GET
+		// /devices/me. Every existing person starts with '{}': the apps'
+		// defaults, which is what they showed before.
+		`ALTER TABLE profiles ADD COLUMN look TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE profiles ADD COLUMN look_updated_at INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := DB.Exec(alter); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {

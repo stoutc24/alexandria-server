@@ -279,6 +279,7 @@ var wantRoutes = []string{
 	"PUT /api/v1/admin/profiles/:id/kids",
 	"PUT /api/v1/admin/profiles/:id/services/:sid/provision",
 	"PUT /api/v1/admin/profiles/:id/services/order",
+	"PUT /api/v1/devices/me/look",
 	"PUT /api/v1/nowplaying/",
 }
 
@@ -2105,7 +2106,7 @@ func TestDevicesMeNamesTheCallersOwnLink(t *testing.T) {
 	// Nothing is playing, and the answer is there anyway.
 	s.expectStatus(http.StatusNoContent, "GET", "/api/v1/nowplaying", nil, device)
 	me := s.expectStatus(http.StatusOK, "GET", "/api/v1/devices/me", nil, device)
-	if got, want := keysOf(me.body), []string{"deviceKey", "kids", "label", "profileId", "profileName"}; !reflect.DeepEqual(got, want) {
+	if got, want := keysOf(me.body), []string{"deviceKey", "kids", "label", "look", "lookUpdatedAt", "profileId", "profileName"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("keys %v, want exactly %v: %v", got, want, me)
 	}
 	if me.str("label") != "Chris's iPhone" || me.str("profileName") != "Chris" ||

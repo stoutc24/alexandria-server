@@ -19,6 +19,13 @@ first. To update, see [Updating](README.md#updating); your data is kept.
   cannot reach the server keeps the last answer. It changes screens only
   and filters no titles. See the [help article](docs/kb/kids-mode.md).
   Needs Alexandria 3.2.1 (build 1261) or later, Apple TV 1.1.2 (205).
+- **A person's look follows them.** Their profile color, accent color,
+  page background, Now Playing background, font and text size are kept
+  on the server, so every device linked to them looks the same. A device
+  can change only its own person's look, and only to the choices the
+  apps offer. The people list the admin page and Manage server read now
+  includes each person's look, read-only (nothing on the admin page shows
+  it yet). Needs app versions that support it.
 - `ALEXANDRIA_LISTEN_ADDR`: when the server program runs outside Docker,
   the one address it listens on.
 - The installer waits for the server to answer and prints the address of

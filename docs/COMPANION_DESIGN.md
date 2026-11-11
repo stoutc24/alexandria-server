@@ -282,7 +282,8 @@ watch keeps working. A single per-person token would have forced
 
 A device can always ask who it is: `GET /api/v1/devices/me`
 (capability `devices.me`) answers
-`{"deviceKey", "label", "profileId", "profileName"}`. `deviceKey` is
+`{"deviceKey", "label", "profileId", "profileName", "kids", "look",
+"lookUpdatedAt"}`. `deviceKey` is
 the token id — the id the admin's person list shows for that device,
 the one `DELETE /admin/devices/:tokenId` revokes, and the party line's
 `yourDeviceKey`. The party line names a device only while something is
@@ -290,6 +291,58 @@ playing; this route answers whenever the token is good, which is how a
 phone managing the server marks itself in a person's device list and
 warns before revoking its own link. It sits behind the profile guard
 like everything a device does, so no admin credential gets an answer.
+`kids` is the person's Kids mode (capability `profiles.kids`, switched by
+the admin with `PUT /admin/profiles/:id/kids`); `look` and
+`lookUpdatedAt` are their look (below). A read of the person that fails
+answers 503, never a made-up `kids` or an empty `look` in its place.
+
+### A person's look
+
+A person's look (capability `profiles.look`) is how the apps look on
+every device linked to them: a JSON object of up to six fields, each
+one word from a fixed list. A field that is missing means the app's
+own default.
+
+| field | values |
+|---|---|
+| `color` (the profile's own color: the avatar circle) | `red`, `orange`, `amber`, `gold`, `green`, `teal`, `cyan`, `blue`, `indigo`, `purple`, `pink`, `slate` |
+| `accent` (buttons, the focus highlight) | the same twelve, or `default` |
+| `background` (the page background) | `midnight`, `black`, `charcoal`, `forest`, `plum`, `ocean` |
+| `ambiance` (behind Now Playing) | `none`, `coverColors`, `fireplace`, `rain`, `snowfall`, `library`, `starfield` |
+| `font` | `default`, `rounded`, `serif` |
+| `textSize` | `normal`, `large`, `extraLarge` |
+
+Each device reads it on `GET /api/v1/devices/me`, as `"look": {…}`
+(only the fields that are set; `{}` when none is) and `"lookUpdatedAt"`
+(unix milliseconds of the last change, `0` for never).
+
+A device changes it with `PUT /api/v1/devices/me/look`:
+
+```
+PUT /api/v1/devices/me/look
+Authorization: Bearer alxp_…
+{"color": "teal", "ambiance": "rain", "font": ""}
+
+200 {"look": {"color": "teal", "ambiance": "rain"}, "lookUpdatedAt": 1794419250081}
+```
+
+The fields sent are merged into the stored look, the fields left out
+stay as they are, and `""` clears a field back to the default. The
+answer is the whole look as it now stands. `lookUpdatedAt` moves only
+when the look actually changed, and always forward. There is no person
+in the path: the token says whose look it is, so a device changes its
+own person's look and nobody else's. The body is refused, with nothing
+written, when it is not a JSON object, has a key that is not one of the
+six, or a value that is not a string on that field's list (`400`, with
+`{"error": "…"}` naming the field and never repeating the value), or is
+over 2 KB (`413`). A token that was signed out gets the same `401
+token-revoked` as every other device route.
+
+The admin's person list (`GET /admin/profiles`) shows each person's
+`look` and `lookUpdatedAt`, read-only; no admin route changes a look.
+The server only ever sends values from the lists above: a stored value
+it does not know (written by a newer server) is left out of every
+answer.
 
 ### What the admin can and cannot see
 

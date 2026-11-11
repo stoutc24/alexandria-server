@@ -410,7 +410,8 @@ type ProvisionDeviceBody struct {
 // Self tells the calling device who it is: GET /api/v1/devices/me,
 // advertised as "devices.me".
 //
-//	{"deviceKey": "<token id>", "label": "…", "profileId": "…", "profileName": "…"}
+//	{"deviceKey": "<token id>", "label": "…", "profileId": "…", "profileName": "…",
+//	 "kids": false, "look": {…}, "lookUpdatedAt": 0}
 //
 // deviceKey is the token id: the id the admin's person list shows for
 // this device, the id DELETE /admin/devices/:tokenId revokes, and the
@@ -443,12 +444,22 @@ func (h *LinkHandler) Self(c *fiber.Ctx) error {
 			"error": "try again in a moment",
 		})
 	}
+	// The person's look (owner, 2026-11-11), by the same rule: a read that
+	// fails is a 503, never an empty look standing in for one.
+	look, lookAt, err := h.profiles.GetLook(profileID)
+	if err != nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "try again in a moment",
+		})
+	}
 	return c.JSON(fiber.Map{
-		"deviceKey":   deviceID,
-		"label":       label,
-		"profileId":   profileID,
-		"profileName": middleware.ProfileName(c),
-		"kids":        profile.Kids,
+		"deviceKey":     deviceID,
+		"label":         label,
+		"profileId":     profileID,
+		"profileName":   middleware.ProfileName(c),
+		"kids":          profile.Kids,
+		"look":          look,
+		"lookUpdatedAt": lookAt,
 	})
 }
 

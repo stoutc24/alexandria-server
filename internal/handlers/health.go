@@ -146,6 +146,13 @@ var capabilities = []string{
 	// person's Kids screens, the people list carries `kids`, and GET
 	// /devices/me tells each of their devices.
 	"profiles.kids",
+	// A person's look (2026-11-11): GET /devices/me carries `look` (up to
+	// six allowlisted strings: color, accent, background, ambiance, font,
+	// textSize; {} for the apps' defaults) and `lookUpdatedAt` (unix ms, 0
+	// for never); PUT /devices/me/look merges a change into the calling
+	// device's own person's look ("" clears a field); the people list
+	// carries each person's look, read-only.
+	"profiles.look",
 }
 
 // accountsServicesOn is whether Alexandria Accounts can keep service

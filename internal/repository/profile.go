@@ -61,9 +61,14 @@ type DeviceToken struct {
 // on the limits of that promise.
 type ProfileSummary struct {
 	Profile
-	Devices      []DeviceToken `json:"devices"`
-	EventCount   int           `json:"eventCount"`
-	TotalSeconds int64         `json:"totalSeconds"`
+	// Look is how this person's apps look, as their own devices set it
+	// (PUT /devices/me/look). Read-only here: allowlisted words, never
+	// free text.
+	Look          Look          `json:"look"`
+	LookUpdatedAt int64         `json:"lookUpdatedAt"`
+	Devices       []DeviceToken `json:"devices"`
+	EventCount    int           `json:"eventCount"`
+	TotalSeconds  int64         `json:"totalSeconds"`
 }
 
 // Caller is a resolved profile token: who is asking, and from which
@@ -370,11 +375,11 @@ func (r *ProfileRepository) SetKids(id string, kids bool) error {
 // the admin's management view. No event content crosses this boundary.
 func (r *ProfileRepository) List() ([]ProfileSummary, error) {
 	rows, err := database.DB.Query(`
-		SELECT p.id, p.name, p.created_at, p.kids,
+		SELECT p.id, p.name, p.created_at, p.kids, p.look, p.look_updated_at,
 		       COUNT(e.id), COALESCE(SUM(e.seconds), 0)
 		FROM profiles p
 		LEFT JOIN stats_events e ON e.profile_id = p.id
-		GROUP BY p.id, p.name, p.created_at, p.kids
+		GROUP BY p.id, p.name, p.created_at, p.kids, p.look, p.look_updated_at
 		ORDER BY p.name
 	`)
 	if err != nil {
@@ -385,10 +390,12 @@ func (r *ProfileRepository) List() ([]ProfileSummary, error) {
 	out := []ProfileSummary{}
 	for rows.Next() {
 		var s ProfileSummary
+		var look string
 		if err := rows.Scan(&s.ID, &s.Name, &s.CreatedAt, &s.Kids,
-			&s.EventCount, &s.TotalSeconds); err != nil {
+			&look, &s.LookUpdatedAt, &s.EventCount, &s.TotalSeconds); err != nil {
 			return nil, err
 		}
+		s.Look = decodeLook(look)
 		out = append(out, s)
 	}
 	if err := rows.Err(); err != nil {
