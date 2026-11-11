@@ -430,11 +430,18 @@ func (h *LinkHandler) Self(c *fiber.Ctx) error {
 			"error": "a device token is required",
 		})
 	}
+	// Kids mode, read fresh: the admin can switch it at any time, and a
+	// device asks here about once a minute while it is open.
+	kids := false
+	if profile, err := h.profiles.GetByID(profileID); err == nil {
+		kids = profile.Kids
+	}
 	return c.JSON(fiber.Map{
 		"deviceKey":   deviceID,
 		"label":       label,
 		"profileId":   profileID,
 		"profileName": middleware.ProfileName(c),
+		"kids":        kids,
 	})
 }
 

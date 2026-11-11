@@ -126,6 +126,48 @@ func (h *AdminHandler) ListProfiles(c *fiber.Ctx) error {
 	})
 }
 
+// SetKidsBody is what the admin sends to switch a person's Kids screens.
+type SetKidsBody struct {
+	Kids *bool `json:"kids"`
+}
+
+// SetKids turns Kids mode on or off for a person: PUT
+// /admin/profiles/:id/kids {"kids": true}. Every device linked to them
+// reads it on GET /devices/me and shows the simple Kids screens — big
+// picture tiles, no search, settings, downloads or server screens — until
+// it is switched off again. It changes how the apps LOOK, never what the
+// person's own media-server users are allowed to play.
+func (h *AdminHandler) SetKids(c *fiber.Ctx) error {
+	var body SetKidsBody
+	if err := c.BodyParser(&body); err != nil || body.Kids == nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "send {\"kids\": true} or {\"kids\": false}",
+		})
+	}
+	id := c.Params("id")
+	err := h.profiles.SetKids(id, *body.Kids)
+	if err == repository.ErrProfileNotFound {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error":  "profile not found",
+			"reason": "profile-not-found",
+		})
+	}
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to change Kids mode",
+		})
+	}
+	profile, err := h.profiles.GetByID(id)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to read the profile",
+		})
+	}
+	log.Printf("kids mode %s for %q%s", map[bool]string{true: "on", false: "off"}[profile.Kids],
+		profile.Name, callerForLog(c))
+	return c.JSON(fiber.Map{"profile": profile})
+}
+
 // DeleteProfile removes a person and everything they own.
 //
 // This is the one destructive route on the server, and it is scoped to

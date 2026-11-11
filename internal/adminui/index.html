@@ -960,6 +960,7 @@
   // the devices.
   function chipsHTML(p, s) {
     var devs = p.devices || [], c = [];
+    if (p.kids) c.push('<span class="pill info">kids mode</span>');
     c.push('<span class="pill">' + esc(plural(devs.length, "device", "devices")) + '</span>');
     if (s) {
       if (s.login) {
@@ -1001,6 +1002,10 @@
         '<div class="p-actions">' +
           '<button type="button" class="small" data-toggle="' + esc(id) + '" data-manage ' +
             'aria-controls="' + esc(body) + '"></button>' +
+          // Kids mode (owner, 2026-11-10): this person's devices show the
+          // simple Kids screens. A press switches it; their devices follow
+          // within a minute.
+          '<button type="button" class="small" data-kids="' + esc(id) + '"></button>' +
           '<button type="button" class="small danger" data-delete="' + esc(id) + '">Remove</button>' +
         '</div>' +
       '</div>' +
@@ -1016,7 +1021,7 @@
     function q(sel) { return el.querySelector(sel); }
     return { el: el, id: id, chev: q(".chev"), avatar: q(".avatar"), name: q(".p-name"),
              meta: q(".p-meta"), chips: q(".chips"), manage: q("[data-manage]"),
-             del: q("[data-delete]"), body: q(".p-body"), tabs: el.querySelectorAll("[data-tab]"),
+             kids: q("[data-kids]"), del: q("[data-delete]"), body: q(".p-body"), tabs: el.querySelectorAll("[data-tab]"),
              devices: q(".p-devices"), slot: q(".p-slot"), tab: "devices",
              devSig: null, seenEls: {} };
   }
@@ -1049,6 +1054,11 @@
     c.manage.setAttribute("aria-expanded", String(open));
     c.manage.setAttribute("aria-label", (open ? "Hide " : "Manage ") + p.name);
     setText(c.manage, open ? "Hide" : "Manage");
+    setText(c.kids, p.kids ? "Kids mode: on" : "Kids mode: off");
+    c.kids.setAttribute("aria-pressed", String(!!p.kids));
+    c.kids.setAttribute("aria-label", (p.kids ? "Turn Kids mode off for " : "Turn Kids mode on for ") + p.name);
+    c.kids.title = "Kids mode shows simple screens with big pictures on this person's devices: " +
+      "no search, settings, downloads or server screens. It does not change what they are allowed to play.";
     c.del.dataset.pname = p.name;
     c.del.setAttribute("aria-label", "Remove " + p.name);
     c.tabs.forEach(function (b) {
@@ -1287,6 +1297,21 @@
         load();
       })
       .catch(function (e) { toast(e.message, true); });
+  }
+
+  // Kids mode for a person: the simple screens on every device of theirs.
+  // Their devices ask about once a minute, so it takes hold by itself.
+  function setKids(pid) {
+    var p = profileById(pid);
+    if (!p) return;
+    var on = !p.kids;
+    api("/admin/profiles/" + encodeURIComponent(pid) + "/kids", {
+      method: "PUT", body: JSON.stringify({ kids: on })
+    }).then(function () {
+      toast(on ? "Kids mode is on for " + p.name + ". Their devices switch within a minute."
+               : "Kids mode is off for " + p.name + ".");
+      load();
+    }).catch(function (e) { toast(e.message, true); });
   }
 
   function removeProfile(id, name) {
@@ -3686,6 +3711,7 @@
     else if (d.approve) approve(d.approve);
     else if (d.revokeStale) revokeStale(d.revokeStale);
     else if (d.signoutAll) signOutAll(d.signoutAll);
+    else if (d.kids) setKids(d.kids);
     else if (d.revoke) revoke(d.revoke, d.devlabel);
     else if (d.delete) removeProfile(d.delete, d.pname);
     else if (d.revokeAdmin) revokeAdminDevice(d.revokeAdmin, d.adlabel);

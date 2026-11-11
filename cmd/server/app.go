@@ -207,6 +207,8 @@ func buildApp(cfg *config.Config) *fiber.App {
 	admin.Post("/profiles", adminHandler.CreateProfile)
 	admin.Get("/profiles", adminHandler.ListProfiles)
 	admin.Delete("/profiles/:id", adminHandler.DeleteProfile)
+	// Kids mode for a person: the simple screens on every device of theirs.
+	admin.Put("/profiles/:id/kids", adminHandler.SetKids)
 	admin.Delete("/profiles/:id/devices", adminHandler.SignOutAllDevices)
 	admin.Delete("/devices/:tokenId", adminHandler.RevokeDevice)
 	admin.Get("/backup", adminHandler.Backup)

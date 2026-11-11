@@ -142,6 +142,10 @@ var capabilities = []string{
 	// the minted device's — a code link gets its profile's services. No
 	// route sets a key by token alone any more.
 	"link.device-key",
+	// Kids mode (2026-11-10): PUT /admin/profiles/:id/kids switches a
+	// person's Kids screens, the people list carries `kids`, and GET
+	// /devices/me tells each of their devices.
+	"profiles.kids",
 }
 
 // accountsServicesOn is whether Alexandria Accounts can keep service

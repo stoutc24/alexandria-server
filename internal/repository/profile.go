@@ -38,6 +38,10 @@ type Profile struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
+	// Kids: this person's devices show the simple Kids screens (owner,
+	// 2026-11-10). A look, not a lock on content: what they may play is
+	// still whatever their own media-server users allow.
+	Kids bool `json:"kids"`
 }
 
 // DeviceToken describes one linked device. The token itself is not here
@@ -123,8 +127,8 @@ func (r *ProfileRepository) Create(name string) (*Profile, error) {
 func (r *ProfileRepository) GetByName(name string) (*Profile, error) {
 	p := &Profile{}
 	err := database.DB.QueryRow(`
-		SELECT id, name, created_at FROM profiles WHERE name = ?
-	`, strings.TrimSpace(name)).Scan(&p.ID, &p.Name, &p.CreatedAt)
+		SELECT id, name, created_at, kids FROM profiles WHERE name = ?
+	`, strings.TrimSpace(name)).Scan(&p.ID, &p.Name, &p.CreatedAt, &p.Kids)
 	if err == sql.ErrNoRows {
 		return nil, ErrProfileNotFound
 	}
@@ -134,8 +138,8 @@ func (r *ProfileRepository) GetByName(name string) (*Profile, error) {
 func (r *ProfileRepository) GetByID(id string) (*Profile, error) {
 	p := &Profile{}
 	err := database.DB.QueryRow(`
-		SELECT id, name, created_at FROM profiles WHERE id = ?
-	`, id).Scan(&p.ID, &p.Name, &p.CreatedAt)
+		SELECT id, name, created_at, kids FROM profiles WHERE id = ?
+	`, id).Scan(&p.ID, &p.Name, &p.CreatedAt, &p.Kids)
 	if err == sql.ErrNoRows {
 		return nil, ErrProfileNotFound
 	}
@@ -349,15 +353,28 @@ func (r *ProfileRepository) ListIDs() ([]string, error) {
 	return out, rows.Err()
 }
 
+// SetKids turns the Kids screens on or off for a person. Their devices read
+// it on GET /devices/me and switch within a minute.
+func (r *ProfileRepository) SetKids(id string, kids bool) error {
+	res, err := database.DB.Exec(`UPDATE profiles SET kids = ? WHERE id = ?`, kids, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrProfileNotFound
+	}
+	return nil
+}
+
 // List returns every profile with its devices and storage footprint —
 // the admin's management view. No event content crosses this boundary.
 func (r *ProfileRepository) List() ([]ProfileSummary, error) {
 	rows, err := database.DB.Query(`
-		SELECT p.id, p.name, p.created_at,
+		SELECT p.id, p.name, p.created_at, p.kids,
 		       COUNT(e.id), COALESCE(SUM(e.seconds), 0)
 		FROM profiles p
 		LEFT JOIN stats_events e ON e.profile_id = p.id
-		GROUP BY p.id, p.name, p.created_at
+		GROUP BY p.id, p.name, p.created_at, p.kids
 		ORDER BY p.name
 	`)
 	if err != nil {
@@ -368,7 +385,7 @@ func (r *ProfileRepository) List() ([]ProfileSummary, error) {
 	out := []ProfileSummary{}
 	for rows.Next() {
 		var s ProfileSummary
-		if err := rows.Scan(&s.ID, &s.Name, &s.CreatedAt,
+		if err := rows.Scan(&s.ID, &s.Name, &s.CreatedAt, &s.Kids,
 			&s.EventCount, &s.TotalSeconds); err != nil {
 			return nil, err
 		}

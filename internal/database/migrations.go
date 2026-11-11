@@ -397,6 +397,10 @@ func RunMigrations() error {
 		// When a sign-in last got a wrong answer, so "ten in a row" lapses
 		// (AccountRepository.RecordFailure).
 		`ALTER TABLE account_logins ADD COLUMN last_failed_at INTEGER NOT NULL DEFAULT 0`,
+		// Kids mode (owner, 2026-11-10): this person's devices show the
+		// simple Kids screens. Switched on the admin page or in Manage
+		// server, read by each device on GET /devices/me.
+		`ALTER TABLE profiles ADD COLUMN kids INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := DB.Exec(alter); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
