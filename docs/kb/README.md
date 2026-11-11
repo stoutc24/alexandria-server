@@ -28,6 +28,7 @@ installing and running the Alexandria companion server itself, see the
 | [Following a party on the Apple TV](apple-tv-party.md) | Join from Home or from the music player; joining at a song's end; when the leading Apple TV changes music, stops or goes away |
 | [Alexandria Link: set someone up with a code](alexandria-link.md) | Their device shows a code, you approve it as them, it signs in to their servers; Link a TV from a person's page; an invite or a code (a TV takes no invite); TV profiles; devices linked before; keeping it safe |
 | [Signing a device out](signing-devices-out.md) | Sign out one device or all of a person's, on the web or in the app; what the device loses and keeps; when it notices |
+| [Kids mode: simple screens for a child](kids-mode.md) | A simple Home of big pictures with no Search, Settings or downloads; on for a person from the server, or on one device behind a grown-up PIN; it does not filter titles |
 | [Alexandria on the Apple TV Home screen](apple-tv-home-screen.md) | The Top Shelf: Continue and Recently Added above the icons, and how to get it showing |
 | [Music on the Apple TV](apple-tv-music.md) | The Queue (browse, play, move, remove, Shuffle/Repeat/Autoplay; at a party); leaving the app while music plays (Control Center); lyrics, and when Plex can't fetch them; the screensaver's song lines |
 | [Lyrics on the phone, tablet and computer](lyrics.md) | Where lyrics come from (your server, then LRCLib); when Plex can't fetch them; lyrics kept on the device |

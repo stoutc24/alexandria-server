@@ -30,6 +30,12 @@ nothing typed. Every phone they sign in on is then set up for them, and a
 service you remove signs out everywhere. See
 [docs/ACCOUNTS.md](docs/ACCOUNTS.md).
 
+**Kids mode.** Mark a person as a kid and every device linked to them
+shows a simple Home of big pictures, with no Search, Settings or
+downloads, until you turn it off. It changes the screens only; what a
+child can open is still up to their media-server user. See the
+[help article](docs/kb/kids-mode.md).
+
 **Party Play.** Play music on a phone and every linked Apple TV, phone
 and watch in the house can join and play along in sync. The server keeps
 the shared clock and schedules each start, so the next song begins on
@@ -348,6 +354,8 @@ At `/admin`. It shows:
 
 You can approve or revoke a device, remove a person entirely, download a
 backup, and sign out any phone that is signed in to manage the server.
+Each person also has a **Kids mode** button
+([what it does](docs/kb/kids-mode.md)).
 For a person's account you can invite them, set up, reorder and remove
 their services, and pick their Plex from your Plex (your browser signs in
 to Plex for that, on Plex's own page).

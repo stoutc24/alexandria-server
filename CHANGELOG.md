@@ -13,6 +13,12 @@ first. To update, see [Updating](README.md#updating); your data is kept.
   opened by that device alone. See the
   [help article](docs/kb/alexandria-link.md). Needs Alexandria 3.2.1 or
   later on the device.
+- **Kids mode.** A **Kids mode** button on each person (the admin page,
+  and Manage server in the app). Every device linked to that person shows
+  the simple Kids screens until an admin turns it off; a device that
+  cannot reach the server keeps the last answer. It changes screens only
+  and filters no titles. See the [help article](docs/kb/kids-mode.md).
+  Needs Alexandria 3.2.1 (build 1261) or later, Apple TV 1.1.2 (205).
 - `ALEXANDRIA_LISTEN_ADDR`: when the server program runs outside Docker,
   the one address it listens on.
 - The installer waits for the server to answer and prints the address of
