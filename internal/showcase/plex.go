@@ -50,6 +50,11 @@ func (s *Server) plex(w http.ResponseWriter, r *http.Request) {
 		// clears), so one probe run covers both.
 		// GET /__showcase/lyrics → whether lyrics are down and how many
 		// lyric requests came; POST ?down=1|0 switches LyricsDown.
+		// /__showcase/scan → the library-scan stand-in (plex_scan.go).
+		if len(p) == 2 && p[1] == "scan" {
+			s.plexScanControl(w, r)
+			return
+		}
 		if len(p) == 2 && p[1] == "lyrics" {
 			s.mu.Lock()
 			if r.Method == http.MethodPost {
@@ -105,6 +110,12 @@ func (s *Server) plex(w http.ResponseWriter, r *http.Request) {
 		s.plexPhoto(w, r)
 	case ":":
 		// /:/timeline, /:/scrobble, /:/unscrobble, /:/progress
+		// /:/prefs is the server's settings: the owner's alone
+		// (plex_scan.go; everyone is the owner unless a probe says not).
+		if len(p) == 2 && p[1] == "prefs" && !s.plexIsOwner() {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	case "playQueues":
 		s.plexPlayQueue(w, r)
@@ -468,9 +479,12 @@ func (s *Server) plexAny(id string, full bool) map[string]any {
 
 func (s *Server) plexSections() []map[string]any {
 	sec := func(key, title, typ, agent, scanner string) map[string]any {
-		return map[string]any{"allowSync": true, "art": "/:/resources/" + typ + "-fanart.jpg", "composite": "/library/sections/" + key + "/composite/1", "filters": true, "refreshing": false,
+		// A scan in flight, or one that ended (plex_scan.go); otherwise
+		// false and yesterday, as always.
+		refreshing, scannedAt := s.plexScanSection(key, s.cat.daysAgo(1).Unix())
+		return map[string]any{"allowSync": true, "art": "/:/resources/" + typ + "-fanart.jpg", "composite": "/library/sections/" + key + "/composite/1", "filters": true, "refreshing": refreshing,
 			"thumb": "/:/resources/" + typ + ".png", "key": key, "type": typ, "title": title, "agent": agent, "scanner": scanner, "language": "en-US", "uuid": s.cat.JFID("section|" + key),
-			"updatedAt": s.cat.daysAgo(1).Unix(), "createdAt": s.cat.daysAgo(400).Unix(), "scannedAt": s.cat.daysAgo(1).Unix(), "content": true, "directory": true, "contentChangedAt": 1, "hidden": 0,
+			"updatedAt": s.cat.daysAgo(1).Unix(), "createdAt": s.cat.daysAgo(400).Unix(), "scannedAt": scannedAt, "content": true, "directory": true, "contentChangedAt": 1, "hidden": 0,
 			"Location": []map[string]any{{"id": 1, "path": "/media/" + strings.ToLower(title)}}}
 	}
 	return []map[string]any{
@@ -517,7 +531,10 @@ func (s *Server) plexSections2(w http.ResponseWriter, r *http.Request, p []strin
 	}
 	switch p[1] {
 	case "all":
+		s.plexCountAll(key)
 		s.plexAll(w, r, key)
+	case "refresh":
+		s.plexScanStart(w, r, key)
 	case "onDeck":
 		ok(w, mc(map[string]any{"Metadata": s.plexOnDeck(key)}))
 	case "recentlyAdded":

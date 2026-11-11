@@ -110,6 +110,9 @@ type Server struct {
 	// downloading"): GET /__showcase/parts on that dialect's port, DELETE
 	// clears. The command runs each dialect as its own Server.
 	partRequests []partRequest
+	// Plex "Scan Library Files" (plex_scan.go): the scans asked for, and
+	// the owner switch. Empty until a scan is asked for.
+	scan plexScanState
 }
 
 // partRequest is one recorded song-file request: a Plex part, or a
