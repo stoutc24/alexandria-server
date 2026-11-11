@@ -29,12 +29,13 @@ import (
 // together (adminauth.GuessLimit), and linking caps new requests the
 // same way.
 //
-// An IPv6 client is counted by its /64, not its full address (security
+// An IPv6 client is counted by its /56, not its full address (security
 // review, 2026-11-10): a home or a rented server is handed a /64 at the
-// least, which is 2^64 addresses to one visitor. Counted one by one, that
-// visitor had a fresh limit for every request, and alone could spend the
-// allowance of wrong guesses every sign-in shares — locking the owner out
-// of their own admin page. An IPv4 address is counted as itself.
+// least, and commonly a /56 (256 of them), which is one visitor all the
+// same. Counted address by address, or even /64 by /64, that visitor had a
+// fresh limit for every request, and alone could spend the allowance of
+// wrong guesses every sign-in shares — locking the owner out of their own
+// admin page. An IPv4 address is counted as itself.
 func ClientKey(trusted []netip.Prefix) func(*fiber.Ctx) string {
 	isTrusted := func(a netip.Addr) bool {
 		for _, p := range trusted {
@@ -77,10 +78,10 @@ func ClientKey(trusted []netip.Prefix) func(*fiber.Ctx) string {
 }
 
 // limitKey is what a limit counts an address as: an IPv4 address itself,
-// an IPv6 address's /64 (see ClientKey).
+// an IPv6 address's /56 (see ClientKey).
 func limitKey(a netip.Addr) string {
 	if a.Is6() && !a.Is4In6() {
-		if p, err := a.Prefix(64); err == nil {
+		if p, err := a.Prefix(56); err == nil {
 			return p.String()
 		}
 	}

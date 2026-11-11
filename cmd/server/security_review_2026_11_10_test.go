@@ -116,6 +116,10 @@ func TestTheAdminCookieCountsOnlyForTheAdminPagesOwnRequests(t *testing.T) {
 		{"Sec-Fetch-Site": "same-site", "Origin": "http://example.com"},
 		{"Origin": "http://example.com:8096"},
 		{"Origin": "http://nas.example.com"},
+		// The scheme counts: an app on https://name is not this page at
+		// http://name (checker, same day).
+		{"Origin": "https://example.com"},
+		{"Origin": "ftp://example.com"},
 		{"Origin": "null"},
 	}
 	for _, hdr := range foreign {
@@ -164,6 +168,14 @@ func TestTheAdminCookieCountsOnlyForTheAdminPagesOwnRequests(t *testing.T) {
 	s.expectStatus(http.StatusOK, "POST", approvePath,
 		map[string]string{"code": code, "name": "Chris"},
 		withCookie(map[string]string{"Sec-Fetch-Site": "same-origin"}))
+
+	// Signing out is the admin page's too: another page cannot end the
+	// session (checker, same day).
+	out := s.do("POST", "/api/v1/admin/auth/logout", nil, withCookie(map[string]string{"Sec-Fetch-Site": "same-site"}))
+	if out.status != http.StatusForbidden || out.str("reason") != "cross-origin" {
+		t.Fatalf("sign-out from another page: %d %v, want 403 cross-origin", out.status, out)
+	}
+	s.expectStatus(http.StatusOK, "GET", "/api/v1/admin/profiles", nil, withCookie(nil))
 
 	// A phone's token is not a cookie: no browser attaches one by itself.
 	phone := s.signIn(e, true, nil)
@@ -252,23 +264,28 @@ func TestRoomForALargeBodyOnlyWithACredential(t *testing.T) {
 	}
 }
 
-// 4 (medium). An IPv6 visitor is counted by its /64: counted address by
-// address, one home's /64 had a fresh limit for every request.
-func TestAnIPv6VisitorIsCountedByIts64(t *testing.T) {
+// 4 (medium). An IPv6 visitor is counted by its /56: counted address by
+// address, one home's block had a fresh limit for every request. By /64 was
+// not enough either (checker, same day): a home is commonly given a /56,
+// 256 of them, and eight spent the allowance every sign-in shares.
+func TestAnIPv6VisitorIsCountedByIts56(t *testing.T) {
 	s := newTestServer(t, behindTrustedProxy)
 	enrollDirect(t)
 	for i := 0; i < 10; i++ {
-		r := s.do("POST", loginPath, wrongGuess, fromClient(fmt.Sprintf("2001:db8:1:2::%x", i+1)))
+		// Ten /64s of one /56, an address in each.
+		r := s.do("POST", loginPath, wrongGuess, fromClient(fmt.Sprintf("2001:db8:1:%x::%x", i, i+1)))
 		if r.status != http.StatusUnauthorized {
-			t.Fatalf("wrong sign-in %d from one /64: %d %v, want 401", i+1, r.status, r)
+			t.Fatalf("wrong sign-in %d from one /56: %d %v, want 401", i+1, r.status, r)
 		}
 	}
-	r := s.do("POST", loginPath, wrongGuess, fromClient("2001:db8:1:2:ffff:ffff:ffff:ffff"))
-	if r.status != http.StatusTooManyRequests || string(r.raw) != limitedReply {
-		t.Fatalf("an eleventh address of the same /64: %d %v, want the visitor's own limit", r.status, r)
+	for _, addr := range []string{"2001:db8:1:2:ffff:ffff:ffff:ffff", "2001:db8:1:ff::1"} {
+		r := s.do("POST", loginPath, wrongGuess, fromClient(addr))
+		if r.status != http.StatusTooManyRequests || string(r.raw) != limitedReply {
+			t.Fatalf("an eleventh request from the same /56 (%s): %d %v, want the visitor's own limit", addr, r.status, r)
+		}
 	}
-	// The next /64 is another visitor; so is any IPv4 address.
-	for _, addr := range []string{"2001:db8:1:3::1", "198.51.100.7"} {
+	// The next /56 is another visitor; so is any IPv4 address.
+	for _, addr := range []string{"2001:db8:1:100::1", "198.51.100.7"} {
 		if r := s.do("POST", loginPath, wrongGuess, fromClient(addr)); r.status != http.StatusUnauthorized {
 			t.Fatalf("a first wrong sign-in from %s: %d %v, want 401", addr, r.status, r)
 		}
@@ -542,5 +559,161 @@ func TestListenNetworkFollowsTheListenAddress(t *testing.T) {
 		if got := listenNetwork(addr); got != want {
 			t.Errorf("listenNetwork(%q) = %q, want %q", addr, got, want)
 		}
+	}
+}
+
+// The checker's findings on the fixes above (2026-11-10, same day).
+
+// A made-up name is counted under the very comparison the database makes:
+// ASCII letters lowered, nothing more. Go's ToLower also folds the Kelvin
+// sign to k, so ten tries as "Kyle" paused the made-up "kyle" — while
+// a real "kyle" would have been untouched, which told the two apart.
+func TestAMadeUpNameIsCountedAsTheDatabaseComparesIt(t *testing.T) {
+	s := newTestServer(t, withSecretsKey, behindTrustedProxy)
+	try := func(username string, i int) response {
+		return s.do("POST", "/api/v1/accounts/login", map[string]any{
+			"username": username, "password": "not the password", "device": map[string]any{"label": "x"},
+		}, fromClient(fmt.Sprintf("203.0.%d.%d", 120+i/200, 1+i%200)))
+	}
+	n := 0
+	// "K" is the Kelvin sign: no username can hold it, so the name
+	// finds nobody, is never paused, and pauses nobody else.
+	for i := 0; i < repository.LoginFailuresBeforeLock+2; i++ {
+		if r := try("Kyle", n); r.status != http.StatusUnauthorized {
+			t.Fatalf("try %d as K(elvin)yle: %d %v, want 401 every time", i+1, r.status, r)
+		}
+		n++
+	}
+	if r := try("kyle", n); r.status != http.StatusUnauthorized {
+		t.Fatalf("kyle after twelve tries as K(elvin)yle: %d %v, want 401 (its own first try)", r.status, r)
+	}
+	n++
+	// Neither is a string too long to be a username ever kept or paused.
+	long := strings.Repeat("a", 4000)
+	for i := 0; i < repository.LoginFailuresBeforeLock+2; i++ {
+		if r := try(long, n); r.status != http.StatusUnauthorized {
+			t.Fatalf("try %d with a 4000-character name: %d %v, want 401 every time", i+1, r.status, r)
+		}
+		n++
+	}
+}
+
+// Wrong passwords sent together do not all get an answer: the pause is
+// asked again after the slow check. Forty-five at once had all passed the
+// pause check before the first was counted.
+func TestWrongPasswordsSentTogetherMeetThePause(t *testing.T) {
+	s := newTestServer(t, withSecretsKey, behindTrustedProxy)
+	setUpHousehold(t, s)
+	const together = 45
+	replies := make(chan response, together)
+	for i := 0; i < together; i++ {
+		go func(i int) {
+			r, err := s.send("POST", "/api/v1/accounts/login", map[string]any{
+				"username": "sam", "password": fmt.Sprintf("guess number %d", i),
+				"device": map[string]any{"label": "x"},
+			}, fromClient(fmt.Sprintf("203.0.113.%d", i+1)))
+			if err != nil {
+				r = response{status: -1}
+			}
+			replies <- r
+		}(i)
+	}
+	answered, paused := 0, 0
+	for i := 0; i < together; i++ {
+		switch r := <-replies; {
+		case r.status == http.StatusUnauthorized && r.str("reason") == "bad-credentials":
+			answered++
+		case r.status == http.StatusTooManyRequests && r.str("reason") == "locked":
+			paused++
+		default:
+			t.Fatalf("an unexpected reply: %d %v", r.status, r)
+		}
+	}
+	// Ten are counted before the pause; the two checks in flight as it
+	// lands may answer as well.
+	if most := repository.LoginFailuresBeforeLock + 2; answered > most {
+		t.Fatalf("%d of %d wrong passwords sent together got an answer, want at most %d", answered, together, most)
+	}
+	if paused == 0 {
+		t.Fatal("none of the wrong passwords sent together met the pause")
+	}
+}
+
+// A Manage server sign-in made with a person's account before the update
+// names no device, so signing that device out could never end it. Those
+// sign-ins end once, as the column that names the device is added; the
+// admin login's own are kept.
+func TestAccountSignInsMadeBeforeTheUpdateEndOnce(t *testing.T) {
+	s := newTestServer(t, withSecretsKey)
+	h := setUpHousehold(t, s)
+	// A database from before the column: take it away, as the old code
+	// never had it, and put in what the old code would have stored.
+	if _, err := database.DB.Exec(`ALTER TABLE admin_device_tokens DROP COLUMN via_token`); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(id, profileID, scope string) {
+		t.Helper()
+		if _, err := database.DB.Exec(`
+			INSERT INTO admin_device_tokens
+				(id, token_hash, label, persistent, created_via, scheme_basis,
+				 created_at, last_used_at, expires_at, profile_id, scope)
+			VALUES (?, ?, 'old phone', 1, 'totp', '', 1, 1, 9999999999, ?, ?)`,
+			id, "hash-"+id, profileID, scope); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("sams-old-sign-in", h.sam, "full")
+	insert("the-admins-own", "", "")
+	if err := database.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	if deviceRowExists(t, "sams-old-sign-in") {
+		t.Fatal("an account's sign-in from before the update survived it")
+	}
+	if !deviceRowExists(t, "the-admins-own") {
+		t.Fatal("the admin login's own sign-in was ended by the update")
+	}
+	// Only once: a sign-in made after the update stays through the next start.
+	if _, err := database.DB.Exec(`
+		INSERT INTO admin_device_tokens
+			(id, token_hash, label, persistent, created_via, scheme_basis,
+			 created_at, last_used_at, expires_at, profile_id, scope, via_token)
+		VALUES ('sams-new-sign-in', 'hash-new', 'phone', 1, 'account', '', 1, 1, 9999999999, ?, 'full', 'some-device')`,
+		h.sam); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RunMigrations(); err != nil {
+		t.Fatal(err)
+	}
+	if !deviceRowExists(t, "sams-new-sign-in") {
+		t.Fatal("a sign-in made after the update was ended by the next start")
+	}
+}
+
+// A start forgets every count of wrong sign-in answers, the stored ones
+// with the ones kept in memory, so a restart cannot tell a real sign-in
+// from a made-up name.
+func TestAStartForgetsWrongAnswerCounts(t *testing.T) {
+	s := newTestServer(t, withSecretsKey, behindTrustedProxy)
+	h := setUpHousehold(t, s)
+	for i := 0; i < repository.LoginFailuresBeforeLock; i++ {
+		s.do("POST", "/api/v1/accounts/login", map[string]any{
+			"username": "sam", "password": "not it", "device": map[string]any{"label": "x"},
+		}, fromClient(fmt.Sprintf("203.0.113.%d", i+1)))
+	}
+	var until int64
+	if err := database.DB.QueryRow(`SELECT locked_until FROM account_logins WHERE profile_id = ?`,
+		h.sam).Scan(&until); err != nil || until == 0 {
+		t.Fatalf("Sam is not paused after ten wrong answers (until %d, %v)", until, err)
+	}
+	// The server starts again on the same database.
+	s.app = buildApp(s.cfg)
+	var failures int
+	if err := database.DB.QueryRow(`SELECT failed_attempts, locked_until FROM account_logins WHERE profile_id = ?`,
+		h.sam).Scan(&failures, &until); err != nil {
+		t.Fatal(err)
+	}
+	if failures != 0 || until != 0 {
+		t.Fatalf("after a start: %d wrong answers counted, paused until %d; want both forgotten", failures, until)
 	}
 }

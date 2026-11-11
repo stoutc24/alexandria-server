@@ -23,10 +23,10 @@ services:
       - "${PORT:-4000}:4000"
 
     volumes:
-      # Persistent data storage
+      # Persistent data storage. To keep the data in a folder instead, do
+      # not edit this file: put the change in docker-compose.override.yml
+      # (README, "Changing the compose file"), so an update never undoes it.
       - alexandria-data:/data
-      # Optional: bind mount for easier backup access
-      # - ./data:/data
 
     environment:
       # Server configuration

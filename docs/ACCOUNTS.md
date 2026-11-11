@@ -167,9 +167,11 @@ Limits: 10 a minute per client, a shared allowance across every visitor
 - `code-required`: the password was right and the two-step code is next.
 - `bad-code`.
 - `locked` (429, with `retryAfterSeconds`): ten wrong answers in a row
-  pause a sign-in for 15 minutes. From 1.1.0 a username nobody has pauses
+  pause a sign-in for 15 minutes. From 1.1.0: a username nobody has pauses
   by the same rule, with the same answer, so the pause does not say who
-  exists.
+  exists; "in a row" lapses after 15 minutes without a wrong answer; the
+  pause is read again after the password check, so answers sent together
+  meet it; and a restart clears every pause and count.
 - `busy`, `rate-limited`.
 - `invite-invalid`, `username-taken`, `bad-username`.
   Usernames: `^[a-z0-9][a-z0-9._-]{2,31}$`, case-insensitive.

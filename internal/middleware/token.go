@@ -80,7 +80,7 @@ func RequireAdmin(
 	cfg *config.Config,
 	auth *repository.AdminAuthRepository,
 ) fiber.Handler {
-	publicHost := publicHostOf(cfg.PublicURL)
+	publicOrigin := originOf(cfg.PublicURL)
 	return func(c *fiber.Ctx) error {
 		enrolled, err := auth.Enrolled()
 		if err != nil {
@@ -94,7 +94,7 @@ func RequireAdmin(
 				if err == nil && ok {
 					// The cookie counts only for the admin page's own
 					// requests (sameOriginGuard).
-					if !sameOriginGuard(c, publicHost) {
+					if !sameOriginGuard(c, publicOrigin) {
 						return refuseCrossOrigin(c)
 					}
 					return c.Next()
@@ -389,12 +389,12 @@ func RequireAnyToken(
 	profiles *repository.ProfileRepository,
 	auth *repository.AdminAuthRepository,
 ) fiber.Handler {
-	publicHost := publicHostOf(cfg.PublicURL)
+	publicOrigin := originOf(cfg.PublicURL)
 	return func(c *fiber.Ctx) error {
 		if raw := c.Cookies(AdminSessionCookie); raw != "" {
 			ok, err := auth.SessionValid(adminauth.HashToken(raw))
 			if err == nil && ok {
-				if !sameOriginGuard(c, publicHost) {
+				if !sameOriginGuard(c, publicOrigin) {
 					return refuseCrossOrigin(c)
 				}
 				return c.Next()

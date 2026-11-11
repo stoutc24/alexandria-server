@@ -473,13 +473,13 @@ stopped server can leave, which belong to the old database:
 
 ```bash
 docker stop alexandria-server
-docker run --rm --volumes-from alexandria-server -v "$PWD":/backup alpine sh -c \
-  'rm -f /data/alexandria.db-wal /data/alexandria.db-shm && cp /backup/backup.db /data/alexandria.db && chown 1000:1000 /data/alexandria.db'
+docker run --rm --volumes-from alexandria-server -v "${PWD}:/backup" alpine sh -c 'rm -f /data/alexandria.db-wal /data/alexandria.db-shm && cp /backup/backup.db /data/alexandria.db && chown 1000:1000 /data/alexandria.db'
 docker start alexandria-server
 ```
 
 Run it in the folder that holds `backup.db` (the file **Download backup**
-gave you, renamed). To move to another machine, install the server there
+gave you, renamed). The middle command is one line, and works as written
+in a Linux or macOS terminal and in Windows PowerShell. To move to another machine, install the server there
 with the **same** `ALEXANDRIA_SECRETS_KEY`, then restore the backup the
 same way. Linked devices keep working if the new machine answers at the
 old address; otherwise link them again.
@@ -513,6 +513,25 @@ With `docker run`, pull the image, then remove and re-create the
 container with the same `-v alexandria-data:/data` and settings.
 
 Your data lives in the volume and survives updates.
+
+### Changing the compose file
+
+Keep your own changes out of `docker-compose.yml`: put them in a file
+named `docker-compose.override.yml` next to it, which Docker Compose
+reads by itself and no update touches. For example, to keep the data in
+a folder instead of a Docker volume:
+
+```yaml
+services:
+  alexandria-server:
+    volumes:
+      - ./data:/data
+```
+
+If you did edit `docker-compose.yml`, the update script notices, **keeps
+your file** and saves the current one beside it as
+`docker-compose.yml.new`. It never swaps an edited file for you: a
+different `volumes:` line would start the server on an empty database.
 
 **Set up before Alexandria accounts?** The installer's update adds a
 secrets key to your `.env` and prints it once (copy it somewhere safe).
@@ -563,8 +582,8 @@ every person, device and statistic.** Take a backup first.
   - All visitors together get at most 20 wrong passwords or codes a
     minute, after a first 60. More addresses buy no more guesses.
   - One visitor alone can never use that up. A visitor is one IPv4
-    address, or one IPv6 /64 (the block a home or a rented server is
-    given), so a block of addresses is still one visitor. If several keep
+    address, or one IPv6 /56 (the block a home or a rented server is
+    commonly given), so a block of addresses is still one visitor. If several keep
     it used up at once, your own sign-in waits too until they stop or the
     server restarts. Browsers and phones already signed in keep working.
   - Each signed-in phone has its own allowance for the codes its backups
@@ -573,9 +592,10 @@ every person, device and statistic.** Take a backup first.
     so a stolen phone cannot keep guessing; signing in again takes the
     password.
 - **The browser's admin sign-in works only from the admin page itself.**
-  A page on another address, another port of the same machine or a
-  sibling subdomain cannot use it, even though the browser sends the
-  cookie along. (Browsers say which page a request came from; the server
+  A page on another address, another port of the same machine, a sibling
+  subdomain, or the same name over the other of http and https cannot use
+  it, even though the browser sends the cookie along. That covers signing
+  out too. (Browsers say which page a request came from; the server
   checks.)
 - **Large requests need a credential.** A request with no token or admin
   sign-in the server knows may send 16 KB at most; the 8 MB limit the
@@ -632,7 +652,10 @@ every person, device and statistic.** Take a backup first.
 - **Turning on two-step for an Alexandria account takes its password**, as
   turning it off always did. Both, and changing the password, count wrong
   tries exactly as the sign-in does: ten in a row pause that person's
-  sign-in for 15 minutes.
+  sign-in for 15 minutes. "In a row" means within 15 minutes of each
+  other, wrong answers sent at the same moment are counted before any is
+  answered, and a restart clears the pauses, as it clears every other
+  count of wrong guesses.
 - **A username that does not exist answers like one that does**, pause
   included, so trying names does not reveal who has a sign-in.
 - **An invite's short code is stored under a key made from the admin
@@ -685,10 +708,10 @@ more than about a minute out, and every code is refused. On a NAS or a
 Raspberry Pi, turn on automatic time (NTP).
 
 **The admin page signs in, then says "this request did not come from the
-admin page".** Your reverse proxy changes the address the server sees
-and your browser is an older one. Set `ALEXANDRIA_PUBLIC_URL` to the
-`https://` address you open, or make the proxy pass the `Host` header on
-(the nginx example above does).
+admin page".** Your reverse proxy changes the address the server sees.
+Make the proxy pass the `Host` header on, and `X-Forwarded-Proto` if it
+serves https (the nginx example above does both), or set
+`ALEXANDRIA_PUBLIC_URL` to the `https://` address you open.
 
 **A phone was signed out of Manage server.** Ten wrong authenticator
 codes in a row sign that phone out. Sign in again with your password and

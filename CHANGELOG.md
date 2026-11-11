@@ -28,19 +28,21 @@ have been used)
 - A request with no credential may send 16 KB at most, and password checks
   run two at a time, so neither can be used to exhaust the machine's
   memory.
-- An IPv6 visitor is counted by its /64 block, so one home cannot use up
+- An IPv6 visitor is counted by its /56 block, so one home cannot use up
   everyone's sign-in attempts.
 - Turning two-step on or off, and changing a password, count wrong tries
   as the sign-in does. A username that does not exist answers like one
-  that does.
+  that does. Wrong answers sent at the same moment no longer all get
+  through before the pause; "ten in a row" now means within 15 minutes.
 - An invite's short code is stored under a key that is not in the
   database, and a backup taken from a phone carries no waiting invite.
 - Revoking a device also ends the Manage server sign-in made on it; "Sign
   out all devices" also cancels a link approved but not yet collected.
 - Ten wrong authenticator codes in a row sign a phone out of Manage
   server.
-- The installer and updater keep every file they write private, and the
-  updater keeps your `docker-compose.yml` as a backup when it changes.
+- The installer and updater keep every file they write private, and
+  never replace a `docker-compose.yml` you edited (the current one is
+  saved beside it; keep your own changes in `docker-compose.override.yml`).
 
 **When you update**
 
@@ -50,6 +52,9 @@ have been used)
   still waiting (their links keep working).
 - `docker-compose.yml` no longer has a `build:` section. If you build from
   a checkout, add `-f docker-compose.build.yml`.
+- A phone signed in to **Manage server** with a person's account (not the
+  admin login) is signed out once by this update, and signs in again.
+- A restart now clears paused sign-ins.
 
 ## 1.0.0
 

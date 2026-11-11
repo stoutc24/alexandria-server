@@ -393,17 +393,31 @@ func RunMigrations() error {
 		// copied device token could make first. NULL for a request
 		// without one (an app from before Link).
 		`ALTER TABLE link_requests ADD COLUMN public_key TEXT`,
-		// Which of a person's devices made a Manage server sign-in with
-		// their account (its profile_tokens id), so signing that ONE
-		// device out ends the sign-in it made (security review,
-		// 2026-11-10: the phone's link went and its admin sign-in stayed).
-		// "" for the admin login's own sign-ins, and for an account's made
-		// before this column: those still go with "sign out all devices".
-		`ALTER TABLE admin_device_tokens ADD COLUMN via_token TEXT NOT NULL DEFAULT ''`,
+		alterViaToken,
+		// When a sign-in last got a wrong answer, so "ten in a row" lapses
+		// (AccountRepository.RecordFailure).
+		`ALTER TABLE account_logins ADD COLUMN last_failed_at INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := DB.Exec(alter); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 				return fmt.Errorf("alter failed (%s): %w", alter, err)
+			}
+			continue
+		}
+		// The column was added just now: what must happen once with it.
+		if alter == alterViaToken {
+			// Manage server sign-ins made with a person's account BEFORE
+			// this column name no device, so signing that device out could
+			// never end them (checker, 2026-11-10). They go, once: each
+			// phone signs in to Manage server again and is recorded. The
+			// admin login's own sign-ins (no profile_id) are untouched.
+			res, err := DB.Exec(`DELETE FROM admin_device_tokens WHERE profile_id != ''`)
+			if err != nil {
+				return fmt.Errorf("could not end the account sign-ins made before via_token: %w", err)
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				log.Printf("update: %d Manage server sign-in(s) made with a person's account were ended; "+
+					"each phone signs in to Manage server once more", n)
 			}
 		}
 	}
@@ -411,6 +425,13 @@ func RunMigrations() error {
 	log.Println("All migrations completed successfully")
 	return nil
 }
+
+// alterViaToken adds which of a person's devices made a Manage server
+// sign-in with their account (its profile_tokens id), so signing that ONE
+// device out ends the sign-in it made (security review, 2026-11-10: the
+// phone's link went and its admin sign-in stayed). "" for the admin login's
+// own sign-ins.
+const alterViaToken = `ALTER TABLE admin_device_tokens ADD COLUMN via_token TEXT NOT NULL DEFAULT ''`
 
 // Meta is a tiny key/value table for facts about the database itself —
 // today, just which version of the content-key algorithm the stored

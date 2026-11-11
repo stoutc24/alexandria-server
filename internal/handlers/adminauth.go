@@ -26,6 +26,9 @@ type AdminAuthHandler struct {
 	// over HTTPS (scheme basis "config", for a sign-in that stays and
 	// whose headers name no scheme — see decideSchemeBasis).
 	httpsDeclared bool
+	// publicURL is ALEXANDRIA_PUBLIC_URL as configured ("" when unset), for
+	// the check that a cookie's request came from the admin page (Logout).
+	publicURL string
 	// signIns is the allowance of wrong passwords and codes that every
 	// sign-in draws on, every visitor together; stepUps is each signed-in
 	// phone's own, for the codes its backups and approvals carry (see
@@ -115,6 +118,7 @@ func NewAdminAuthHandler(
 	return &AdminAuthHandler{
 		auth:          auth,
 		httpsDeclared: strings.HasPrefix(strings.ToLower(publicURL), "https://"),
+		publicURL:     publicURL,
 		signIns: adminauth.NewGuessLimit(
 			adminauth.SignInGuessBurst, adminauth.SignInGuessRefill),
 		stepUps: adminauth.NewGuessLimit(
@@ -760,7 +764,19 @@ func (h *AdminAuthHandler) IssueAccountDeviceToken(c *fiber.Ctx) error {
 	// The password before the code, for the reason checkCredentials gives:
 	// a code is spent when it matches, so it must not be spendable by
 	// someone who does not know the password.
-	if !adminauth.VerifyPassword(login.PasswordHash, req.Password) {
+	right := adminauth.VerifyPassword(login.PasswordHash, req.Password)
+	// Asked again after the slow check, as the account's own sign-in does
+	// (AccountsHandler.pausedSince).
+	if until, err := h.accounts.LockedUntil(login.ProfileID, now); err != nil {
+		return serverError(c, "could not read the sign-in", err)
+	} else if until > 0 {
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+			"error":             "too many wrong attempts; this sign-in is paused",
+			"reason":            "locked",
+			"retryAfterSeconds": until - now.Unix(),
+		})
+	}
+	if !right {
 		return wrong("password did not match")
 	}
 	if strings.TrimSpace(req.Code) == "" {
@@ -843,6 +859,15 @@ func callerForLog(c *fiber.Ctx) string {
 }
 
 func (h *AdminAuthHandler) Logout(c *fiber.Ctx) error {
+	// The cookie counts only from the admin page itself, here as everywhere
+	// (middleware.SameOriginCookie): another page must not be able to sign
+	// the admin out, nuisance though that is.
+	if c.Cookies(middleware.AdminSessionCookie) != "" && !middleware.SameOriginCookie(c, h.publicURL) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error":  "this request did not come from the admin page",
+			"reason": "cross-origin",
+		})
+	}
 	if raw := c.Cookies(middleware.AdminSessionCookie); raw != "" {
 		if err := h.auth.DeleteSession(adminauth.HashToken(raw)); err != nil {
 			return serverError(c, "could not end the session", err)

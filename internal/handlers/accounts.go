@@ -293,6 +293,10 @@ func (h *AccountsHandler) Login(c *fiber.Ctx) error {
 			return lockedReply(c, until-now.Unix())
 		}
 		adminauth.VerifyPassword(h.decoy, body.Password)
+		// Asked again after the slow check, as for a real sign-in below.
+		if until := h.ghosts.lockedUntil(body.Username, now); until > 0 {
+			return lockedReply(c, until-now.Unix())
+		}
 		h.ghosts.fail(body.Username, now)
 		return refuse(c, fiber.StatusUnauthorized, "bad-credentials", "wrong username or password")
 	}
@@ -302,7 +306,15 @@ func (h *AccountsHandler) Login(c *fiber.Ctx) error {
 	if login.LockedUntil > now.Unix() {
 		return lockedReply(c, login.LockedUntil-now.Unix())
 	}
-	if !adminauth.VerifyPassword(login.PasswordHash, body.Password) {
+	right := adminauth.VerifyPassword(login.PasswordHash, body.Password)
+	// The pause is asked again now the slow check is done (pausedSince):
+	// answers sent together must not all slip in ahead of the count.
+	if until, err := h.pausedSince(login, now); err != nil {
+		return serverError(c, "could not read the sign-in", err)
+	} else if until > 0 {
+		return lockedReply(c, until-now.Unix())
+	}
+	if !right {
 		h.fail(login, now)
 		return refuse(c, fiber.StatusUnauthorized, "bad-credentials", "wrong username or password")
 	}
@@ -331,6 +343,16 @@ func (h *AccountsHandler) fail(login *repository.AccountLogin, now time.Time) {
 		log.Printf("account sign-in %q paused until %s after repeated wrong answers",
 			login.Username, time.Unix(until, 0).Format(time.RFC3339))
 	}
+}
+
+// pausedSince reads the sign-in's pause again, fresh, after a slow password
+// check: when it lifts, 0 when the sign-in is not paused. Every caller had
+// already read "not paused" before the check; while it ran (two at a time,
+// the rest waiting their turn) other wrong answers may have been counted.
+// Without this, forty-five wrong passwords sent together all got an answer
+// (checker, 2026-11-10); with it, about ten do.
+func (h *AccountsHandler) pausedSince(login *repository.AccountLogin, now time.Time) (int64, error) {
+	return h.accounts.LockedUntil(login.ProfileID, now)
 }
 
 // lockedReply is the answer of a paused sign-in: 429 locked, with how long
@@ -362,7 +384,13 @@ func (h *AccountsHandler) ownPassword(
 	if !h.spendGuess(c) {
 		return false, nil
 	}
-	if !adminauth.VerifyPassword(login.PasswordHash, password) {
+	right := adminauth.VerifyPassword(login.PasswordHash, password)
+	if until, err := h.pausedSince(login, now); err != nil {
+		return false, serverError(c, "could not read the sign-in", err)
+	} else if until > 0 {
+		return false, lockedReply(c, until-now.Unix())
+	}
+	if !right {
 		h.fail(login, now)
 		return false, refuse(c, fiber.StatusUnauthorized, "bad-credentials", wrong)
 	}

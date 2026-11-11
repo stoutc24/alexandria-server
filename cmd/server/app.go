@@ -107,6 +107,11 @@ func buildApp(cfg *config.Config) *fiber.App {
 	// database (repository.SetInviteCodeKey).
 	repository.SetInviteCodeKey(cfg.APIToken)
 	accountRepo := repository.NewAccountRepository(secrets)
+	// A start forgets every count of wrong sign-in answers, the stored
+	// ones with the ones kept in memory (AccountRepository.ForgetGuessState).
+	if err := accountRepo.ForgetGuessState(); err != nil {
+		log.Printf("accounts: could not clear the wrong-answer counts: %v", err)
+	}
 	accountsHandler := handlers.NewAccountsHandler(accountRepo, profileRepo, adminAuthHandler.FreshCode)
 	// A link by code keeps the key its request carried (Alexandria Link).
 	linkHandler := handlers.NewLinkHandler(linkRepo, profileRepo, accountRepo, adminAuthHandler.FreshCode)

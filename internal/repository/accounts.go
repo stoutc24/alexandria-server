@@ -66,6 +66,9 @@ const MinAccountPasswordLength = 8
 const (
 	LoginFailuresBeforeLock = 10
 	LoginLockDuration       = 15 * time.Minute
+	// LoginFailureWindow: wrong answers further apart than this are not
+	// "in a row" (RecordFailure).
+	LoginFailureWindow = 15 * time.Minute
 )
 
 // InviteTTL is how long an invite stays usable.
@@ -162,6 +165,27 @@ func ValidAdminAccess(s string) bool {
 
 var usernameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{2,31}$`)
 
+// LoginKey is the form of a typed username that decides which sign-in it
+// finds: trimmed, with ASCII letters lowered — exactly what LoginByUsername's
+// `COLLATE NOCASE` compares, and nothing more. ok is false for a string no
+// username can be (usernameRe), which therefore finds nobody.
+//
+// ASCII only, on purpose (checker, 2026-11-10): Go's strings.ToLower also
+// folds U+212A (the Kelvin sign) to k and U+0130 to i, which SQLite's NOCASE
+// does not. A count kept under the Unicode fold let "\u212Aate" pause the
+// made-up name "kate" while leaving a real "kate" untouched, which told the
+// two apart.
+func LoginKey(typed string) (key string, ok bool) {
+	b := []byte(strings.TrimSpace(typed))
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	key = string(b)
+	return key, usernameRe.MatchString(key)
+}
+
 // NormalizeUsername lowercases and checks a username.
 func NormalizeUsername(s string) (string, error) {
 	s = strings.ToLower(strings.TrimSpace(s))
@@ -212,6 +236,12 @@ func (r *AccountRepository) LoginByProfile(profileID string) (*AccountLogin, err
 // RecordFailure counts a wrong password or code and locks the sign-in
 // once LoginFailuresBeforeLock are in a row. It returns when the lock
 // lifts, 0 when not locked.
+//
+// "In a row" lapses: a wrong answer more than LoginFailureWindow after the
+// one before starts the count again (checker, 2026-11-10). A count that
+// never lapsed was one more way to tell a real sign-in from a made-up name,
+// whose count is kept in memory and cannot last for ever; and nine typos
+// spread over a year should not make the tenth a lockout.
 func (r *AccountRepository) RecordFailure(profileID string, now time.Time) (int64, error) {
 	tx, err := database.DB.Begin()
 	if err != nil {
@@ -219,9 +249,13 @@ func (r *AccountRepository) RecordFailure(profileID string, now time.Time) (int6
 	}
 	defer tx.Rollback()
 	var failures int
-	if err := tx.QueryRow(`SELECT failed_attempts FROM account_logins WHERE profile_id = ?`,
-		profileID).Scan(&failures); err != nil {
+	var lastFailed int64
+	if err := tx.QueryRow(`SELECT failed_attempts, last_failed_at FROM account_logins WHERE profile_id = ?`,
+		profileID).Scan(&failures, &lastFailed); err != nil {
 		return 0, err
+	}
+	if now.Unix()-lastFailed > int64(LoginFailureWindow/time.Second) {
+		failures = 0
 	}
 	failures++
 	var lockedUntil int64
@@ -230,12 +264,42 @@ func (r *AccountRepository) RecordFailure(profileID string, now time.Time) (int6
 		failures = 0
 	}
 	if _, err := tx.Exec(`
-		UPDATE account_logins SET failed_attempts = ?,
+		UPDATE account_logins SET failed_attempts = ?, last_failed_at = ?,
 			locked_until = CASE WHEN ? > 0 THEN ? ELSE locked_until END
-		WHERE profile_id = ?`, failures, lockedUntil, lockedUntil, profileID); err != nil {
+		WHERE profile_id = ?`, failures, now.Unix(), lockedUntil, lockedUntil, profileID); err != nil {
 		return 0, err
 	}
 	return lockedUntil, tx.Commit()
+}
+
+// LockedUntil reads when a sign-in's pause lifts, fresh from the database:
+// 0 when it is not paused at now. A sign-in asks again AFTER the slow
+// password check (checker, 2026-11-10): forty-five wrong passwords sent
+// together had all passed the pause check before the first was counted, so
+// all forty-five got an answer.
+func (r *AccountRepository) LockedUntil(profileID string, now time.Time) (int64, error) {
+	var until int64
+	err := database.DB.QueryRow(`SELECT locked_until FROM account_logins WHERE profile_id = ?`,
+		profileID).Scan(&until)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil || until <= now.Unix() {
+		return 0, err
+	}
+	return until, nil
+}
+
+// ForgetGuessState clears every sign-in's wrong-answer count and pause. Run
+// once as the server starts: the made-up names' counts live in memory and
+// are gone after a restart, so the real ones go too, or a restart (which
+// /health's uptime shows) would tell them apart. A restart already clears
+// every other count of wrong guesses this server keeps.
+func (r *AccountRepository) ForgetGuessState() error {
+	_, err := database.DB.Exec(`UPDATE account_logins
+		SET failed_attempts = 0, locked_until = 0, last_failed_at = 0
+		WHERE failed_attempts != 0 OR locked_until != 0 OR last_failed_at != 0`)
+	return err
 }
 
 // RecordSuccess clears the failure count and stamps the sign-in.

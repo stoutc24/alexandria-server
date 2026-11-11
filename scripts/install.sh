@@ -109,6 +109,42 @@ ensure_secrets_key() {
     echo -e "    ${key}"
 }
 
+# The published docker-compose.yml, without ever replacing one you changed.
+#
+# This script remembers the file it wrote (.compose-checksum). Next time:
+#   - yours is still that file: it is replaced by the current one;
+#   - yours differs (you edited it, or it was installed before the checksum
+#     was kept): YOURS IS KEPT and used, and the current one is saved beside
+#     it as docker-compose.yml.new. Replacing an edited file could point the
+#     server at a different data volume, which starts it empty.
+# Keep your own changes in docker-compose.override.yml, which Docker Compose
+# reads by itself and no update touches.
+COMPOSE_URL="https://raw.githubusercontent.com/stoutc24/alexandria-server/main/docker-compose.yml"
+compose_checksum() { cksum < "$1" | awk '{print $1 "-" $2}'; }
+fetch_compose() {
+    curl -fsSL "$COMPOSE_URL" -o docker-compose.yml.new
+    if [ ! -f docker-compose.yml ]; then
+        mv docker-compose.yml.new docker-compose.yml
+        compose_checksum docker-compose.yml > .compose-checksum
+        echo -e "${GREEN}✓${NC} docker-compose.yml downloaded"
+    elif cmp -s docker-compose.yml docker-compose.yml.new; then
+        rm -f docker-compose.yml.new
+        compose_checksum docker-compose.yml > .compose-checksum
+        echo -e "${GREEN}✓${NC} docker-compose.yml is current"
+    elif [ -f .compose-checksum ] && [ "$(compose_checksum docker-compose.yml)" = "$(cat .compose-checksum)" ]; then
+        cp docker-compose.yml docker-compose.yml.backup
+        mv docker-compose.yml.new docker-compose.yml
+        compose_checksum docker-compose.yml > .compose-checksum
+        echo -e "${GREEN}✓${NC} docker-compose.yml updated (the previous one is docker-compose.yml.backup)"
+    else
+        echo -e "${YELLOW}!${NC} Your docker-compose.yml differs from the current one, so it was KEPT"
+        echo "    and is still the one in use. The current one is saved beside it as"
+        echo "    docker-compose.yml.new. To move to it: put your own changes in"
+        echo "    docker-compose.override.yml, then rename docker-compose.yml.new to"
+        echo "    docker-compose.yml and run this again."
+    fi
+}
+
 # This machine's address on the home network, for the admin page's link.
 # Best effort: empty when it cannot be told.
 lan_address() {
@@ -149,10 +185,9 @@ main() {
     echo -e "${GREEN}✓${NC} Directory: $INSTALL_DIR"
     echo ""
 
-    # Download docker-compose.yml
+    # Download docker-compose.yml (never over one you changed: fetch_compose)
     echo -e "${YELLOW}Downloading configuration...${NC}"
-    curl -fsSL "https://raw.githubusercontent.com/stoutc24/alexandria-server/main/docker-compose.yml" -o docker-compose.yml
-    echo -e "${GREEN}✓${NC} docker-compose.yml downloaded"
+    fetch_compose
 
     # Create .env file if it doesn't exist
     if [ ! -f .env ]; then
