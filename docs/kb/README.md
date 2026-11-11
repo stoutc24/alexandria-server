@@ -38,12 +38,22 @@ installing and running the Alexandria companion server itself, see the
 | [Watching videos on the phone, tablet and computer](videos.md) | The seek bar and its preview pictures (and where they come from); the volume speaker, mute, keys and mouse wheel; subtitles Off; Picture in Picture on iPhone, iPad and Android |
 | [Browsing films and shows](browsing-movies-and-shows.md) | Plex's own shelves on Plex Video Home; a library's Recommended, Library and Collections tabs; filters (genre, decade, rating, quality, watched) and sorts; the Apple TV's library pages |
 | [Scanning a Plex library, and refreshing what a TV shows](scan-and-refresh-libraries.md) | Scan library files for the server's owner, on each library and for all of them; the messages; Refresh on the TV apps for one library or a whole Plex server |
+| [Marking films and shows watched or unwatched](marking-watched.md) | Mark watched / Mark unwatched for a Plex or Jellyfin film, episode, season or whole show: the buttons, the hold and long-press menus, the question a show or season asks, what changes next, Kids mode |
 
 Contact for questions or problems: stoutservers@gmail.com
 
 ## Check on a real device before publishing
 
 These were proven in tests and simulators, not yet on hardware:
+
+- [ ] Marking watched and unwatched (phone after 1263, Apple TV after 206,
+      Samsung and Fire TV): proven in tests, on the Apple TV simulator and
+      in a desktop browser, against a test server only. Still to check on
+      real devices and a real Plex and a real Jellyfin: a film and an
+      episode both ways; that marking a season or a whole show marks every
+      episode under it (assumed from how Plex's and Jellyfin's own apps
+      do it, never measured); Continue Watching and Next Up afterwards;
+      a shared user's marks staying their own.
 
 - [ ] Video volume, subtitles Off, scanning and refreshing (phone 1262 and
       1263, Apple TV 206, Samsung and Fire TV): proven in tests, on the
