@@ -26,9 +26,10 @@ price unless you cancel.
 
 Open **Premium** (You › Settings › Alexandria Premium, or Settings ›
 Alexandria Premium on the Apple TV) and choose Monthly or Annual. When
-you can get the trial, the plan says "1 week free, then" its price (on
-Android and the Mac its button reads **Start free week**). The store's own
-sheet confirms the free week and the price after it.
+you can get the trial, the screen says "Your first week is free", the plan
+says "1 week free, then" its price, and on a phone, tablet or computer the
+button reads **Start free week**. The store's own sheet confirms the free
+week and the price after it.
 
 ## How to cancel
 
