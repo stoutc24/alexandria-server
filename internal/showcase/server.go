@@ -104,6 +104,13 @@ type Server struct {
 	// 1 again, for the apps' "Disc N" headers (owner, 2026-11-09). Off
 	// unless SHOWCASE_TWO_DISCS=1 is set.
 	TwoDiscs bool
+	// ClipChapters spreads every film's and episode's chapters over the
+	// first 40 seconds (clipChapterSpan) instead of its running time
+	// (chapters.go), for a probe whose player plays the clip FILE as it is
+	// — the phone's direct play, desktop Chrome — where a chapter past the
+	// clip's end could not be reached. Off unless SHOWCASE_CLIP_CHAPTERS=1
+	// is set.
+	ClipChapters bool
 	// Every Plex or Jellyfin song-file request this Server answered, newest
 	// last, for a probe to check whether the app asked for a download (which
 	// a real Plex lists as a "Media download" and a real Jellyfin logs as "is
@@ -233,7 +240,8 @@ func New(cat *Catalog, clipsDir string) *Server {
 		ClipLengthVideo:        os.Getenv("SHOWCASE_CLIP_LENGTH_VIDEO") == "1",
 		AllLeavesDelay:         envMillis("SHOWCASE_PLEX_ALLLEAVES_DELAY_MS"),
 		ThumbDelay:             envMillis("SHOWCASE_PLEX_THUMB_DELAY_MS"),
-		TwoDiscs:               os.Getenv("SHOWCASE_TWO_DISCS") == "1"}
+		TwoDiscs:               os.Getenv("SHOWCASE_TWO_DISCS") == "1",
+		ClipChapters:           os.Getenv("SHOWCASE_CLIP_CHAPTERS") == "1"}
 }
 
 // envMillis reads a whole number of milliseconds from the environment; zero

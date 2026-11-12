@@ -516,7 +516,7 @@ func (s *Server) jfMovie(m *Movie, full bool) map[string]any {
 	if full {
 		item["MediaSources"] = []map[string]any{s.jfVideoSource(id, m.Clip, dur, m.UHD)}
 		item["MediaStreams"] = item["MediaSources"].([]map[string]any)[0]["MediaStreams"]
-		item["Chapters"] = []map[string]any{{"StartPositionTicks": 0, "Name": "Opening"}, {"StartPositionTicks": ticks(dur * 0.35), "Name": "Act Two"}, {"StartPositionTicks": ticks(dur * 0.8), "Name": "Finale"}}
+		item["Chapters"] = s.jfChapters(m.ID)
 		item["GenreItems"] = genreItems(s, m.Genres)
 	}
 	return item
@@ -586,7 +586,7 @@ func (s *Server) jfEpisode(e *Episode, full bool) map[string]any {
 	if full {
 		item["MediaSources"] = []map[string]any{s.jfVideoSource(id, e.Clip, dur, false)}
 		item["MediaStreams"] = item["MediaSources"].([]map[string]any)[0]["MediaStreams"]
-		item["Chapters"] = []map[string]any{{"StartPositionTicks": 0, "Name": "Cold Open"}, {"StartPositionTicks": ticks(dur * 0.5), "Name": "Act Two"}}
+		item["Chapters"] = s.jfChapters(e.ID)
 		item["GenreItems"] = genreItems(s, e.Show.Genres)
 		item["Genres"] = e.Show.Genres
 	}
@@ -995,6 +995,17 @@ func (s *Server) jfItemsRoot(w http.ResponseWriter, r *http.Request, p []string)
 	}
 	switch p[1] {
 	case "Images":
+		// /Items/{id}/Images/Chapter/{position} (chapters.go).
+		if len(p) >= 3 && strings.EqualFold(p[2], "Chapter") {
+			position := -1
+			if len(p) >= 4 {
+				if n, err := strconv.Atoi(p[3]); err == nil {
+					position = n
+				}
+			}
+			s.chapterPicture(w, id, position, qInt(r, "maxWidth", 0))
+			return
+		}
 		kind := artPoster
 		if len(p) >= 3 && strings.EqualFold(p[2], "Backdrop") {
 			// Backdrops carry no type: the apps set the title over them.

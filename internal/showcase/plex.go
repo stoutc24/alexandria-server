@@ -238,7 +238,7 @@ func (s *Server) plexMovie(m *Movie, full bool) map[string]any {
 			})
 		}
 		item["Extras"] = map[string]any{"size": len(extras), "Metadata": extras}
-		item["Chapter"] = []map[string]any{{"id": 1, "index": 1, "startTimeOffset": 0, "endTimeOffset": durMs / 3, "tag": "Opening"}, {"id": 2, "index": 2, "startTimeOffset": durMs / 3, "endTimeOffset": durMs, "tag": "Act Two"}}
+		// Chapters join in plexMetadata, only when asked (includeChapters=1).
 	}
 	return item
 }
@@ -525,6 +525,9 @@ func (s *Server) plexLibrary(w http.ResponseWriter, r *http.Request, p []string)
 		ok(w, mc(map[string]any{"Metadata": s.plexRecentlyAdded("", 0, 30)}))
 	case "metadata":
 		s.plexMetadata(w, r, p[1:])
+	case "media":
+		// /library/media/{media id}/chapterImages/{index} (chapters.go).
+		s.plexChapterImage(w, r, p[1:])
 	case "parts":
 		s.plexParts(w, r, p[1:])
 	case "streams":
@@ -782,6 +785,13 @@ func (s *Server) plexMetadata(w http.ResponseWriter, r *http.Request, p []string
 		if item == nil {
 			notFound(w)
 			return
+		}
+		// Plex Media Server sends a film's or an episode's chapters only
+		// when the request asks (chapters.go).
+		if qStr(r, "includeChapters") == "1" {
+			if chapters := s.plexChapters(id); chapters != nil {
+				item["Chapter"] = chapters
+			}
 		}
 		ok(w, mc(map[string]any{"Metadata": []map[string]any{item}, "librarySectionID": item["librarySectionID"], "librarySectionTitle": item["librarySectionTitle"]}))
 		return
@@ -1189,6 +1199,10 @@ func (s *Server) plexPhoto(w http.ResponseWriter, r *http.Request) {
 	u := qStr(r, "url")
 	// url=/library/metadata/{rk}/thumb(/1)
 	parts := pathParts(strings.Split(u, "?")[0])
+	if len(parts) == 5 && parts[0] == "library" && parts[1] == "media" {
+		s.plexChapterImage(w, r, parts[2:])
+		return
+	}
 	if len(parts) >= 3 && parts[0] == "library" && parts[1] == "metadata" {
 		id := s.cat.IDForPlexKey(parts[2])
 		kind := artPoster
