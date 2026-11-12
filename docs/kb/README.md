@@ -41,12 +41,18 @@ installing and running the Alexandria companion server itself, see the
 | [Marking films and shows watched or unwatched](marking-watched.md) | Mark watched / Mark unwatched for a Plex or Jellyfin film, episode, season or whole show: the buttons, the hold and long-press menus, the question a show or season asks, what changes next, Kids mode |
 | [Your look: colors, background, font and text size](profile-looks.md) | Profile color, accent, background, Now Playing background, font and text size; where to change them; kept on the server for a linked person, else on the device; Kids' My Color; Apple TV text size on tvOS 26 |
 | [Premium free trial](premium-free-trial.md) | One week free on Premium Monthly and Annual: who can get it, where, how to start it, how to cancel before it renews |
+| [Chapters in films and shows](video-chapters.md) | The player's Chapters list on every app (Apple TV's swipe-down row, Samsung/LG/Fire TV's panel tab, the phone's Chapters button), pictures from Plex or Jellyfin, marks on the bar |
 
 Contact for questions or problems: stoutservers@gmail.com
 
 ## Check on a real device before publishing
 
 These were proven in tests and simulators, not yet on hardware:
+
+- [ ] Chapters (phone after 1268, Apple TV after 211, Samsung and Fire TV):
+      proven against the test server only. Still to check: a real Plex and
+      Jellyfin film with chapter thumbnails on each app, and the Apple TV's
+      pictures arriving mid-play without disturbing the player.
 
 - [ ] Premium free trial (stores live 2026-11-11; Premium screen wording
       from phone 1268): the week-free line and Start free week on an
