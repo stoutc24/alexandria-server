@@ -48,7 +48,7 @@ changes that part of your look again.
 ## Kids
 
 In Kids mode a child can pick **My Color** on Kids Home: their own profile
-color, from 12. Nothing else about the look can be changed in Kids mode; a
+color, from 20. Nothing else about the look can be changed in Kids mode; a
 grown-up sets the rest from their own profile or before turning Kids mode
 on.
 
