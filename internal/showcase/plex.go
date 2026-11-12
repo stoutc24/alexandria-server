@@ -225,7 +225,19 @@ func (s *Server) plexMovie(m *Movie, full bool) map[string]any {
 			{"id": 1, "type": "intro", "startTimeOffset": 20000, "endTimeOffset": 50000, "final": false},
 			{"id": 2, "type": "credits", "startTimeOffset": durMs - 90000, "endTimeOffset": durMs, "final": true},
 		}
-		item["Extras"] = map[string]any{"size": 0, "Metadata": []any{}}
+		// A part-watched film carries one trailer, so its page shows the
+		// fullest button row: Resume, From Beginning, Mark Watched, Mark
+		// Unwatched and Trailer (the Apple TV wrapped the Mark labels on
+		// that row, 2026-11-11).
+		extras := []any{}
+		if prog > 0 && prog < 1 {
+			extras = append(extras, map[string]any{
+				"ratingKey": k + "0", "key": "/library/metadata/" + k + "0", "type": "clip",
+				"subtype": "trailer", "extraType": 1, "title": m.Title + " (Trailer)",
+				"thumb": thumb, "duration": 90000,
+			})
+		}
+		item["Extras"] = map[string]any{"size": len(extras), "Metadata": extras}
 		item["Chapter"] = []map[string]any{{"id": 1, "index": 1, "startTimeOffset": 0, "endTimeOffset": durMs / 3, "tag": "Opening"}, {"id": 2, "index": 2, "startTimeOffset": durMs / 3, "endTimeOffset": durMs, "tag": "Act Two"}}
 	}
 	return item
