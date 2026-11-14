@@ -80,7 +80,8 @@ held.
 ## What leaves your machine
 
 **Nothing, by default.** The server does not check for updates, report
-usage, or contact any third party — including us.
+usage, or contact any third party — including us. The one exception is
+below: plex.tv, only once someone is picked from a Plex server.
 
 Its traffic is between the server and the Alexandria apps on your own
 network that you have linked to it — and one more thing, only when you
@@ -96,8 +97,16 @@ their name and email address.
 
 When the administrator picks a Plex person for an Alexandria account,
 their own browser or phone asks plex.tv, with their own Plex sign-in, for
-that person's key to their server. The server takes no part in that and
-never contacts plex.tv.
+that person's key to their server. The server takes no part in that.
+
+While anyone is picked from a Plex server, the server keeps that server's
+saved addresses current: every 15 minutes it asks plex.tv
+(`https://plex.tv/:/ip`) which public internet address it is reached from,
+and when that changed, asks the Plex server at its new address who it is
+(`/identity`). Neither request carries a sign-in, a key or anything about
+the people in it; plex.tv sees the request come from your address, as it
+does from any Plex app. The administrator can turn this off with
+`ALEXANDRIA_PLEX_ADDRESS_WATCH=off`.
 
 ---
 

@@ -263,6 +263,13 @@ func buildApp(cfg *config.Config) *fiber.App {
 	admin.Put("/profiles/:id/services/order", accountsHandler.OrderServices)
 	admin.Patch("/profiles/:id/services/:sid", accountsHandler.UpdateService)
 	admin.Delete("/profiles/:id/services/:sid", accountsHandler.DeleteService)
+	// A picked Plex person's addresses kept current by the admin's app:
+	// the Plex servers people were picked from with their saved addresses,
+	// and a new list for every pick of one server. Only addresses proven
+	// to be that server are kept; no login is read or written
+	// (repository.ReplacePlexConnections). "manage" or "full" access.
+	admin.Get("/plex-servers", accountsHandler.PlexServers)
+	admin.Put("/plex-servers/:serverId/connections", accountsHandler.UpdatePlexConnections)
 
 	// Server Admin's sign-ins to the household's servers (handlers.
 	// ServiceAdminsHandler): the page and admin phones list, save and

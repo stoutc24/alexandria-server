@@ -63,6 +63,14 @@ type Config struct {
 	// devices; storing service logins is what stays off. A server that never
 	// uses accounts boots exactly as before.
 	SecretsKey []byte
+
+	// PlexAddressWatch keeps picked Plex people's remote addresses current
+	// when the home's public IP changes (internal/plexwatch). On unless
+	// ALEXANDRIA_PLEX_ADDRESS_WATCH is "off" (or false, 0, no). While on,
+	// and only while someone is picked from a Plex server, this server asks
+	// plex.tv for its own public IPv4 address every 15 minutes and asks the
+	// Plex server's new address who it is (/identity, no token).
+	PlexAddressWatch bool
 }
 
 // defaultToken is the placeholder shipped in .env.example and the
@@ -80,6 +88,8 @@ func Load() *Config {
 		PublicURL:  publicURL(os.Getenv("ALEXANDRIA_PUBLIC_URL")),
 
 		TrustedProxies: trustedProxies(os.Getenv("ALEXANDRIA_TRUSTED_PROXIES")),
+
+		PlexAddressWatch: switchOn(os.Getenv("ALEXANDRIA_PLEX_ADDRESS_WATCH")),
 	}
 
 	// Refuse to start rather than come up unauthenticated. This server
@@ -358,6 +368,16 @@ func plainHTTPSAddress(raw string) (canonical, problem string) {
 		host = "[" + host + "]"
 	}
 	return "https://" + host + port + path, ""
+}
+
+// switchOn reads an on-by-default switch: "off", "false", "0" or "no" (any
+// case) turn it off; anything else, or nothing, leaves it on.
+func switchOn(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "off", "false", "0", "no":
+		return false
+	}
+	return true
 }
 
 func getEnv(key, defaultValue string) string {

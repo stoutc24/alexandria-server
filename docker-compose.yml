@@ -57,6 +57,12 @@ services:
       # See docs/ACCOUNTS.md.
       - ALEXANDRIA_SECRETS_KEY=${ALEXANDRIA_SECRETS_KEY:-}
 
+      # Optional: "off" stops the server keeping picked Plex people's saved
+      # addresses current when your home's internet address changes (it asks
+      # plex.tv for its own public address every 15 minutes, only while
+      # someone is picked from a Plex server). Empty means on.
+      - ALEXANDRIA_PLEX_ADDRESS_WATCH=${ALEXANDRIA_PLEX_ADDRESS_WATCH:-}
+
       # Timezone
       - TZ=${TZ:-UTC}
 

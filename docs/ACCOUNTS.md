@@ -71,8 +71,29 @@ People → **Sign-in & services**:
      sign-in of their own. Your own Plex sign-in stays in the browser tab
      and is dropped when you're done.
 
-     **This server never contacts plex.tv**; only the admin's browser or
-     phone does, at that moment.
+     **This server never asks plex.tv for anyone's key**; only the admin's
+     browser or phone does, at that moment.
+
+     **Keeping the addresses current.** Plex's from-anywhere address has the
+     home's public IP in its name (`https://203-0-113-7.<hash>.plex.direct:32400`),
+     and the addresses are saved at pick time. Two things keep them current:
+     the admin's phone/computer app reads them from plex.tv with the admin's
+     own Plex sign-in (at most hourly, and when Manage server opens) and
+     sends them with `PUT /admin/plex-servers/:serverId/connections`; and the
+     server, while anyone is picked from a Plex server, asks `plex.tv/:/ip`
+     for its own public IPv4 address every 15 minutes and moves a saved
+     `plex.direct` address when the IP changed and the new address proves it
+     is the same server (`internal/plexwatch`;
+     `ALEXANDRIA_PLEX_ADDRESS_WATCH=off` stops it). A person's device that
+     can't reach Plex fetches its services again and tries once more.
+
+     Either way only an address **proven** to be that Plex server is saved,
+     because the person's key stays with it: one already saved for it, or an
+     https `<anything>.<hash>.plex.direct` name with a `<hash>` already saved
+     for it (Plex gives the certificate for `*.<hash>.plex.direct` to that one
+     server). A custom address set in Plex (Settings › Network › Custom
+     server access URLs) reaches the person only with a new pick, which
+     carries their key again.
 
    Advice per service:
    - **Jellyfin**: use their own Jellyfin login, never a dashboard API key
@@ -255,6 +276,8 @@ two-step on.
 | `PATCH /admin/profiles/:id/services/:sid` | Edit. A secret left out keeps its value; an empty one clears it. `plex` left out keeps the pick; a new `plex` (a person picked again) needs its `token`. An edit that moves the service (another address, or another `type`) keeps no saved secret: it must carry the login's own (`password`, `token` or `apiKey`), or name `loginKind: none`, else 400 `login-required` and nothing changes |
 | `DELETE /admin/profiles/:id/services/:sid` | Devices sign out of it at their next check |
 | `PUT /admin/profiles/:id/services/order` `{ids}` | Every id once, first to last |
+| `GET /admin/plex-servers` | The Plex servers people were picked from: `{servers: [{serverId, serverName, picks, saved: [[{uri, local?, relay?}]]}]}`, `saved` being each distinct address list saved for it, most picks first. No secret |
+| `PUT /admin/plex-servers/:serverId/connections` `{connections: [{uri, local?, relay?}]}` | Every pick of that server gets the list: `{updated, skipped}`. Only addresses proven to be that server are kept (above); the rest are `skipped`. http(s) only, duplicates once, a dozen at most, 1–64 sent. The person's key, name, order and everything else stay; a pick whose shown `baseUrl` is no longer listed shows the new preferred one; a pick that already has the list is not written. Each change moves the person's services revision. `404 plex-server-not-found`, `400 bad-service` (nothing proven, a bad server id, none or too many sent). "manage" or "full" access |
 | `GET /admin/provision` | What this server can do on each service with the Server Admin sign-ins it keeps: `{available, services: [{type, name, create, reset, email, libraries, note?, access?, serverAdmin, host?}]}`. `email` is `optional`, `required` or `username` (Komga signs in with one); `libraries`: the service has libraries to pick (all but Storyteller and Calibre-Web); `access`: what Change access can set there, `{libraries, download, laterLibraries, note?}` (absent on Calibre-Web). No secret |
 | `GET /admin/profiles/:id/services/:sid/provision` | Change access (below): what the account that login's username names has on its service, read with the kept Server Admin sign-in: `{service, host, loginHost, username, can, access: {allLibraries, libraries, download}, libraries: [{id, name}]}`. `host` is where a change goes, `loginHost` the address the login itself uses. `404 no-account`, `409 admin-account`, `409 no-username` (the login has none), `409 no-service-admin`, `400 not-supported`, `404 service-not-found`, and the sign-in and service refusals below. An account's own admin sign-in needs `full` |
 | `PUT /admin/profiles/:id/services/:sid/provision` `{allLibraries, libraries, download}` | Change that account's libraries and downloads, then read it back: the same answer as the `GET`, as the service now has it. `502 not-taken` (the service said yes but the account read back unchanged), `502 also-changed` (the change took, but the account's other rights read back different: the `error` names them), each answer carrying what the account has; `409 nothing-to-change` (Navidrome with one library), `400 no-libraries`, `409 libraries-gone`, and the refusals of the `GET` |

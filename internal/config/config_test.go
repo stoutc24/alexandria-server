@@ -153,3 +153,15 @@ func TestListenAddrIsOneIPAddressOrUnset(t *testing.T) {
 		}
 	}
 }
+
+// The Plex address watch is on unless switched off in words people use.
+func TestPlexAddressWatchSwitch(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"": true, "on": true, "1": true, "yes": true, "true": true, "anything": true,
+		"off": false, "OFF": false, " false ": false, "0": false, "no": false, "No": false,
+	} {
+		if got := switchOn(raw); got != want {
+			t.Errorf("%q: %v, want %v", raw, got, want)
+		}
+	}
+}

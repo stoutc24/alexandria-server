@@ -83,7 +83,12 @@ server**.
   with the Server Admin sign-in you saved for a service, it can list that
   server's libraries for you to pick from, and make a person's account
   there (or set its password), when you set up their services. (Picking a Plex person for an account is done by your own
-  browser or phone talking to plex.tv, not by this server.) See
+  browser or phone talking to plex.tv, not by this server.) One exception,
+  only while someone is picked from a Plex server: every 15 minutes it asks
+  plex.tv for its own public internet address, and when that changed, asks
+  your Plex server's new address who it is, to keep the person's saved Plex
+  addresses current (no sign-in or key is sent with either). Set
+  `ALEXANDRIA_PLEX_ADDRESS_WATCH=off` to stop it. See
   [legal/PRIVACY_POLICY.md](legal/PRIVACY_POLICY.md).
 
 ---
@@ -259,6 +264,7 @@ All settings are environment variables, set in `.env` or with `-e`.
 | `ALEXANDRIA_PUBLIC_URL` | empty | The `https://` address the server is reached at through a reverse proxy. See [Reaching it from outside your home](#reaching-it-from-outside-your-home). |
 | `ALEXANDRIA_TRUSTED_PROXIES` | empty | The address your reverse proxy connects from, if you use one (one address or range, or several, comma-separated). The sign-in and linking limits then count each visitor separately instead of everyone as the proxy. See [Reaching it from outside your home](#reaching-it-from-outside-your-home). |
 | `ALEXANDRIA_SECRETS_KEY` | empty | Lets [Alexandria accounts](docs/ACCOUNTS.md) store each person's service logins, sealed, so their devices sign in by themselves. Make one with `openssl rand -base64 32` and keep it out of your backups. Without it, people can still sign in and link devices. `ALEXANDRIA_SECRETS_KEY_FILE` reads it from a file instead. |
+| `ALEXANDRIA_PLEX_ADDRESS_WATCH` | on | Keeps the Plex addresses saved for people you picked from your Plex current when your home's internet address changes. Only while someone is picked from a Plex server, every 15 minutes, the server asks `https://plex.tv/:/ip` (Plex's own "what is my address" page, no sign-in) for its public IPv4 address. When it changed, it asks your Plex server's new `…plex.direct` address for `/identity` (no key sent) and moves the saved address only when your server answers as itself, or, when your router can't reach its own public address from inside, when your server answers on its home address and the old address was this server's own. Local and relay addresses are never changed. `off` (or `false`, `0`, `no`) stops it; the admin's app still refreshes the addresses from plex.tv when it opens. |
 | `ALEXANDRIA_LISTEN_ADDR` | empty | **Leave unset in Docker**, where the `ports:` line decides what reaches the server. Running the server program directly, this is the one address it listens on: `127.0.0.1` keeps it to this machine (behind a reverse proxy on the same machine), `192.168.1.50` to one network. Empty listens on every address. Anything but one IP address stops the server from starting. |
 | `TZ` | `UTC` | Timezone for the logs. |
 | `PORT` | `4000` | In the installer's `.env`, the port on this machine. Keep 4000: the apps search your network on it. |

@@ -28,6 +28,15 @@ first. To update, see [Updating](README.md#updating); your data is kept.
   purple, magenta, pink, brown, gold, slate, gray). The people list the admin page and Manage server read now
   includes each person's look, read-only (nothing on the admin page shows
   it yet). Needs app versions that support it.
+- **Plex addresses kept current.** A person picked from your Plex could
+  reach it only at home once your home's internet address changed: the
+  addresses saved with the pick carried the old one. The admin's app now
+  refreshes them from plex.tv when it opens, and the server moves a saved
+  address to the new internet address once your Plex server answers there
+  as itself. Only addresses proven to be your Plex server are saved. While
+  someone is picked from a Plex server, the server asks plex.tv for its own
+  public address every 15 minutes; `ALEXANDRIA_PLEX_ADDRESS_WATCH=off` stops
+  that. See the [help article](docs/kb/alexandria-link.md#plex-away-from-home).
 - `ALEXANDRIA_LISTEN_ADDR`: when the server program runs outside Docker,
   the one address it listens on.
 - The installer waits for the server to answer and prints the address of

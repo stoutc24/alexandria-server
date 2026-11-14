@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/stoutsolutions/alexandria-server/internal/config"
 	"github.com/stoutsolutions/alexandria-server/internal/database"
+	"github.com/stoutsolutions/alexandria-server/internal/plexwatch"
 	"github.com/stoutsolutions/alexandria-server/internal/repository"
 )
 
@@ -45,6 +47,18 @@ func main() {
 	purgeExpiredAdminDevices(adminAuthRepo)
 
 	app := buildApp(cfg)
+
+	// Picked Plex people's remote addresses follow the home's public IP
+	// (internal/plexwatch): at start, then every 15 minutes, and only while
+	// someone is picked from a Plex server. ALEXANDRIA_PLEX_ADDRESS_WATCH=off
+	// turns it off.
+	watchCtx, stopWatch := context.WithCancel(context.Background())
+	defer stopWatch()
+	// Its repository has no secrets key: it never reads or writes a login.
+	if !plexwatch.Start(watchCtx, cfg.PlexAddressWatch,
+		plexwatch.New(repository.NewAccountRepository(nil))) {
+		log.Printf("plex address watch is off (ALEXANDRIA_PLEX_ADDRESS_WATCH)")
+	}
 
 	// Housekeeping. Expired link codes are the only table that grows
 	// without anybody deleting from it, and a stale row is dead weight

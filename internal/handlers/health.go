@@ -153,6 +153,12 @@ var capabilities = []string{
 	// device's own person's look ("" clears a field); the people list
 	// carries each person's look, read-only.
 	"profiles.look",
+	// A picked Plex person's addresses kept current (2026-11-14): GET
+	// /admin/plex-servers lists the Plex servers people were picked from
+	// with their saved addresses; PUT /admin/plex-servers/:serverId/
+	// connections {connections} gives every pick of that server a new
+	// list, proven addresses only, answering {updated, skipped}.
+	"admin.plex-connections",
 }
 
 // accountsServicesOn is whether Alexandria Accounts can keep service

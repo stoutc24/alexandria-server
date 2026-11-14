@@ -88,6 +88,41 @@ When you add a service for the person, their devices sign in to it. When you
 remove one, their devices sign out of it — only servers the link signed in
 to, never ones they added themselves.
 
+## Plex away from home
+
+When you pick someone from your Plex, their devices get every address Plex
+lists for your server: the one at home and the one that reaches it from
+anywhere. Plex's from-anywhere address has your home's internet address
+inside it, and most homes' internet address changes now and then.
+Alexandria keeps the saved addresses current by itself:
+
+- **Your app, when it opens.** If you can manage the server, the phone,
+  tablet or computer app checks your Plex servers' addresses with Plex
+  (at most once an hour, and each time you open **Manage server**) and
+  updates everyone you picked from that server. You see nothing unless
+  you look: there's nothing to press. It needs the app signed in to Plex
+  with the Plex account that owns the server.
+- **The companion server, every 15 minutes.** It notices when your home's
+  internet address changes and moves the saved from-anywhere address to the
+  new one, once your Plex server answers there as itself. To learn the
+  address it asks plex.tv, only while someone is picked from a Plex server.
+  The server's README says how to turn this off.
+- **Their device, before it gives up.** When it can't reach Plex with the
+  addresses it has, it asks the companion server for the newest ones and
+  tries once more before saying **Can't reach your Plex server from here**.
+
+**A fixed address of your own.** If your Plex server has its own web address
+(say, through a reverse proxy), add it in Plex: **Settings › Network ›
+Custom server access URLs** (shown with **Show Advanced**), for example
+`https://plex.example.com:443`. Then pick the person once more: open them in
+**Manage server**, open their Plex service and choose **Pick again**. A new
+kind of address reaches their devices only with a new pick, which carries
+their Plex key again. That way nothing can quietly send their key somewhere
+that isn't your Plex server.
+
+If they still can't reach Plex away from home, check that **Remote Access**
+in Plex's settings says your server is reachable from outside.
+
 ## Devices linked before Alexandria Link
 
 A device linked with a code before this update has stats and Party Play,
@@ -122,6 +157,7 @@ A new code appears. Approve it as the same person.
 
 This needs the companion server from 8 November 2026 or later, and an app
 from the same update. **Link a TV** on a person's page is in the apps from
-10 November 2026.
+10 November 2026. Keeping Plex addresses current needs the companion server
+and the apps from the update after 14 November 2026.
 
 Contact for questions or problems: stoutservers@gmail.com
