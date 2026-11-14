@@ -42,6 +42,7 @@ installing and running the Alexandria companion server itself, see the
 | [Your look: colors, background, font and text size](profile-looks.md) | Profile color, accent, background, Now Playing background, font and text size; where to change them; kept on the server for a linked person, else on the device; Kids' My Color; Apple TV text size on tvOS 26 |
 | [Premium free trial](premium-free-trial.md) | One week free on Premium Monthly and Annual: who can get it, where, how to start it, how to cancel before it renews |
 | [Chapters in films and shows](video-chapters.md) | The player's Chapters list on every app (Apple TV's swipe-down row, Samsung/LG/Fire TV's panel tab, the phone's Chapters button), pictures from Plex or Jellyfin, marks on the bar |
+| [Choosing your home screen](home-screen.md) | Settings › Home Screen › Default Home Service on phones, tablets and computers: every home the switcher offers, including Plex Video and Jellyfin Video |
 
 Contact for questions or problems: stoutservers@gmail.com
 
