@@ -163,6 +163,36 @@ iPhone or iPad window closed after one episode.)
 - On an iPhone or iPad the window can show black for a moment while your
   server starts sending the next episode.
 
+## Video quality
+
+How big a stream Alexandria asks your server for. (Build 1271 and later,
+on iPhone, iPad, Android, Mac and Windows, for Plex and Jellyfin.)
+
+- **Settings › Playback › Video quality** sets it for this device: every
+  video starts at it. Each device keeps its own, so an older iPad can stay
+  at 4 Mbps while your phone stays at Original.
+- **Quality** in the player's bottom bar changes it for the video you are
+  watching only. The next video starts at the device's setting again.
+- The choices: **Original** (the file itself), 20, 12 or 8 Mbps at 1080p,
+  4 or 3 Mbps at 720p, and 2 Mbps at 480p.
+- Below Original, your server converts the video to fit. That uses your
+  server's processor. A file that is already inside the limit is sent as
+  it is.
+- Original keeps HDR and Dolby Vision. A lower quality may be converted to
+  standard colour.
+- With a lower quality, a subtitle you turn on is drawn into the picture by
+  the server, so switching subtitles or audio takes a moment.
+- Downloaded videos and Live TV are not affected.
+
+Try a lower quality when a video keeps stopping to load, or on an older
+device or a slow connection.
+
+On the Apple TV and on Samsung, LG and Fire TV, the same setting is under
+**Settings › Playback › Video quality**, for that TV and every profile on
+it. The player's **Quality** row (in its Audio & Video panel) still changes
+just the video that is playing. Trailers and Live TV play at their own
+quality.
+
 ## Up next: the next episode at the credits
 
 When an episode's end credits start, a card appears in the corner: **Up
