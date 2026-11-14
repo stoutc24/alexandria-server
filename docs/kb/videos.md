@@ -163,4 +163,39 @@ iPhone or iPad window closed after one episode.)
 - On an iPhone or iPad the window can show black for a moment while your
   server starts sending the next episode.
 
+## Up next: the next episode at the credits
+
+When an episode's end credits start, a card appears in the corner: **Up
+next**, with the next episode's picture and name. (Build 1271 and later, on
+iPhone, iPad, Android, Mac and Windows, for Plex and Jellyfin.)
+
+- It counts down from 5, then the next episode starts by itself. The count
+  only runs while the video plays: pause, and it waits.
+- Tap the card or **Play now** to start the next episode straight away.
+- Tap **Watch credits** to hide the card and watch them. The next episode
+  starts when they end, as before.
+- The episode you leave is marked as watched on your server, as if it had
+  played to its very end.
+- Drag back out of the credits and the card goes; it comes back when the
+  credits start again.
+- No card after the last episode in the list, or with the sleep timer set
+  to **After current item**.
+- In Picture in Picture there is no card. On Android, Mac and Windows the
+  next episode starts 5 seconds into the credits; on an iPhone or iPad the
+  window plays the credits to the end, then moves on.
+
+The card needs your server to know where the credits start:
+
+- **Plex**: a Plex Pass server finds the credits itself (Plex's credits
+  detection).
+- **Jellyfin**: version 10.10 or later, with a plugin that finds credits,
+  such as Intro Skipper.
+
+Without that, the credits play to the end and the next episode follows.
+Either way, Alexandria asks your server about the next episode while the
+last one is ending, so it opens a little sooner.
+
+The Apple TV has its own way: a **Skip Credits** button, or skipping them
+always, set for each profile under **Settings › Playback**.
+
 Contact for questions or problems: stoutservers@gmail.com
