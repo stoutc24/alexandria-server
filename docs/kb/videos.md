@@ -119,8 +119,48 @@ Play All moved on to the next one), whatever the time was. That is fixed.
 - If Picture in Picture is switched off for Alexandria in Android's
   settings, the player doesn't show the button.
 
-### Mac and Windows
+### Mac and Windows: the mini window
 
-The Mac and Windows apps don't have Picture in Picture.
+(Build 1270 and later.)
+
+- Click the **Picture in Picture** button at the top of the player.
+  Alexandria's window shrinks into a small video window in the
+  bottom-right corner of your screen. It stays on top of every other
+  window, so you can keep watching while you work in other apps. On a Mac
+  it also shows over other apps that are in full screen.
+- **Move it:** drag the picture anywhere on the screen.
+- **Resize it:** drag an edge or a corner. It keeps the shape of a TV
+  picture (16:9).
+- **Buttons:** move the mouse over the picture to see **Play/Pause**,
+  **Back to full size** and **Close**. On a touch screen, tap the picture
+  to show them for a few seconds.
+- **Back to full size** (or the **Esc** key) puts Alexandria's window back
+  exactly where and how big it was. If the Mac window was in full screen,
+  it goes back to full screen.
+- **Close** stops the video and puts the window back.
+- The next time you open the mini window, it comes back where you left it,
+  at the size you left it.
+- On a Mac, closing the mini window with **⌘W** pauses the video, as
+  closing the full window does. Click Alexandria in the Dock to get the
+  window back at full size.
+- Every video that plays in Alexandria plays in the mini window, downloaded
+  ones and Live TV too: it is the same player, just smaller.
+
+### A whole season in the window
+
+When an episode ends while it is in Picture in Picture, the next episode
+starts in the same window, and so on to the end of the season (or of the
+list you pressed Play All on). This works on iPhone, iPad, Android, Mac and
+Windows, for Plex and Jellyfin. (Build 1270 and later; before that, an
+iPhone or iPad window closed after one episode.)
+
+- The episode that finished is marked as watched on your server, the same
+  as when it ends in the full player.
+- If you set the sleep timer to **After current item**, the video stops
+  after that episode instead.
+- After the last episode the video stops. On an iPhone or iPad the window
+  closes, as before.
+- On an iPhone or iPad the window can show black for a moment while your
+  server starts sending the next episode.
 
 Contact for questions or problems: stoutservers@gmail.com
