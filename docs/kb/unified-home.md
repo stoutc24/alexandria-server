@@ -78,10 +78,13 @@ you picked:
   not check for new releases itself. See
   [Upcoming releases](upcoming-releases.md).
 - **Your Librarian suggests** — only when you have set up an AI server for
-  the Librarian (Settings › AI) and Kids mode is off. It shows the
-  Librarian's picks you saved for later (the ones you saved from a
-  Librarian answer); tap it to open your saved list. Opening Home never
-  asks the AI anything. See [The Librarian](librarian.md).
+  the Librarian (Settings › AI) and Kids mode is off. Once a day the
+  Librarian picks 2 or 3 things from your own library for it ("Today's
+  picks from your library"); after them come the picks you saved from a
+  Librarian answer. Tap it to open your saved list. The daily ask happens
+  at most once a day, never on every visit, and a failed ask waits a day
+  too; turn it off with **Settings › AI › Daily picks on Home**. See
+  [What the AI can see](ai-what-it-sees.md#daily-picks-on-home).
 - **New this week** — up to four things added to your libraries in the
   last 7 days, mixed across books, films and music. When the servers have
   nothing dated this week, it shows their newest additions as **Recently
@@ -143,7 +146,8 @@ Librarian suggests** stay hidden. See [Kids mode](kids-mode.md).
 
 - Opening Home makes no requests beyond the ones it made before: the stat
   pills, Coming this week and the Librarian card use what the app already
-  has saved.
+  has saved. The one exception is the Librarian's daily picks: at most one
+  request a day, to your own AI server.
 - Free and Premium work as before; the Librarian card needs the AI
   features, which are part of Premium.
 

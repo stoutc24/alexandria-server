@@ -55,6 +55,13 @@ home server on your own network or VPN is the only place http belongs.
 
 ## What the AI can and cannot do
 
-The model only ever sees text: your question and, for the Librarian, a
-summary of your library. It can never change, delete, download or manage
-anything on your servers, whatever anyone types into it.
+The model only ever sees text: your question and the parts of your library
+you allow in **Settings › AI › What the AI can see** — titles, names,
+genres, years, progress, dates and counts. It is never sent your keys,
+tokens, passwords, server addresses, user names, e-mail addresses, file
+paths or device ids, and your library goes only to the AI server you set
+up. In Kids mode nothing from your library is sent. See [What the AI can
+see of your library](ai-what-it-sees.md).
+
+It can never change, delete, download or manage anything on your servers,
+whatever anyone types into it.

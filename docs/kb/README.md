@@ -13,6 +13,7 @@ installing and running the Alexandria companion server itself, see the
 | [How Alexandria protects your AI keys](ai-keys-and-security.md) | Where keys are kept, why a saved key is never shown, http |
 | [Use your own AI server](ai-home-server.md) | Ollama, LM Studio, llama.cpp on your network |
 | [The Librarian](librarian.md) | Asking about your library, looking things up, private chat, history, commands |
+| [What the AI can see of your library](ai-what-it-sees.md) | The switch per kind, Kids mode, only your own AI server, how much big and small models see, caching, the daily picks on Home |
 | [The Mac and Windows apps and wide windows](mac-app.md) | Scrolling with a mouse or trackpad, closing the window, menu bar Now Playing, media keys on Windows, the docked player, how pages fit a wide window |
 | [Alexandria in the car](car.md) | CarPlay and Android Auto: the tabs, radio stations, artists, going deeper |
 | [Describe a playlist](playlist-builder.md) | "AJR radio", moods, lengths; when the AI picks the albums; what it costs |
@@ -209,6 +210,12 @@ These were proven in tests and simulators, not yet on hardware:
       artists, marked Picked by AI (added 2026-10-28).
 - [ ] The Librarian with Claude: a question about a series shows
       "checking the … series" and answers from it (added 2026-10-28).
+- [ ] Settings › AI › What the AI can see: switch off Downloads, open the
+      Librarian, `/briefing` has no DOWNLOADED line and "what is
+      downloaded?" gets no list (added 2026-11-15).
+- [ ] Home with Claude set up: Your Librarian suggests shows "Today's picks
+      from your library" once a day; reopening Home does not ask again
+      (added 2026-11-15).
 - [ ] Windows, Mac and iPad: Now Playing is one centred block; album, book,
       Home and Search pages stop at their widths (added 2026-10-28).
 - [ ] iPhone: a key saved before 1231 still works after the update (it moves
