@@ -11,11 +11,15 @@ Books work as before.)
 
 ## Where to find it
 
+- **Library** › **Collection tools** › **Upcoming releases** (under
+  Reading Plans).
 - **You** tab › **Coming up** › **See all** (or the **Upcoming releases**
   row).
 - In the older home layouts: the **Releases** page to the right of Home
   (swipe left from Home).
-- On the Audiobookshelf home: the menu's **Upcoming** entry.
+
+(Until the app update after phone build 1273 it was also an **Upcoming**
+entry in the Audiobookshelf home's menu; it moved to Collection tools.)
 
 ## The tabs
 
@@ -93,6 +97,54 @@ yours, which TVmaze show is yours) are remembered.
 
 If a check fails (no internet, a service down), the last list stays on
 screen and the page tries again an hour later, or when you pull down.
+
+## Alerts when something comes out
+
+Alexandria can send you a notification when a new book, episode, film or
+album comes out. Alerts are **off** until you turn them on. They are in the
+iPhone, iPad, Android and Mac apps (not in the Windows app yet).
+
+Open them with the **bell** at the top of Upcoming Releases, or **Settings**
+› **Reading** › **Release alerts**.
+
+- **Alert me about**: turn on **Books**, **TV**, **Movies** or **Music**.
+  The first time you turn something on, your device asks whether Alexandria
+  may send notifications. If you say no, the switch stays off; you can allow
+  notifications later in your device's settings.
+- **When**: **On release day** (on by default) and **A week before**. Alerts
+  come at 9 in the morning, your time.
+
+### One title at a time
+
+Each card has a small bell. Tap it to choose, for that card's show, book
+series (or author, for a book without a series), artist or film:
+
+- **Always alert me**: you get alerts for it even with its type turned off.
+  Following a single show is a way to get TV alerts for that show only.
+- **Never alert me**: no alerts for it, even with its type turned on.
+- **As set for TV** (or Books, Movies, Music): back to the type's switch.
+
+A filled bell means always, a crossed-out bell means never. The titles you
+chose are listed at the bottom of the alerts page; the **✕** beside one
+puts it back to its type's switch.
+
+### How alerts are planned
+
+The alerts are planned on your device from the dates already on the
+Upcoming Releases page. They are planned again whenever the page's lists
+are checked, and when the app starts. Nothing extra is downloaded for them
+and nothing runs in the background.
+
+- Only dates that are still ahead get an alert.
+- At most 40 alerts are planned at a time, the soonest first (your device
+  keeps a limited number of planned notifications, and reading reminders
+  need room too). Later ones are planned as the earlier ones pass.
+- A date that moves, or a release that drops off the list, changes or
+  removes its alert the next time the lists are checked.
+- Book alerts use your own authors and series, not the genre suggestions
+  in **Discover**.
+
+Tapping an alert opens Upcoming Releases on that kind's tab.
 
 ## Where the information comes from, and what is sent
 

@@ -43,7 +43,8 @@ installing and running the Alexandria companion server itself, see the
 | [Premium free trial](premium-free-trial.md) | One week free on Premium Monthly and Annual: who can get it, where, how to start it, how to cancel before it renews |
 | [Chapters in films and shows](video-chapters.md) | The player's Chapters list on every app (Apple TV's swipe-down row, Samsung/LG/Fire TV's panel tab, the phone's Chapters button), pictures from Plex or Jellyfin, marks on the bar |
 | [Choosing your home screen](home-screen.md) | Settings › Home Screen › Default Home Service on phones, tablets and computers: every home the switcher offers, including Plex Video and Jellyfin Video |
-| [Upcoming releases: books, films, shows and music](upcoming-releases.md) | The Books · Movies · TV · Music tabs (only what your libraries hold); sequels and directors' new films, new episodes and season premieres, new albums and EPs; how often it checks; what is sent to TVmaze, MusicBrainz and TMDB |
+| [Upcoming releases: books, films, shows and music](upcoming-releases.md) | Where to find it (Library › Collection tools); the Books · Movies · TV · Music tabs (only what your libraries hold); sequels and directors' new films, new episodes and season premieres, new albums and EPs; alerts on release day or a week before, by type or by title; how often it checks; what is sent to TVmaze, MusicBrainz and TMDB |
+| [The library switch and tabs on the TV apps](tv-library-header.md) | Movies, TV Shows, Music, Audiobooks and Live TV on the Apple TV, Samsung, LG and Fire TV: the one button naming the server and library, the size at the right, the tabs as words; Your Stats as an Audiobookshelf tab and its years |
 | [Choosing Alexandria's app icon](app-icon.md) | The nine icons (all free); where to pick one on each device; what changes on iPhone and iPad, Apple TV, Android, Mac and Windows; Samsung, LG and Fire TV keep the original |
 
 Contact for questions or problems: stoutservers@gmail.com
@@ -64,6 +65,24 @@ These were proven in tests and simulators, not yet on hardware:
       long-press shortcuts and the widgets after a switch; the Mac Dock
       icon; the Windows window and taskbar icon (Windows builds only in
       CI).
+
+- [ ] Upcoming releases alerts and the Collection tools row (phone after
+      1273): proven in tests (the planning, the settings page, the bell)
+      and on the iPhone simulator with a stand-in for the notification
+      system (no real notification was planned or shown there). Still to
+      check on real devices: an alert arriving at 9:00 on the day and a
+      week before on an iPhone, an Android phone and a Mac; the permission
+      question on each; tapping an alert opening the right tab, from a
+      closed app too; that reading reminders still fire beside 40 planned
+      alerts.
+
+- [ ] The library switch on Music, Audiobooks and Live TV, and Your Stats
+      as a tab (Apple TV after 215, Samsung and Fire TV): proven on the
+      Apple TV simulator and in a desktop browser against a test server
+      (Live TV with a stand-in DVR). Still to check on a real Apple TV and
+      TV: the owner's Plex with many music libraries; Your Stats' years
+      against a real Audiobookshelf (its year figures, how long a year
+      takes to load).
 
 - [ ] Upcoming releases' Movies, TV and Music tabs (phone after 1272):
       proven in tests against stand-in answers shaped like TVmaze's,
