@@ -47,6 +47,8 @@ than one switch:
   songs, audiobooks or films, so it also needs **Books & audiobooks** and
   **Movies & TV**;
 - **Catch me up** needs **Books & audiobooks** and **Progress & history**;
+- **Read the collection** needs at least one of **Books & audiobooks**,
+  **Music** and **Movies & TV**;
 - AI radio stations need **Music**; what you played lately goes with them
   only when **Progress & history** is on;
 - time totals across all your media go only when **Books & audiobooks**,
@@ -85,11 +87,33 @@ Librarian can look the rest up ([The Librarian](librarian.md)).
   stations**: with Claude or another large model, they also get the parts
   that help them (for example your listening history for playlists). With
   your own AI server they send what they sent before.
+- **Read the collection** (Curator's notes): see below.
 - **Daily picks on Home**: see below.
 
 If a feature needs a kind you switched off (for example Describe a playlist
 needs **Music**), it works without the AI, as it does when no AI server is
 set up.
+
+## Read the collection (Curator's notes)
+
+**Library › Collection tools › Your Collection › Read the collection**
+asks your AI for a few sentences about your collection.
+
+- It is sent the numbers on that page (how many books, albums, films and
+  shows, top genres, authors and artists, biggest series, decades) **and**
+  your library, as the other features get it: books, music, movies and TV,
+  and what you have finished or have in progress — only the kinds you
+  have switched on. Upcoming releases, playlists, downloads and stats are
+  not part of it.
+- With **Claude or another large model** it gets the detailed picture of
+  your library. With **your own AI server** it gets the shorter summary,
+  cut so that it and the page's numbers together stay within about 9,500
+  characters.
+- The notes may name a title, author, artist, series or show only if it
+  was in what the AI was sent. It is told never to invent one.
+- In **Kids mode** nothing is sent and the AI is not asked.
+- It counts toward your monthly AI budget
+  ([AI spending and limits](ai-spending.md)), like every other AI request.
 
 ## Daily picks on Home
 

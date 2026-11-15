@@ -59,8 +59,13 @@ far you are and what is left (for example "63% · 4h 10m left").
   same server.
 - With **1** you get one wide card and nothing to swipe. With **3** or
   **5**, **swipe** sideways for the next card; the edge of the next one
-  peeks in, and the dots underneath show where you are. On a tablet or a
-  computer several cards fit side by side; tap a dot to jump to a card.
+  peeks in, and the dots underneath show where you are.
+- On a tablet or a computer the cards sit side by side and fill the page
+  from edge to edge, lined up with the cards and shelves below: 2 across
+  on a narrower window or an iPad in portrait, 3 or more on a wide one.
+  When they all fit there is nothing to swipe and no dots. With **5** on a
+  window that fits fewer, the dots (or a swipe) bring the rest in, and the
+  last card still ends at the page's right edge.
 - The **colored circles** on the right of "Continue" are your services
   (one letter each, in the service's color). **Tap a circle** to see only
   that service — its 1, 3 or 5 most recent items; tap it again to see
@@ -110,6 +115,28 @@ you picked:
 After the cards come the same shelves as before: Downloaded & Ready, Short
 Listens, Unfinished Series, New from Authors You've Read, and each server's
 own shelves.
+
+### On a tablet or a computer
+
+On the Mac, on Windows and on an iPad, the cards use the page's full
+width, between the same left and right edges as the Continue cards and
+the shelves:
+
+- **Wide windows** (an iPad in landscape, most computer windows): one row
+  of three — **Coming this week** with **Also in progress** under it, then
+  **Your Librarian suggests**, then **New this week**.
+- **Narrower windows** (an iPad in portrait, a smaller window): two
+  across — Coming this week over Also in progress, beside Your Librarian
+  suggests — with New this week under them, across the full width.
+- **Phones** keep one card under another.
+- The cards in a row are all as tall as the tallest one; their contents
+  start at the top.
+- When a card is hidden (in Arrange, in Kids mode, with nothing to show,
+  or with no AI server), the others share the row — two side by side, or
+  one across the full width. There are no empty gaps.
+
+It depends only on how wide the window is, so resizing a window on the
+Mac or Windows, or turning an iPad, changes it straight away.
 
 ## Arrange
 
