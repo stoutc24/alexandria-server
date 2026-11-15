@@ -43,12 +43,23 @@ installing and running the Alexandria companion server itself, see the
 | [Premium free trial](premium-free-trial.md) | One week free on Premium Monthly and Annual: who can get it, where, how to start it, how to cancel before it renews |
 | [Chapters in films and shows](video-chapters.md) | The player's Chapters list on every app (Apple TV's swipe-down row, Samsung/LG/Fire TV's panel tab, the phone's Chapters button), pictures from Plex or Jellyfin, marks on the bar |
 | [Choosing your home screen](home-screen.md) | Settings › Home Screen › Default Home Service on phones, tablets and computers: every home the switcher offers, including Plex Video and Jellyfin Video |
+| [Upcoming releases: books, films, shows and music](upcoming-releases.md) | The Books · Movies · TV · Music tabs (only what your libraries hold); sequels and directors' new films, new episodes and season premieres, new albums and EPs; how often it checks; what is sent to TVmaze, MusicBrainz and TMDB |
 
 Contact for questions or problems: stoutservers@gmail.com
 
 ## Check on a real device before publishing
 
 These were proven in tests and simulators, not yet on hardware:
+
+- [ ] Upcoming releases' Movies, TV and Music tabs (phone after 1272):
+      proven in tests against stand-in answers shaped like TVmaze's,
+      MusicBrainz's and TMDB's (TVmaze and MusicBrainz checked against a
+      few live answers for famous titles; TMDB from its documentation only,
+      no key). Still to check on a real device: the Movies tab with the
+      app's TMDB key in the build; real Plex and Jellyfin libraries (the
+      ids Plex gives with `includeGuids`, the most-recently-watched order);
+      the first Music check's length; Open show / movie / artist on each
+      server; the dates in a country other than the US.
 
 - [ ] Chapters (phone after 1268, Apple TV after 211, Samsung and Fire TV):
       proven against the test server only. Still to check: a real Plex and
