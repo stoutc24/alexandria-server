@@ -164,6 +164,13 @@ volumes:
   alexandria-data:
 ```
 
+This is the short version. The repo's
+[`docker-compose.yml`](docker-compose.yml) adds a health check (so
+`docker compose up -d --wait` waits until the server is healthy), memory
+limits and the Plex address-watch switch; download that file instead if
+you want them. `:latest` follows every release; to choose when you update,
+pin a release such as `ghcr.io/stoutc24/alexandria-server:1.1.0`.
+
 `.env` (make the token with `openssl rand -hex 32`, and the secrets key —
 a different value — with `openssl rand -base64 32`):
 
@@ -207,7 +214,18 @@ $b = New-Object byte[] 32
 
 Paste each into `.env` after its `=`, with no quotes. Save `.env` as plain
 text (Notepad: **Save as type › All files**, so it is not named
-`.env.txt`). Allow Docker Desktop through Windows Firewall on private
+`.env.txt`). Or write it from PowerShell, which also keeps it plain text
+(Windows PowerShell's `>` writes UTF-16, which Docker Compose can misread):
+
+```powershell
+@"
+ALEXANDRIA_API_TOKEN=<your token>
+ALEXANDRIA_SECRETS_KEY=<your secrets key>
+ALEXANDRIA_SERVER_NAME=Living Room NAS
+"@ | Set-Content -Path .env -Encoding ascii
+```
+
+Allow Docker Desktop through Windows Firewall on private
 networks when Windows asks, or the apps cannot reach port 4000.
 
 ### Option 3: a single `docker run`
@@ -226,6 +244,7 @@ docker run -d \
 
 Read the token and the secrets key back with
 `docker inspect alexandria-server | grep -E 'ALEXANDRIA_(API_TOKEN|SECRETS_KEY)'`
+(in PowerShell: `docker inspect alexandria-server | Select-String 'ALEXANDRIA_(API_TOKEN|SECRETS_KEY)'`)
 and keep both somewhere safe. Re-create the container with the **same**
 secrets key, or the service logins it keeps can no longer be opened.
 
@@ -236,7 +255,8 @@ curl http://localhost:4000/health
 ```
 
 You should see `"status": "healthy"`, the version and a list of
-capabilities.
+capabilities. In Windows PowerShell, use `curl.exe` (plain `curl` is a
+different command there) or `Invoke-RestMethod http://localhost:4000/health`.
 
 ### Set up the admin login
 
@@ -249,7 +269,8 @@ the page asks for the **admin token**. It then sets up your admin login:
 
 After that you sign in with your password and the current code from your
 authenticator. The token stays your way back in: if you lose the
-authenticator, it can always set the login up again.
+authenticator, it can always set the login up again. After about ten wrong
+tries in a minute, sign-in pauses for a minute.
 
 ---
 
