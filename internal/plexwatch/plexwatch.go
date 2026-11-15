@@ -38,6 +38,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -283,37 +284,71 @@ func (w *Watcher) verify(ctx context.Context, c candidate, newURI string, from n
 
 // candidates are the saved remote (not local, not relay) plex.direct
 // addresses naming a public IPv4, one per server and address, with the
-// server's local addresses for the LAN proof.
+// local addresses for the LAN proof — only those saved in the SAME pick(s)
+// as that remote address (pre-release review 2026-11-15: a decoy pick's
+// local address must not be asked on behalf of anyone else's address).
 func candidates(servers []repository.PlexServerAddresses) []candidate {
 	var out []candidate
 	for _, s := range servers {
-		var locals []string
-		seenLocal := map[string]bool{}
+		index := map[string]int{} // remote URI -> its place in out
 		for _, list := range s.Saved {
+			var locals []string
 			for _, c := range list {
-				if c.Local && !c.Relay && !seenLocal[c.URI] {
-					seenLocal[c.URI] = true
+				if c.Local && !c.Relay {
 					locals = append(locals, c.URI)
 				}
 			}
-		}
-		seen := map[string]bool{}
-		for _, list := range s.Saved {
 			for _, c := range list {
-				if c.Local || c.Relay || seen[c.URI] {
+				if c.Local || c.Relay {
+					continue
+				}
+				if at, ok := index[c.URI]; ok {
+					out[at].locals = appendNew(out[at].locals, locals)
 					continue
 				}
 				ip, ok := repository.PlexDirectIPv4(c.URI)
 				if !ok || !repository.PublicIPv4(ip) {
 					continue
 				}
-				seen[c.URI] = true
+				index[c.URI] = len(out)
 				out = append(out, candidate{serverID: s.ServerID, serverName: s.ServerName,
-					uri: c.URI, ip: ip, locals: locals})
+					uri: c.URI, ip: ip, locals: appendNew(nil, locals)})
 			}
 		}
 	}
 	return out
+}
+
+// appendNew adds each of more not already in list.
+func appendNew(list, more []string) []string {
+	for _, m := range more {
+		dup := false
+		for _, l := range list {
+			if l == m {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			list = append(list, m)
+		}
+	}
+	return list
+}
+
+// identityURL is "<scheme>://<host>/identity" for an http(s) base with no
+// user info. Only the scheme and host of a saved address are ever used, so
+// a saved address cannot steer the request to another path or query.
+func identityURL(base string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(base))
+	if err != nil {
+		return "", err
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if (scheme != "http" && scheme != "https") || u.Host == "" || u.User != nil {
+		return "", fmt.Errorf("not an http(s) server address")
+	}
+	return scheme + "://" + u.Host + "/identity", nil
 }
 
 // ── the network ─────────────────────────────────────────────────────
@@ -380,7 +415,11 @@ func FetchIdentity(ctx context.Context, base string) (string, error) {
 var machineIDAttr = regexp.MustCompile(`machineIdentifier="([^"]+)"`)
 
 func fetchIdentity(ctx context.Context, client *http.Client, base string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/identity", nil)
+	target, err := identityURL(base)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return "", err
 	}

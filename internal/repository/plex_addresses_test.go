@@ -320,3 +320,46 @@ func TestRewritePlexConnectionNeedsNoSecretsKey(t *testing.T) {
 		t.Fatalf("the key did not survive: %+v", got)
 	}
 }
+
+// Pre-release review 2026-11-15: a pick's server id is only what it
+// claims. An admin's decoy pick claiming the real server's id, with any
+// address in it, must not make that address "already saved" for anyone
+// else's pick — or every real pick's key would follow it.
+func TestReplacePlexConnectionsADecoyPickVouchesForNobodyElse(t *testing.T) {
+	acc, profiles := newAccountsDB(t, true)
+	kate, _ := profiles.Create("Kate")
+	sam, _ := profiles.Create("Sam")
+	kPick := pickOn(t, acc, kate.ID, plexA, "key-kate", homeOld)
+	decoy := pickOn(t, acc, sam.ID, plexA, "whatever", customURL, attacker)
+
+	res, err := acc.ReplacePlexConnections(plexA, []PlexConnection{customURL, attacker}, time.Unix(5000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the decoy's own list is "proven" (and it already holds it).
+	if res.Updated != 0 || res.Skipped != 0 {
+		t.Fatalf("result %+v", res)
+	}
+	k := servicesOf(t, acc, kate.ID)[kPick.ID]
+	if !sameConnections(k.Plex.Connections, []PlexConnection{homeOld}) || k.BaseURL != homeOld.URI || k.UpdatedAt != 1000 {
+		t.Fatalf("Kate's pick followed the decoy: %+v base %s", k.Plex.Connections, k.BaseURL)
+	}
+
+	// A mixed list: Kate takes only what her own pick proves; the decoy
+	// keeps only what it already had.
+	res, err = acc.ReplacePlexConnections(plexA, []PlexConnection{homeNew, customURL}, time.Unix(6000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k = servicesOf(t, acc, kate.ID)[kPick.ID]
+	if !sameConnections(k.Plex.Connections, []PlexConnection{homeNew}) {
+		t.Fatalf("Kate's list %+v", k.Plex.Connections)
+	}
+	d := servicesOf(t, acc, sam.ID)[decoy.ID]
+	if !sameConnections(d.Plex.Connections, []PlexConnection{customURL}) {
+		t.Fatalf("decoy list %+v", d.Plex.Connections)
+	}
+	if res.Updated != 2 || res.Skipped != 0 {
+		t.Fatalf("mixed result %+v", res)
+	}
+}

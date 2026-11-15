@@ -27,6 +27,13 @@ package repository
 //     "*.<hash>.plex.direct" to that one server, and every app checks it, so
 //     only that server can answer there — whatever IP the first label names.
 //
+// "Saved for that server" means saved in THAT PERSON'S OWN PICK, never in
+// someone else's pick of the same server id (pre-release review
+// 2026-11-15): a pick's server id is only what it claims, so an admin could
+// add a decoy pick claiming a real server's id with any address in it, and
+// a proof shared across picks would then hand every real pick's key to that
+// address. Each pick proves only its own addresses.
+//
 // Anything else (a custom address set in Plex, a plex.direct name of
 // another server) is left out and counted as skipped: it reaches the
 // person's devices only with a new pick, which carries their key again.
@@ -270,10 +277,10 @@ func (r *AccountRepository) ReplacePlexConnections(serverID string, conns []Plex
 	if len(rows) == 0 {
 		return res, ErrPlexServerNotFound
 	}
-	anchors := anchorsOf(rows)
 
+	// The given addresses, normalized, each once, in order.
 	seen := map[string]bool{}
-	list := []PlexConnection{}
+	given := []PlexConnection{}
 	for _, c := range conns {
 		u, err := NormalizeServiceURL(c.URI)
 		if err != nil {
@@ -285,21 +292,43 @@ func (r *AccountRepository) ReplacePlexConnections(serverID string, conns []Plex
 			continue
 		}
 		seen[key] = true
-		if !anchors.proves(u) {
-			res.Skipped++
-			continue
-		}
-		if len(list) == maxPlexConnections {
-			continue
-		}
-		list = append(list, PlexConnection{URI: u, Local: c.Local, Relay: c.Relay})
+		given = append(given, PlexConnection{URI: u, Local: c.Local, Relay: c.Relay})
 	}
-	if len(list) == 0 {
+
+	// Each pick takes the addresses ITS OWN saved list proves (top of this
+	// file): another pick of the same claimed server id never vouches.
+	lists := make([][]PlexConnection, len(rows))
+	provenForSome := map[string]bool{}
+	someList := false
+	for i, row := range rows {
+		anchors := anchorsOf([]plexPickRow{row})
+		list := []PlexConnection{}
+		for _, c := range given {
+			if !anchors.proves(c.URI) {
+				continue
+			}
+			provenForSome[strings.ToLower(c.URI)] = true
+			if len(list) < maxPlexConnections {
+				list = append(list, c)
+			}
+		}
+		lists[i] = list
+		if len(list) > 0 {
+			someList = true
+		}
+	}
+	for _, c := range given {
+		if !provenForSome[strings.ToLower(c.URI)] {
+			res.Skipped++
+		}
+	}
+	if !someList {
 		return res, ErrBadPlex
 	}
 
-	for _, row := range rows {
-		if sameConnections(row.plex.Connections, list) {
+	for i, row := range rows {
+		list := lists[i]
+		if len(list) == 0 || sameConnections(row.plex.Connections, list) {
 			continue
 		}
 		if err := writePlexConnections(tx, row, list, now); err != nil {

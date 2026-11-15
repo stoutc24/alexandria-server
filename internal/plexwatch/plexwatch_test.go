@@ -37,19 +37,26 @@ var (
 func TestFetchIdentityReadsJSONAndXMLAndSendsNoToken(t *testing.T) {
 	var mu sync.Mutex
 	var seen []http.Header
+	mode := ""
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		seen = append(seen, r.Header.Clone())
+		m := mode
 		mu.Unlock()
-		switch r.URL.Path {
-		case "/json/identity":
+		// Only /identity is ever asked (identityURL keeps scheme and host).
+		if r.URL.Path != "/identity" || r.URL.RawQuery != "" {
+			http.Error(w, "asked "+r.URL.String(), http.StatusTeapot)
+			return
+		}
+		switch m {
+		case "json":
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprintf(w, `{"MediaContainer":{"size":0,"claimed":true,"machineIdentifier":%q,"version":"1.41"}}`, serverA)
-		case "/xml/identity":
+		case "xml":
 			fmt.Fprintf(w, `<?xml version="1.0"?><MediaContainer size="0" machineIdentifier="%s" version="1.41"/>`, serverA)
-		case "/moved/identity":
-			http.Redirect(w, r, "/json/identity", http.StatusFound)
-		case "/empty/identity":
+		case "moved":
+			http.Redirect(w, r, "/elsewhere/identity", http.StatusFound)
+		case "empty":
 			fmt.Fprint(w, `{"MediaContainer":{}}`)
 		default:
 			http.NotFound(w, r)
@@ -60,15 +67,22 @@ func TestFetchIdentityReadsJSONAndXMLAndSendsNoToken(t *testing.T) {
 	client.Timeout = 2 * time.Second
 	client.CheckRedirect = identityClient.CheckRedirect
 	ctx := context.Background()
+	ask := func(m, base string) (string, error) {
+		mu.Lock()
+		mode = m
+		mu.Unlock()
+		return fetchIdentity(ctx, client, base)
+	}
 
-	for _, base := range []string{srv.URL + "/json", srv.URL + "/xml/"} {
-		if id, err := fetchIdentity(ctx, client, base); err != nil || id != serverA {
-			t.Errorf("%s: %q %v", base, id, err)
+	// A path or query on the saved address never reaches the request.
+	for m, base := range map[string]string{"json": srv.URL, "xml": srv.URL + "/xml/?q=1"} {
+		if id, err := ask(m, base); err != nil || id != serverA {
+			t.Errorf("%s %s: %q %v", m, base, id, err)
 		}
 	}
-	for _, base := range []string{srv.URL + "/moved", srv.URL + "/empty", srv.URL + "/gone"} {
-		if id, err := fetchIdentity(ctx, client, base); err == nil {
-			t.Errorf("%s: believed %q", base, id)
+	for _, m := range []string{"moved", "empty", "gone"} {
+		if id, err := ask(m, srv.URL); err == nil {
+			t.Errorf("%s: believed %q", m, id)
 		}
 	}
 	mu.Lock()
@@ -396,5 +410,61 @@ func TestWatcherRewritesTheSavedPick(t *testing.T) {
 	}
 	if got.Credentials == nil || got.Credentials.Token != token || got.BaseURL != newAddr {
 		t.Fatalf("%+v", got)
+	}
+}
+
+// Pre-release review 2026-11-15: only a saved address's scheme and host
+// are used; a path or query in it never reaches the request.
+func TestIdentityURLUsesOnlySchemeAndHost(t *testing.T) {
+	for in, want := range map[string]string{
+		"http://192.168.1.9:32400":                      "http://192.168.1.9:32400/identity",
+		"https://192-168-1-9.abc123.plex.direct:32400/": "https://192-168-1-9.abc123.plex.direct:32400/identity",
+		"http://host/internal/admin/do?x=":              "http://host/identity",
+		"HTTP://host:8080/a#b":                          "http://host:8080/identity",
+	} {
+		got, err := identityURL(in)
+		if err != nil || got != want {
+			t.Fatalf("%q: %q %v, want %q", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "ftp://host", "file:///etc/passwd", "http://user:pw@host", "//host", "host:32400"} {
+		if got, err := identityURL(bad); err == nil {
+			t.Fatalf("%q was accepted as %q", bad, got)
+		}
+	}
+}
+
+// A remote address is proven over the LAN only by local addresses saved in
+// the same pick: a decoy list's local address is never asked on behalf of
+// another list's remote address it does not hold.
+func TestCandidatesTakeLocalsFromTheSamePickOnly(t *testing.T) {
+	remote := repository.PlexConnection{URI: "https://203-0-113-7.abc123.plex.direct:32400"}
+	realLocal := repository.PlexConnection{URI: "http://192.168.1.9:32400", Local: true}
+	decoyLocal := repository.PlexConnection{URI: "http://10.0.0.66:8080/internal/admin/do?x=", Local: true}
+	decoyRemote := repository.PlexConnection{URI: "https://198-51-100-9.fff999.plex.direct:32400"}
+	got := candidates([]repository.PlexServerAddresses{{ServerID: serverA, ServerName: "Home Plex", Picks: 2,
+		Saved: [][]repository.PlexConnection{{remote, realLocal}, {decoyRemote, decoyLocal}}}})
+	if len(got) != 2 {
+		t.Fatalf("candidates %+v", got)
+	}
+	for _, c := range got {
+		switch c.uri {
+		case remote.URI:
+			if len(c.locals) != 1 || c.locals[0] != realLocal.URI {
+				t.Fatalf("the real address may be proven by %v", c.locals)
+			}
+		case decoyRemote.URI:
+			if len(c.locals) != 1 || c.locals[0] != decoyLocal.URI {
+				t.Fatalf("the decoy address may be proven by %v", c.locals)
+			}
+		default:
+			t.Fatalf("unexpected candidate %+v", c)
+		}
+	}
+	// The same remote address in two lists: each list's locals, once.
+	got = candidates([]repository.PlexServerAddresses{{ServerID: serverA, ServerName: "Home Plex", Picks: 2,
+		Saved: [][]repository.PlexConnection{{remote, realLocal}, {remote, realLocal}}}})
+	if len(got) != 1 || len(got[0].locals) != 1 {
+		t.Fatalf("merged %+v", got)
 	}
 }
