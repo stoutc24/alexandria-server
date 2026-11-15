@@ -2,7 +2,8 @@
 
 This covers Plex and Jellyfin films and shows in the Alexandria app on
 iPhone, iPad, Android, Mac and Windows. The Apple TV has its own player:
-see [TV shows on the Apple TV](apple-tv-shows.md).
+see [TV shows on the Apple TV](apple-tv-shows.md) and [Preview pictures
+while you move through a video on the Apple TV](apple-tv-preview-pictures.md).
 
 ## Moving through a video
 
