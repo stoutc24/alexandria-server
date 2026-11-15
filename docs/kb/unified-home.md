@@ -51,13 +51,20 @@ nothing on it yet, the page says so.
 cards with the cover, what it is (Audiobook, Ebook, Film, Episode …), how
 far you are and what is left (for example "63% · 4h 10m left").
 
-- **Swipe** sideways for the next card; the edge of the next one peeks in,
-  and the dots underneath show where you are. On a tablet or a computer
-  several cards fit side by side; tap a dot to jump to a card.
+- **How many cards: 1, 3 or 5** (3 to start with). Pick it in **⋯** (next
+  to Hide) or in **Arrange**, under the Continue switch ("Cards shown").
+  The app remembers it on this device.
+- The cards are the things you touched **most recently, from any
+  service** — with 3, your three most recent, even if two are from the
+  same server.
+- With **1** you get one wide card and nothing to swipe. With **3** or
+  **5**, **swipe** sideways for the next card; the edge of the next one
+  peeks in, and the dots underneath show where you are. On a tablet or a
+  computer several cards fit side by side; tap a dot to jump to a card.
 - The **colored circles** on the right of "Continue" are your services
-  (one letter each, in the service's color). With none picked you see the
-  latest item from each service. **Tap a circle** to see only that service
-  (up to five of its items); tap it again to see every service.
+  (one letter each, in the service's color). **Tap a circle** to see only
+  that service — its 1, 3 or 5 most recent items; tap it again to see
+  every service.
 - **Resume** carries on where you left off. Tap the card itself for its
   details page, or hold it for more actions.
 - Tap **Continue ›** for everything you are in the middle of, as a grid.
@@ -69,7 +76,8 @@ far you are and what is left (for example "63% · 4h 10m left").
 Each card shows only when it has something to show, and follows the tab
 you picked:
 
-- **Also in progress** — the next few things you are partway through.
+- **Also in progress** — up to three more things you are partway through.
+  Anything already on a Continue card is left out, so nothing shows twice.
 - **Coming this week** — up to three releases from **Upcoming releases**
   that come out within the next 7 days (new episodes, films, albums and
   books from your libraries). If nothing comes out this week, it shows
@@ -81,7 +89,16 @@ you picked:
   the Librarian (Settings › AI) and Kids mode is off. Once a day the
   Librarian picks 2 or 3 things from your own library for it ("Today's
   picks from your library"); after them come the picks you saved from a
-  Librarian answer. Tap it to open your saved list. The daily ask happens
+  Librarian answer. A pick that is in your library shows its **real
+  cover**, and tapping it opens that item, as on the rest of Home. A pick
+  you don't own (a title saved for later) shows a colored tile with its
+  first letter; so does a cover that can't load. Tapping the card anywhere
+  else, or a pick you don't own, opens your saved list. (A Kavita, Komga,
+  Calibre, Calibre-Web or OPDS pick, or a Plex TV show, that is on none of
+  Home's shelves and only in the app's library index shows its cover but
+  opens the saved list.)
+  The covers come from what the app already has: Home's own shelves and
+  its library index, read on the device. The daily ask happens
   at most once a day, never on every visit, and a failed ask waits a day
   too; turn it off with **Settings › AI › Daily picks on Home**. See
   [What the AI can see](ai-what-it-sees.md#daily-picks-on-home).
@@ -99,7 +116,8 @@ own shelves.
 **Arrange** (at the bottom of the side menu) is what used to be called
 **Manage Sections**. It turns each part of the page on or off: the stat
 pills, Continue, each of the cards above, the shared shelves and each
-server's section.
+server's section. Under the Continue switch, **Cards shown** picks 1, 3 or
+5 Continue cards.
 
 ## The side menu
 
@@ -147,7 +165,8 @@ Librarian suggests** stay hidden. See [Kids mode](kids-mode.md).
 - Opening Home makes no requests beyond the ones it made before: the stat
   pills, Coming this week and the Librarian card use what the app already
   has saved. The one exception is the Librarian's daily picks: at most one
-  request a day, to your own AI server.
+  request a day, to your own AI server. The picks' covers load from your
+  servers like every other cover on Home.
 - Free and Premium work as before; the Librarian card needs the AI
   features, which are part of Premium.
 
