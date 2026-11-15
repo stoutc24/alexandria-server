@@ -141,5 +141,20 @@ jobs:
           # Health check
           curl -f http://localhost:4000/health || exit 1
 
+          # The image's own HEALTHCHECK must turn healthy too (its first
+          # probe runs one interval, 30 s, after the start).
+          state=starting
+          for i in $(seq 1 30); do
+            state=$(docker inspect --format '{{.State.Health.Status}}' test-alexandria)
+            [ "$state" = "healthy" ] && break
+            sleep 3
+          done
+          echo "container health: $state"
+          if [ "$state" != "healthy" ]; then
+            docker inspect --format '{{json .State.Health}}' test-alexandria
+            docker logs test-alexandria
+            exit 1
+          fi
+
           docker stop test-alexandria
           docker rm test-alexandria
