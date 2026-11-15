@@ -44,12 +44,26 @@ installing and running the Alexandria companion server itself, see the
 | [Chapters in films and shows](video-chapters.md) | The player's Chapters list on every app (Apple TV's swipe-down row, Samsung/LG/Fire TV's panel tab, the phone's Chapters button), pictures from Plex or Jellyfin, marks on the bar |
 | [Choosing your home screen](home-screen.md) | Settings › Home Screen › Default Home Service on phones, tablets and computers: every home the switcher offers, including Plex Video and Jellyfin Video |
 | [Upcoming releases: books, films, shows and music](upcoming-releases.md) | The Books · Movies · TV · Music tabs (only what your libraries hold); sequels and directors' new films, new episodes and season premieres, new albums and EPs; how often it checks; what is sent to TVmaze, MusicBrainz and TMDB |
+| [Choosing Alexandria's app icon](app-icon.md) | The nine icons (all free); where to pick one on each device; what changes on iPhone and iPad, Apple TV, Android, Mac and Windows; Samsung, LG and Fire TV keep the original |
 
 Contact for questions or problems: stoutservers@gmail.com
 
 ## Check on a real device before publishing
 
 These were proven in tests and simulators, not yet on hardware:
+
+- [ ] App icon (phone after 1272, Apple TV after 214): proven in tests,
+      in builds for iPhone, Mac and Android, on the Apple TV simulator (a
+      real switch, its OK, the Home screen icon, and back) and on the
+      iPhone simulator (iOS took the switch and showed its notice with the
+      new icon; a test cannot press its OK). Still to check on real
+      devices: the iPhone's and iPad's Home Screen icon and its notice;
+      the Apple TV Home screen icon after an upload passes App Store
+      validation; an Android phone's launcher (Pixel and Samsung) — the
+      new icon, whether it closes the app, the home-screen icon, the
+      long-press shortcuts and the widgets after a switch; the Mac Dock
+      icon; the Windows window and taskbar icon (Windows builds only in
+      CI).
 
 - [ ] Upcoming releases' Movies, TV and Music tabs (phone after 1272):
       proven in tests against stand-in answers shaped like TVmaze's,
