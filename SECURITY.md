@@ -35,7 +35,11 @@ stored and how, and which routes answer without a token. In short:
 - the admin page needs a password and an authenticator code;
 - it connects only to your own servers, and only to create or reset an
   account you asked for (with the Server Admin sign-in you saved there,
-  which also lists that server's libraries for you to pick from);
+  which also lists that server's libraries for you to pick from). One
+  exception, only while someone is picked from a Plex server: every 15
+  minutes it asks plex.tv for its own public internet address (no sign-in
+  or key is sent), to keep the person's saved Plex addresses current;
+  `ALEXANDRIA_PLEX_ADDRESS_WATCH=off` stops it;
 - it runs as a non-root user.
 
 The image is built by GitHub Actions from this repository only:

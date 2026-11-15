@@ -563,6 +563,13 @@ services:
       - ./data:/data
 ```
 
+On Linux, make the folder first and give it to the server's user (the
+image runs as uid 1000), or the server cannot open its database:
+
+```bash
+mkdir -p data && sudo chown 1000:1000 data
+```
+
 If you did edit `docker-compose.yml`, the update script notices, **keeps
 your file** and saves the current one beside it as
 `docker-compose.yml.new`. It never swaps an edited file for you: a
@@ -662,8 +669,14 @@ every person, device and statistic.** Take a backup first.
   sealed to a key it made for that one request. Each phone then signs in
   to each server itself. A phone's backup leaves them out.
 - **These routes answer without a token**, by necessity:
-  - `/health` reports the name, version and capabilities, never library
+  - `/health` reports the name, version, uptime, database state, the
+    public address you set (if any) and capabilities, never library
     contents.
+  - `/api/v1/admin/auth/status` says whether an admin login is set up and
+    whether the caller is signed in (`enrolled`, `signedIn`);
+    `/api/v1/admin/auth/login`, `/logout` and `/device-token` are the
+    admin sign-in itself, which asks for the password and a fresh code.
+    Together they share a limit of 10 a minute for each visitor.
   - `/admin` is the management page itself, inert until you sign in.
   - `/api/v1/link/request` and `/api/v1/link/claim` serve devices being
     linked, which have no token yet. Both are rate limited to 30 requests
@@ -716,6 +729,11 @@ every person, device and statistic.** Take a backup first.
 **The container exits straight away.** Run `docker logs alexandria-server`.
 It is almost always the token: unset, left as `change-me`, or under 16
 characters.
+
+**The container keeps restarting and the log says "unable to open
+database file".** The data folder belongs to another user (Docker made it
+as root). Run `sudo chown 1000:1000 data` on the folder you mounted at
+`/data`, then `docker compose up -d`.
 
 **"Find my server" finds nothing.** The apps search the device's own
 network (its /24 subnet) on port 4000. Check that:
