@@ -15,7 +15,9 @@ it but the TV still shows the old list? **Refresh.**
 
 You see the scan controls only when the Plex account you signed in with
 owns the server. A shared user, a managed user and Kids mode never see
-them.
+them. One exception, on a phone, tablet or computer: a device that is
+also signed in to the server as its owner in Server Admin ([see
+below](#using-the-app-as-someone-else-but-you-own-the-server)).
 
 ### Phone, tablet and computer
 
@@ -33,6 +35,31 @@ appear.
 To scan every library at once: open the side drawer on Plex's Home, tap
 **Server Admin**, and on the Plex card tap **Scan libraries**. It asks
 you to confirm first.
+
+#### Using the app as someone else, but you own the server
+
+(Build 1282 and later.)
+
+You may use the app as a shared or managed Plex user and still be the
+server's owner. Sign in as the owner once, in Server Admin, and the **⋮**
+appears on that server's libraries too:
+
+1. Open **Server Admin**.
+2. On the Plex card, tap **Sign in as admin**. If the card has no such
+   line, tap **+** at the top and choose **Plex**.
+3. Sign in with the Plex account that owns the server. The card then
+   reads **Reading as …**.
+4. Go back to your Plex libraries. Each one now has the **⋮**.
+
+**Scan library files** then runs as the owner's sign-in. Everything else
+in the app stays as the person you use it as: the libraries you see, what
+you play and your progress do not change.
+
+- It only works for the server the owner's sign-in belongs to. Libraries
+  of another Plex server get no **⋮**.
+- Tap **Sign out** on the Plex card in Server Admin and the **⋮** goes
+  away at once.
+- Kids mode never shows it.
 
 ### Apple TV, Samsung, LG and Fire TV
 
